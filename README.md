@@ -323,16 +323,33 @@ $ tool --help
 Every token an agent spends reading CLI output is a token it can’t spend reasoning. incur defaults to [TOON](https://github.com/toon-format/toon) – a format that’s as readable as YAML but with no quoting, no braces, and no redundant syntax. Agents parse it easily and use up to **60% fewer tokens compared to JSON**.
 
 ```sh
-$ my-cli status
-# → clean: true
-# → branch: main
+$ my-cli hikes --location Boulder --season spring_2025
+# → context:
+# →   task: Our favorite hikes together
+# →   location: Boulder
+# →   season: spring_2025
+# → friends[3]: ana,luis,sam
+# → hikes[3]{id,name,distanceKm,elevationGain,companion,wasSunny}:
+# →   1,Blue Lake Trail,7.5,320,ana,true
+# →   2,Ridge Overlook,9.2,540,luis,false
+# →   3,Wildflower Loop,5.1,180,sam,true
 ```
 
 Switch formats with `--format` or `--json`:
 
 ```sh
 $ my-cli status --format json
-# → {"clean":true,"branch":"main"}
+# → {
+# →   "context": {
+# →     "task": "Our favorite hikes together",
+# →     "location": "Boulder",
+# →     "season": "spring_2025"
+# →   },
+# →   "friends": ["ana", "luis", "sam"],
+# →   "hikes": [
+# →   ... + 1000 more tokens
+# → ]
+# → }
 ```
 
 Supported formats: `toon`, `json`, `yaml`, `md`, `jsonl`.
