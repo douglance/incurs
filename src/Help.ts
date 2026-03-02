@@ -237,7 +237,7 @@ function envEntries(schema: z.ZodObject<any>) {
 
 /** Extracts option entries from a Zod object schema. */
 function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> | undefined) {
-  const entries: { flag: string; description: string; defaultValue?: unknown; deprecated?: boolean }[] = []
+  const entries: { flag: string; description: string; defaultValue?: unknown; deprecated?: boolean | undefined }[] = []
   for (const [key, field] of Object.entries(schema.shape)) {
     const type = resolveTypeName(field)
     const short = alias?.[key]
