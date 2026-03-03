@@ -46,6 +46,8 @@ export type Context<
   set<key extends string & keyof InferVars<vars>>(key: key, value: InferVars<vars>[key]): void
   /** Variables set by upstream middleware. */
   var: InferVars<vars>
+  /** The CLI version string. */
+  version: string | undefined
 }
 
 /** Creates a strictly typed middleware handler. Pass the vars schema as a generic for typed `c.set()` and `c.var`, and the env schema for typed `c.env`. */

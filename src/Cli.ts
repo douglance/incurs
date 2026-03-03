@@ -806,6 +806,7 @@ async function serveImpl(
       ok: okFn,
       error: errorFn,
       var: varsMap,
+      version: options.version,
     })
 
     // Streaming path — async generator
@@ -890,6 +891,7 @@ async function serveImpl(
           varsMap[key] = value
         },
         var: varsMap,
+        version: options.version,
       }
       const handleMwSentinel = (result: unknown) => {
         if (!isSentinel(result) || result[sentinel] !== 'error') return
@@ -1721,6 +1723,8 @@ type CommandDefinition<
     options: InferOutput<options>
     /** Variables set by middleware. */
     var: InferVars<vars>
+    /** The CLI version string. */
+    version: string | undefined
   }):
     | InferReturn<output>
     | Promise<InferReturn<output>>
