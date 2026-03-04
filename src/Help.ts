@@ -163,7 +163,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     for (const ex of examples) {
       const cmd = ex.command ? `$ ${name} ${ex.command}` : `$ ${name}`
       if (ex.description)
-        lines.push(`  ${cmd}${' '.repeat(maxLen - cmd.length)}  ${ex.description}`)
+        lines.push(`  ${cmd}${' '.repeat(maxLen - cmd.length)}  # ${ex.description}`)
       else lines.push(`  ${cmd}`)
     }
   }
