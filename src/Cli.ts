@@ -338,8 +338,6 @@ export declare namespace create {
           agent: boolean
           /** Positional arguments. */
           args: InferOutput<args>
-          /** The CLI name. */
-          name: string
           /** Parsed environment variables. */
           env: InferOutput<env>
           /** Return an error result with optional CTAs. */
@@ -350,6 +348,12 @@ export declare namespace create {
             message: string
             retryable?: boolean | undefined
           }) => never
+          /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+          format: Formatter.Format
+          /** Whether the user explicitly passed `--format` or `--json`. */
+          formatExplicit: boolean
+          /** The CLI name. */
+          name: string
           /** Return a success result with optional metadata (e.g. CTAs). */
           ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
           options: InferOutput<options>
@@ -1028,6 +1032,8 @@ async function serveImpl(
           command: path,
           env: cliEnv,
           error: errorFn,
+          format,
+          formatExplicit,
           name,
           set(key: string, value: unknown) { varsMap[key] = value },
           var: varsMap,
@@ -1114,10 +1120,12 @@ async function serveImpl(
       agent: !human,
       args,
       env,
-      name,
-      options: parsedOptions,
-      ok: okFn,
       error: errorFn,
+      format,
+      formatExplicit,
+      name,
+      ok: okFn,
+      options: parsedOptions,
       var: varsMap,
       version: options.version,
     })
@@ -1201,6 +1209,8 @@ async function serveImpl(
         command: path,
         env: cliEnv,
         error: errorFn,
+        format,
+        formatExplicit,
         name,
         set(key: string, value: unknown) {
           varsMap[key] = value
@@ -2419,8 +2429,6 @@ type CommandDefinition<
     agent: boolean
     /** Positional arguments. */
     args: InferOutput<args>
-    /** The CLI name. */
-    name: string
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */
@@ -2431,6 +2439,12 @@ type CommandDefinition<
       message: string
       retryable?: boolean | undefined
     }) => never
+    /** The resolved output format (e.g. `'toon'`, `'json'`, `'jsonl'`). */
+    format: Formatter.Format
+    /** Whether the user explicitly passed `--format` or `--json`. */
+    formatExplicit: boolean
+    /** The CLI name. */
+    name: string
     /** Return a success result with optional metadata (e.g. CTAs). */
     ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
     options: InferOutput<options>
