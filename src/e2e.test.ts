@@ -2463,6 +2463,84 @@ describe('fetch api', () => {
   })
 })
 
+describe('.well-known/skills', () => {
+  async function fetchSkills(cli: Cli.Cli<any, any, any>, path: string) {
+    const res = await cli.fetch(new Request(`http://localhost${path}`))
+    const contentType = res.headers.get('content-type')
+    const body = contentType?.includes('json') ? await res.json() : await res.text()
+    return { status: res.status, contentType, cacheControl: res.headers.get('cache-control'), body }
+  }
+
+  test('GET /.well-known/skills/index.json returns skill index', async () => {
+    const cli = createApp()
+    const result = await fetchSkills(cli, '/.well-known/skills/index.json')
+    expect(result.status).toBe(200)
+    expect(result.contentType).toBe('application/json')
+    expect(result.cacheControl).toBe('public, max-age=300')
+    const names = result.body.skills.map((s: any) => s.name)
+    expect(names).toMatchInlineSnapshot(`
+      [
+        "api",
+        "auth",
+        "config",
+        "echo",
+        "explode",
+        "explode-clac",
+        "noop",
+        "ping",
+        "project",
+        "slow",
+        "stream",
+        "stream-error",
+        "stream-ok",
+        "stream-text",
+        "stream-throw",
+        "validate-fail",
+      ]
+    `)
+    expect(result.body.skills[0]).toMatchInlineSnapshot(`
+      {
+        "description": "Proxy to HTTP API. Run \`app api --help\` for usage details.",
+        "files": [
+          "SKILL.md",
+        ],
+        "name": "api",
+      }
+    `)
+  })
+
+  test('GET /.well-known/skills/{name}/SKILL.md returns skill markdown', async () => {
+    const cli = createApp()
+    const result = await fetchSkills(cli, '/.well-known/skills/ping/SKILL.md')
+    expect(result.status).toBe(200)
+    expect(result.contentType).toBe('text/markdown')
+    expect(result.cacheControl).toBe('public, max-age=300')
+    expect(result.body).toMatchInlineSnapshot(`
+      "---
+      name: app-ping
+      description: Health check. Run \`app ping --help\` for usage details.
+      command: app ping
+      ---
+
+      # app ping
+
+      Health check"
+    `)
+  })
+
+  test('GET /.well-known/skills/unknown/SKILL.md → 404', async () => {
+    const cli = createApp()
+    const result = await fetchSkills(cli, '/.well-known/skills/nonexistent/SKILL.md')
+    expect(result.status).toBe(404)
+  })
+
+  test('GET /.well-known/skills/unknown-path → 404', async () => {
+    const cli = createApp()
+    const result = await fetchSkills(cli, '/.well-known/skills/bad-path')
+    expect(result.status).toBe(404)
+  })
+})
+
 async function serve(
   cli: { serve: Cli.Cli['serve'] },
   argv: string[],

@@ -1337,6 +1337,49 @@ async function fetchImpl(
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
     return options.mcpHandler(req, commands)
 
+  // .well-known/skills/ — Agent Skills Discovery (RFC)
+  if (
+    segments[0] === '.well-known' &&
+    segments[1] === 'skills' &&
+    segments.length >= 3 &&
+    req.method === 'GET'
+  ) {
+    const groups = new Map<string, string>()
+    const cmds = collectSkillCommands(commands, [], groups)
+
+    // GET /.well-known/skills/index.json
+    if (segments[2] === 'index.json' && segments.length === 3) {
+      const files = Skill.split(name, cmds, 1, groups)
+      const skills = files.map((f) => {
+        const descMatch = f.content.match(/^description:\s*(.+)$/m)
+        return {
+          name: f.dir || name,
+          description: descMatch?.[1] ?? '',
+          files: ['SKILL.md'],
+        }
+      })
+      return new Response(JSON.stringify({ skills }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' },
+      })
+    }
+
+    // GET /.well-known/skills/{skill-name}/SKILL.md
+    if (segments.length === 4 && segments[3] === 'SKILL.md') {
+      const skillName = segments[2]!
+      const files = Skill.split(name, cmds, 1, groups)
+      const file = files.find((f) => (f.dir || name) === skillName)
+      if (file)
+        return new Response(file.content, {
+          status: 200,
+          headers: { 'content-type': 'text/markdown', 'cache-control': 'public, max-age=300' },
+        })
+      return new Response('Not Found', { status: 404 })
+    }
+
+    return new Response('Not Found', { status: 404 })
+  }
+
   // Parse options from search params (GET) or body (non-GET)
   let inputOptions: Record<string, unknown> = {}
   if (req.method === 'GET')
