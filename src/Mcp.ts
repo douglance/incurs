@@ -29,7 +29,7 @@ export async function serve(
         ...(tool.description ? { description: tool.description } : undefined),
         ...(hasInput ? { inputSchema: mergedShape } : undefined),
         ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : undefined),
-      },
+      } as never,
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
         const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
