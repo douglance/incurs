@@ -382,7 +382,7 @@ fn global_options_lines(root: bool, config_flag: Option<&str>) -> Vec<String> {
         "Filter output by key paths (e.g. foo,bar.baz,a[0,3])".to_string(),
     ));
     owned_flags.push((
-        "--format <toon|json|yaml|md|jsonl>".to_string(),
+        "--format <toon|json|yaml|md|jsonl|table|csv>".to_string(),
         "Output format".to_string(),
     ));
     owned_flags.push(("--help".to_string(), "Show help".to_string()));

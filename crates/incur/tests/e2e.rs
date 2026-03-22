@@ -27,8 +27,13 @@ struct ServeResult {
 }
 
 /// Runs the CLI with the given argv in agent mode (non-TTY) and captures output.
+/// Automatically adds `--json` to ensure consistent JSON output for test assertions.
 async fn serve(cli: &Cli, argv: &[&str]) -> ServeResult {
-    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let mut argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    // Add --json unless the test already specifies a format flag
+    if !argv.iter().any(|a| a == "--json" || a == "--format" || a == "--table" || a == "--csv") {
+        argv.push("--json".to_string());
+    }
     let mut buf = Vec::new();
     let exit_code = cli
         .serve_to(argv, &mut buf, false)

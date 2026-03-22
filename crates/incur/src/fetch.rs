@@ -162,6 +162,30 @@ pub fn is_streaming_response(content_type: Option<&str>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// FetchHandler trait
+// ---------------------------------------------------------------------------
+
+/// Trait for fetch gateway handlers.
+///
+/// Implementations receive a parsed [`FetchInput`] and return a [`FetchOutput`].
+/// This allows CLIs to proxy HTTP-style requests through a command gateway.
+#[async_trait::async_trait]
+pub trait FetchHandler: Send + Sync {
+    /// Handle a fetch request and return a response.
+    async fn handle(&self, request: FetchInput) -> FetchOutput;
+}
+
+/// Options for configuring a fetch gateway command.
+pub struct FetchGatewayOptions {
+    /// A short description of the gateway.
+    pub description: Option<String>,
+    /// Base path prefix for request URLs.
+    pub base_path: Option<String>,
+    /// Output policy for the gateway.
+    pub output_policy: Option<crate::output::OutputPolicy>,
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

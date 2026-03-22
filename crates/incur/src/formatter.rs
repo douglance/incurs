@@ -15,6 +15,8 @@ pub fn format(value: &Value, fmt: Format) -> String {
         Format::Yaml => format_yaml(value),
         Format::Markdown => format_markdown(value, &[]),
         Format::Toon => format_toon(value),
+        Format::Table => format_table(value),
+        Format::Csv => format_csv(value),
     }
 }
 
@@ -275,6 +277,225 @@ fn format_markdown(value: &Value, path: &[String]) -> String {
     String::new()
 }
 
+// ---------------------------------------------------------------------------
+// Table (aligned ASCII table)
+// ---------------------------------------------------------------------------
+
+/// Renders an aligned ASCII table with box-drawing-style separators.
+fn format_table(value: &Value) -> String {
+    if is_scalar(value) {
+        return scalar_to_string(value);
+    }
+
+    if let Value::Array(arr) = value {
+        if arr.is_empty() {
+            return "(empty)".to_string();
+        }
+        if is_array_of_objects(value) {
+            return ascii_table_from_array(arr);
+        }
+        // Array of scalars — one per line
+        return arr.iter().map(scalar_to_string).collect::<Vec<_>>().join("\n");
+    }
+
+    if let Value::Object(obj) = value {
+        return ascii_kv_table(obj);
+    }
+
+    String::new()
+}
+
+/// Renders an array of objects as an aligned ASCII table.
+fn ascii_table_from_array(items: &[Value]) -> String {
+    // Collect all unique keys preserving insertion order.
+    let mut keys: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in items {
+        if let Value::Object(map) = item {
+            for key in map.keys() {
+                if seen.insert(key.clone()) {
+                    keys.push(key.clone());
+                }
+            }
+        }
+    }
+
+    let rows: Vec<Vec<String>> = items
+        .iter()
+        .map(|item| {
+            keys.iter()
+                .map(|k| {
+                    item.as_object()
+                        .and_then(|m| m.get(k))
+                        .map(|v| value_to_cell(v))
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
+        .collect();
+
+    ascii_table(&keys, &rows)
+}
+
+/// Renders a key-value ASCII table from an object.
+fn ascii_kv_table(obj: &serde_json::Map<String, Value>) -> String {
+    let headers = vec!["Key".to_string(), "Value".to_string()];
+    let rows: Vec<Vec<String>> = obj
+        .iter()
+        .map(|(k, v)| vec![k.clone(), value_to_cell(v)])
+        .collect();
+    ascii_table(&headers, &rows)
+}
+
+/// Renders an aligned ASCII table with borders.
+fn ascii_table(headers: &[String], rows: &[Vec<String>]) -> String {
+    let widths: Vec<usize> = headers
+        .iter()
+        .enumerate()
+        .map(|(i, h)| {
+            let max_row = rows.iter().map(|r| r.get(i).map_or(0, |c| c.len())).max().unwrap_or(0);
+            h.len().max(max_row)
+        })
+        .collect();
+
+    let sep_line = format!(
+        "+-{}-+",
+        widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("-+-")
+    );
+
+    let header_row = format!(
+        "| {} |",
+        headers
+            .iter()
+            .enumerate()
+            .map(|(i, h)| format!("{:<width$}", h, width = widths[i]))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
+
+    let data_rows: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            let cells: Vec<String> = headers
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("{:<width$}", r.get(i).map_or("", |s| s.as_str()), width = widths[i]))
+                .collect();
+            format!("| {} |", cells.join(" | "))
+        })
+        .collect();
+
+    let mut lines = Vec::new();
+    lines.push(sep_line.clone());
+    lines.push(header_row);
+    lines.push(sep_line.clone());
+    for row in &data_rows {
+        lines.push(row.clone());
+    }
+    lines.push(sep_line);
+
+    lines.join("\n")
+}
+
+/// Converts a Value to a display string for table cells.
+fn value_to_cell(value: &Value) -> String {
+    match value {
+        Value::Null => "".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Array(arr) => {
+            let items: Vec<String> = arr.iter().map(|v| value_to_cell(v)).collect();
+            items.join(", ")
+        }
+        Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CSV
+// ---------------------------------------------------------------------------
+
+/// Renders CSV output from a JSON value.
+fn format_csv(value: &Value) -> String {
+    if is_scalar(value) {
+        return csv_escape(&scalar_to_string(value));
+    }
+
+    if let Value::Array(arr) = value {
+        if arr.is_empty() {
+            return String::new();
+        }
+        if is_array_of_objects(value) {
+            return csv_from_array(arr);
+        }
+        // Array of scalars — one per line
+        return arr.iter().map(|v| csv_escape(&scalar_to_string(v))).collect::<Vec<_>>().join("\n");
+    }
+
+    if let Value::Object(obj) = value {
+        // Single object — header + one data row
+        let keys: Vec<&String> = obj.keys().collect();
+        let header = keys.iter().map(|k| csv_escape(k)).collect::<Vec<_>>().join(",");
+        let row = keys
+            .iter()
+            .map(|k| csv_escape(&value_to_cell(obj.get(*k).unwrap_or(&Value::Null))))
+            .collect::<Vec<_>>()
+            .join(",");
+        return format!("{}\n{}", header, row);
+    }
+
+    String::new()
+}
+
+/// Renders an array of objects as CSV.
+fn csv_from_array(items: &[Value]) -> String {
+    // Collect all unique keys preserving insertion order.
+    let mut keys: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for item in items {
+        if let Value::Object(map) = item {
+            for key in map.keys() {
+                if seen.insert(key.clone()) {
+                    keys.push(key.clone());
+                }
+            }
+        }
+    }
+
+    let header = keys.iter().map(|k| csv_escape(k)).collect::<Vec<_>>().join(",");
+
+    let rows: Vec<String> = items
+        .iter()
+        .map(|item| {
+            keys.iter()
+                .map(|k| {
+                    let val = item
+                        .as_object()
+                        .and_then(|m| m.get(k))
+                        .map(|v| value_to_cell(v))
+                        .unwrap_or_default();
+                    csv_escape(&val)
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .collect();
+
+    let mut lines = vec![header];
+    lines.extend(rows);
+    lines.join("\n")
+}
+
+/// Escapes a string for CSV output, quoting if necessary.
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,5 +639,82 @@ mod tests {
         assert!(result.contains("## users"));
         assert!(result.contains("alice"));
         assert!(result.contains("bob"));
+    }
+
+    // Table format tests
+
+    #[test]
+    fn test_table_array_of_objects() {
+        let val = json!([
+            {"id": 1, "name": "alice"},
+            {"id": 2, "name": "bob"}
+        ]);
+        let result = format(&val, Format::Table);
+        assert!(result.contains("| id"));
+        assert!(result.contains("| name"));
+        assert!(result.contains("alice"));
+        assert!(result.contains("bob"));
+        assert!(result.contains("+--")); // box border
+    }
+
+    #[test]
+    fn test_table_single_object() {
+        let val = json!({"host": "localhost", "port": 8080});
+        let result = format(&val, Format::Table);
+        assert!(result.contains("Key"));
+        assert!(result.contains("Value"));
+        assert!(result.contains("host"));
+        assert!(result.contains("localhost"));
+    }
+
+    #[test]
+    fn test_table_scalar() {
+        assert_eq!(format(&json!(42), Format::Table), "42");
+        assert_eq!(format(&json!("hello"), Format::Table), "hello");
+    }
+
+    #[test]
+    fn test_table_empty_array() {
+        assert_eq!(format(&json!([]), Format::Table), "(empty)");
+    }
+
+    // CSV format tests
+
+    #[test]
+    fn test_csv_array_of_objects() {
+        let val = json!([
+            {"id": 1, "name": "alice"},
+            {"id": 2, "name": "bob"}
+        ]);
+        let result = format(&val, Format::Csv);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0], "id,name");
+        assert_eq!(lines[1], "1,alice");
+        assert_eq!(lines[2], "2,bob");
+    }
+
+    #[test]
+    fn test_csv_single_object() {
+        let val = json!({"name": "alice", "age": 30});
+        let result = format(&val, Format::Csv);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 2); // header + 1 row
+        assert!(lines[0].contains("name"));
+        assert!(lines[1].contains("alice"));
+    }
+
+    #[test]
+    fn test_csv_quoting() {
+        let val = json!([{"msg": "hello, world"}, {"msg": "say \"hi\""}]);
+        let result = format(&val, Format::Csv);
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines[0], "msg");
+        assert_eq!(lines[1], "\"hello, world\"");
+        assert_eq!(lines[2], "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn test_csv_scalar() {
+        assert_eq!(format(&json!(42), Format::Csv), "42");
     }
 }

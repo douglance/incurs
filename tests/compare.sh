@@ -121,7 +121,33 @@ compare_stream() {
 echo -e "${BOLD}Running comparison tests...${RESET}"
 echo ""
 
-compare "help"                     --help
+# Help output differs intentionally (Rust adds table|csv to --format).
+# Compare structure only (collapse whitespace).
+compare_normalized() {
+  local label="$1"
+  shift
+  local args=("$@")
+  local tmp_ts tmp_rs
+  tmp_ts=$(mktemp)
+  tmp_rs=$(mktemp)
+  $TS_CMD "${args[@]}" 2>/dev/null | sed 's/  */ /g' > "$tmp_ts" || true
+  "$RUST_BIN" "${args[@]}" 2>/dev/null | sed 's/  */ /g' > "$tmp_rs" || true
+  # Compare non-format lines (skip the --format line which intentionally differs)
+  local ts_filtered rs_filtered
+  ts_filtered=$(grep -v "^.*--format" "$tmp_ts")
+  rs_filtered=$(grep -v "^.*--format" "$tmp_rs")
+  if [ "$ts_filtered" = "$rs_filtered" ]; then
+    echo -e "  ${GREEN}PASS${RESET}  $label (normalized)"
+    PASSED=$((PASSED + 1))
+  else
+    echo -e "  ${RED}FAIL${RESET}  $label"
+    diff -u "$tmp_ts" "$tmp_rs" || true
+    FAILED=$((FAILED + 1))
+    ERRORS+=("$label")
+  fi
+  rm -f "$tmp_ts" "$tmp_rs"
+}
+compare_normalized "help"          --help
 compare "version"                  --version
 compare "list --json"              list --json
 compare "list --status pending"    list --status pending --json

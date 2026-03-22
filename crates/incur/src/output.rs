@@ -129,6 +129,8 @@ pub enum Format {
     Yaml,
     Markdown,
     Jsonl,
+    Table,
+    Csv,
 }
 
 impl Format {
@@ -140,6 +142,8 @@ impl Format {
             "yaml" => Some(Format::Yaml),
             "md" | "markdown" => Some(Format::Markdown),
             "jsonl" => Some(Format::Jsonl),
+            "table" => Some(Format::Table),
+            "csv" => Some(Format::Csv),
             _ => None,
         }
     }
@@ -153,6 +157,8 @@ impl std::fmt::Display for Format {
             Format::Yaml => write!(f, "yaml"),
             Format::Markdown => write!(f, "md"),
             Format::Jsonl => write!(f, "jsonl"),
+            Format::Table => write!(f, "table"),
+            Format::Csv => write!(f, "csv"),
         }
     }
 }

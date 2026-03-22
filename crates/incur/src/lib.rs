@@ -3,11 +3,14 @@ pub mod cli;
 pub mod command;
 pub mod completions;
 pub mod config;
+pub mod config_schema;
 pub mod errors;
 pub mod fetch;
 pub mod filter;
 pub mod formatter;
 pub mod help;
+#[cfg(feature = "http")]
+pub mod http;
 pub mod mcp;
 pub mod middleware;
 pub mod openapi;

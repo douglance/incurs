@@ -19,10 +19,13 @@ use serde_json::Value;
 
 use crate::command::{self, CommandDef, ExecuteOptions, InternalResult, ParseMode};
 use crate::config;
+use crate::fetch::{self, FetchHandler, FetchGatewayOptions};
+use crate::filter;
 use crate::help::{self, CommandSummary, FormatCommandOptions, FormatRootOptions};
 use crate::middleware::MiddlewareFn;
 use crate::output::*;
 use crate::schema::FieldMeta;
+use crate::skill;
 
 /// Entry in the command tree.
 ///
@@ -50,6 +53,8 @@ pub enum CommandEntry {
         base_path: Option<String>,
         /// Output policy for the gateway.
         output_policy: Option<OutputPolicy>,
+        /// The fetch handler that processes requests.
+        handler: Arc<dyn FetchHandler>,
     },
 }
 
@@ -98,15 +103,15 @@ pub struct Cli {
     /// Alternative binary names for this CLI.
     pub aliases: Vec<String>,
     /// The command tree.
-    commands: BTreeMap<String, CommandEntry>,
+    pub(crate) commands: BTreeMap<String, CommandEntry>,
     /// Root-level middleware that runs around every command.
-    middleware: Vec<MiddlewareFn>,
+    pub(crate) middleware: Vec<MiddlewareFn>,
     /// Root command handler (for CLIs with a default command).
     root_command: Option<Arc<CommandDef>>,
     /// CLI-level environment variable fields.
-    env_fields: Vec<FieldMeta>,
+    pub(crate) env_fields: Vec<FieldMeta>,
     /// Middleware variable fields.
-    vars_fields: Vec<FieldMeta>,
+    pub(crate) vars_fields: Vec<FieldMeta>,
     /// Config file options.
     config: Option<ConfigOptions>,
     /// Default output policy.
@@ -223,6 +228,29 @@ impl Cli {
         self
     }
 
+    /// Registers a fetch gateway command.
+    ///
+    /// A fetch gateway proxies curl-style argv into a [`FetchHandler`].
+    /// Remaining tokens after the gateway name are parsed with
+    /// [`fetch::parse_argv`] and forwarded to the handler.
+    pub fn fetch_gateway(
+        mut self,
+        name: impl Into<String>,
+        handler: impl FetchHandler + 'static,
+        options: FetchGatewayOptions,
+    ) -> Self {
+        self.commands.insert(
+            name.into(),
+            CommandEntry::FetchGateway {
+                description: options.description,
+                base_path: options.base_path,
+                output_policy: options.output_policy,
+                handler: Arc::new(handler),
+            },
+        );
+        self
+    }
+
     /// Registers middleware that runs around every command.
     pub fn use_middleware(mut self, handler: MiddlewareFn) -> Self {
         self.middleware.push(handler);
@@ -270,6 +298,47 @@ impl Cli {
         if builtin.version && !builtin.help && let Some(v) = &self.version {
             writeln_stdout(v);
             return Ok(());
+        }
+
+        // --- Step 2b: Handle --llms / --llms-full ---
+        if builtin.llms || builtin.llms_full {
+            let commands_info = collect_command_info(&self.commands, &[]);
+            if builtin.llms_full {
+                let groups = collect_group_descriptions(&self.commands, &[]);
+                let output = skill::generate(&self.name, &commands_info, &groups);
+                writeln_stdout(&output);
+            } else {
+                let output = skill::index(
+                    &self.name,
+                    &commands_info,
+                    self.description.as_deref(),
+                );
+                writeln_stdout(&output);
+            }
+            return Ok(());
+        }
+
+        // --- Step 2c: Handle --mcp ---
+        if builtin.mcp {
+            #[cfg(feature = "mcp")]
+            {
+                let version = self.version.as_deref().unwrap_or("0.0.0");
+                crate::mcp::serve(
+                    &self.name,
+                    version,
+                    &self.commands,
+                    &self.middleware,
+                    &self.env_fields,
+                    &Default::default(),
+                )
+                .await?;
+                return Ok(());
+            }
+            #[cfg(not(feature = "mcp"))]
+            {
+                writeln_stdout("MCP support requires the 'mcp' feature flag.");
+                std::process::exit(1);
+            }
         }
 
         // --- Step 3: Handle --help at root level ---
@@ -423,6 +492,12 @@ impl Cli {
                         ));
                     }
                 }
+                ResolvedCommand::Gateway { path, .. } => {
+                    let help_name = format!("{} {path}", self.name);
+                    writeln_stdout(&format!(
+                        "{help_name}: fetch gateway (use curl-style arguments)"
+                    ));
+                }
                 ResolvedCommand::Error { error: _, path } => {
                     let help_name = if path.is_empty() {
                         self.name.clone()
@@ -463,6 +538,55 @@ impl Cli {
             return Ok(());
         }
 
+        // --- Step 6b: Handle FetchGateway resolution ---
+        if let ResolvedCommand::Gateway {
+            handler,
+            path,
+            rest,
+            base_path,
+            output_policy,
+        } = &resolved
+        {
+            let format = if builtin.format_explicit {
+                builtin.format
+            } else {
+                self.format.unwrap_or(Format::Json)
+            };
+
+            let policy = output_policy.or(self.output_policy);
+            let render_output =
+                !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
+
+            let mut fetch_input = fetch::parse_argv(rest);
+
+            // Prepend base_path to the request path if configured.
+            if let Some(bp) = base_path {
+                let trimmed = bp.trim_end_matches('/');
+                fetch_input.path = format!("{trimmed}{}", fetch_input.path);
+            }
+
+            let output = handler.handle(fetch_input).await;
+            let data = format_fetch_output(&output);
+
+            if builtin.verbose {
+                let mut envelope = serde_json::Map::new();
+                envelope.insert("ok".to_string(), Value::Bool(output.ok));
+                envelope.insert("data".to_string(), data);
+                let mut meta = serde_json::Map::new();
+                meta.insert("command".to_string(), Value::String(path.clone()));
+                meta.insert("status".to_string(), Value::Number(output.status.into()));
+                envelope.insert("meta".to_string(), Value::Object(meta));
+                writeln_stdout(&format_value(&Value::Object(envelope), format));
+            } else if render_output {
+                writeln_stdout(&format_value(&data, format));
+            }
+
+            if !output.ok {
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+
         // --- Step 7: Handle command resolution errors ---
         let (command, command_path, rest, collected_mw, effective_output_policy) = match resolved {
             ResolvedCommand::Leaf {
@@ -472,6 +596,8 @@ impl Cli {
                 collected_middleware,
                 output_policy,
             } => (command, path, rest, collected_middleware, output_policy),
+            // Gateway is handled above in Step 6b; unreachable here.
+            ResolvedCommand::Gateway { .. } => unreachable!("Gateway handled before step 7"),
             ResolvedCommand::Help {
                 path,
                 description,
@@ -502,7 +628,7 @@ impl Cli {
                         (
                             Arc::clone(root_cmd),
                             self.name.clone(),
-                            builtin.rest,
+                            builtin.rest.clone(),
                             Vec::new(),
                             None,
                         )
@@ -637,6 +763,14 @@ impl Cli {
         // --- Step 12: Handle result ---
         match result {
             InternalResult::Ok { data, cta } => {
+                // Apply --filter-output
+                let data = if let Some(ref expr) = builtin.filter_output {
+                    let paths = filter::parse(expr);
+                    filter::apply(&data, &paths)
+                } else {
+                    data
+                };
+
                 let formatted_cta = format_cta_block(&self.name, cta.as_ref());
 
                 if builtin.verbose {
@@ -650,10 +784,12 @@ impl Cli {
                         meta.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
                     }
                     envelope.insert("meta".to_string(), Value::Object(meta));
-                    writeln_stdout(&format_value(&Value::Object(envelope), format));
+                    let output = format_value(&Value::Object(envelope), format);
+                    write_with_token_ops(&output, &builtin, writeln_stdout);
                 } else if human {
                     if render_output {
-                        writeln_stdout(&format_value(&data, format));
+                        let output = format_value(&data, format);
+                        write_with_token_ops(&output, &builtin, writeln_stdout);
                     }
                     if let Some(cta) = &formatted_cta {
                         writeln_stdout(&format_human_cta(cta));
@@ -664,12 +800,15 @@ impl Cli {
                         if let Value::Object(ref map) = data {
                             let mut out = map.clone();
                             out.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
-                            writeln_stdout(&format_value(&Value::Object(out), format));
+                            let output = format_value(&Value::Object(out), format);
+                            write_with_token_ops(&output, &builtin, writeln_stdout);
                         } else {
-                            writeln_stdout(&format_value(&data, format));
+                            let output = format_value(&data, format);
+                            write_with_token_ops(&output, &builtin, writeln_stdout);
                         }
                     } else {
-                        writeln_stdout(&format_value(&data, format));
+                        let output = format_value(&data, format);
+                        write_with_token_ops(&output, &builtin, writeln_stdout);
                     }
                 }
             }
@@ -785,6 +924,47 @@ impl Cli {
             if let Some(v) = &self.version {
                 wln!(v);
                 return Ok(None);
+            }
+        }
+
+        // --- Step 2b: Handle --llms / --llms-full ---
+        if builtin.llms || builtin.llms_full {
+            let commands_info = collect_command_info(&self.commands, &[]);
+            if builtin.llms_full {
+                let groups = collect_group_descriptions(&self.commands, &[]);
+                let output = skill::generate(&self.name, &commands_info, &groups);
+                wln!(&output);
+            } else {
+                let output = skill::index(
+                    &self.name,
+                    &commands_info,
+                    self.description.as_deref(),
+                );
+                wln!(&output);
+            }
+            return Ok(None);
+        }
+
+        // --- Step 2c: Handle --mcp ---
+        if builtin.mcp {
+            #[cfg(feature = "mcp")]
+            {
+                let version = self.version.as_deref().unwrap_or("0.0.0");
+                crate::mcp::serve(
+                    &self.name,
+                    version,
+                    &self.commands,
+                    &self.middleware,
+                    &self.env_fields,
+                    &Default::default(),
+                )
+                .await?;
+                return Ok(None);
+            }
+            #[cfg(not(feature = "mcp"))]
+            {
+                wln!("MCP support requires the 'mcp' feature flag.");
+                return Ok(Some(1));
             }
         }
 
@@ -934,6 +1114,12 @@ impl Cli {
                         ));
                     }
                 }
+                ResolvedCommand::Gateway { path, .. } => {
+                    let help_name = format!("{} {path}", self.name);
+                    wln!(&format!(
+                        "{help_name}: fetch gateway (use curl-style arguments)"
+                    ));
+                }
                 ResolvedCommand::Error { error: _, path } => {
                     let help_name = if path.is_empty() {
                         self.name.clone()
@@ -974,7 +1160,56 @@ impl Cli {
             return Ok(None);
         }
 
-        // --- Step 7: Handle command resolution errors ---
+                // --- Step 6b: Handle FetchGateway resolution ---
+        if let ResolvedCommand::Gateway {
+            handler,
+            path,
+            rest,
+            base_path,
+            output_policy,
+        } = &resolved
+        {
+            let format = if builtin.format_explicit {
+                builtin.format
+            } else {
+                self.format.unwrap_or(Format::Json)
+            };
+
+            let policy = output_policy.or(self.output_policy);
+            let render_output =
+                !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
+
+            let mut fetch_input = fetch::parse_argv(rest);
+
+            // Prepend base_path to the request path if configured.
+            if let Some(bp) = base_path {
+                let trimmed = bp.trim_end_matches('/');
+                fetch_input.path = format!("{trimmed}{}", fetch_input.path);
+            }
+
+            let output = handler.handle(fetch_input).await;
+            let data = format_fetch_output(&output);
+
+            if builtin.verbose {
+                let mut envelope = serde_json::Map::new();
+                envelope.insert("ok".to_string(), Value::Bool(output.ok));
+                envelope.insert("data".to_string(), data);
+                let mut meta = serde_json::Map::new();
+                meta.insert("command".to_string(), Value::String(path.clone()));
+                meta.insert("status".to_string(), Value::Number(output.status.into()));
+                envelope.insert("meta".to_string(), Value::Object(meta));
+                wln!(&format_value(&Value::Object(envelope), format));
+            } else if render_output {
+                wln!(&format_value(&data, format));
+            }
+
+            if !output.ok {
+                return Ok(Some(1));
+            }
+            return Ok(None);
+        }
+
+// --- Step 7: Handle command resolution errors ---
         let (command, command_path, rest, collected_mw, effective_output_policy) = match resolved {
             ResolvedCommand::Leaf {
                 command,
@@ -983,6 +1218,8 @@ impl Cli {
                 collected_middleware,
                 output_policy,
             } => (command, path, rest, collected_middleware, output_policy),
+            // Gateway is handled above in Step 6b; unreachable here.
+            ResolvedCommand::Gateway { .. } => unreachable!("Gateway handled before step 7"),
             ResolvedCommand::Help {
                 path,
                 description,
@@ -1012,7 +1249,7 @@ impl Cli {
                         (
                             Arc::clone(root_cmd),
                             self.name.clone(),
-                            builtin.rest,
+                            builtin.rest.clone(),
                             Vec::new(),
                             None,
                         )
@@ -1156,7 +1393,27 @@ impl Cli {
         // --- Step 12: Handle result ---
         match result {
             InternalResult::Ok { data, cta } => {
+                // Apply --filter-output
+                let data = if let Some(ref expr) = builtin.filter_output {
+                    let paths = filter::parse(expr);
+                    filter::apply(&data, &paths)
+                } else {
+                    data
+                };
+
                 let formatted_cta = format_cta_block(&self.name, cta.as_ref());
+
+                // Macro to apply token ops before writing
+                macro_rules! wln_tok {
+                    ($s:expr) => {{
+                        let s: &str = $s;
+                        if let Some(token_output) = apply_token_ops(s, &builtin) {
+                            wln!(&token_output);
+                        } else {
+                            wln!(s);
+                        }
+                    }};
+                }
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
@@ -1169,16 +1426,19 @@ impl Cli {
                         meta.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
                     }
                     envelope.insert("meta".to_string(), Value::Object(meta));
-                    wln!(&format_value(&Value::Object(envelope), format));
+                    let output = format_value(&Value::Object(envelope), format);
+                    wln_tok!(&output);
                 } else if human {
                     if render_output {
-                        wln!(&format_value(&data, format));
+                        let output = format_value(&data, format);
+                        wln_tok!(&output);
                     }
                     if let Some(cta) = &formatted_cta {
                         wln!(&format_human_cta(cta));
                     }
                 } else {
-                    wln!(&format_value(&data, format));
+                    let output = format_value(&data, format);
+                    wln_tok!(&output);
                 }
                 Ok(None)
             }
@@ -1300,6 +1560,14 @@ enum ResolvedCommand<'a> {
         collected_middleware: Vec<MiddlewareFn>,
         output_policy: Option<OutputPolicy>,
     },
+    /// A fetch gateway was found; remaining tokens are curl-style input.
+    Gateway {
+        handler: &'a Arc<dyn FetchHandler>,
+        path: String,
+        rest: Vec<String>,
+        base_path: Option<String>,
+        output_policy: Option<OutputPolicy>,
+    },
     /// A group was reached but no further subcommand specified.
     Help {
         path: String,
@@ -1393,15 +1661,18 @@ fn resolve_command<'a>(
                 }
             }
             CommandEntry::FetchGateway {
-                description: _,
-                output_policy: _,
+                base_path,
+                output_policy,
+                handler,
                 ..
             } => {
-                // Fetch gateways are not fully resolved in the Rust port yet.
-                // Return as an error so the caller can handle it.
-                return ResolvedCommand::Error {
-                    error: path.join(" "),
-                    path: String::new(),
+                let effective_policy = output_policy.or(inherited_output_policy);
+                return ResolvedCommand::Gateway {
+                    handler,
+                    path: path.join(" "),
+                    rest: remaining.to_vec(),
+                    base_path: base_path.clone(),
+                    output_policy: effective_policy,
                 };
             }
         }
@@ -1417,19 +1688,12 @@ struct BuiltinFlags {
     verbose: bool,
     format: Format,
     format_explicit: bool,
-    #[allow(dead_code)]
     filter_output: Option<String>,
-    #[allow(dead_code)]
     token_limit: Option<usize>,
-    #[allow(dead_code)]
     token_offset: Option<usize>,
-    #[allow(dead_code)]
     token_count: bool,
-    #[allow(dead_code)]
     llms: bool,
-    #[allow(dead_code)]
     llms_full: bool,
-    #[allow(dead_code)]
     mcp: bool,
     help: bool,
     version: bool,
@@ -1486,6 +1750,12 @@ fn extract_builtin_flags(
             schema = true;
         } else if token == "--json" {
             format = Format::Json;
+            format_explicit = true;
+        } else if token == "--table" {
+            format = Format::Table;
+            format_explicit = true;
+        } else if token == "--csv" {
+            format = Format::Csv;
             format_explicit = true;
         } else if token == "--format" {
             if let Some(next) = argv.get(i + 1) {
@@ -1582,6 +1852,19 @@ fn extract_builtin_flags(
 // Output helpers
 // ---------------------------------------------------------------------------
 
+/// Formats a `FetchOutput` into a JSON `Value` for rendering.
+fn format_fetch_output(output: &fetch::FetchOutput) -> Value {
+    if output.ok {
+        output.data.clone()
+    } else {
+        serde_json::json!({
+            "ok": false,
+            "status": output.status,
+            "error": output.data,
+        })
+    }
+}
+
 /// Writes a string to stdout with a trailing newline.
 fn writeln_stdout(s: &str) {
     if s.ends_with('\n') {
@@ -1596,16 +1879,8 @@ fn writeln_stdout(s: &str) {
 /// This is a simplified formatter. The full formatter module (being written
 /// in parallel) handles toon, yaml, markdown, etc. For now, we support
 /// json and fall back to pretty-printed json.
-fn format_value(value: &Value, format: Format) -> String {
-    match format {
-        Format::Json => serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string()),
-        Format::Jsonl => serde_json::to_string(value).unwrap_or_else(|_| "null".to_string()),
-        _ => {
-            // Default to toon-style output (pretty JSON for now, until
-            // the formatter module provides the full implementation).
-            serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".to_string())
-        }
-    }
+fn format_value(value: &Value, fmt: Format) -> String {
+    crate::formatter::format(value, fmt)
 }
 
 /// Formats an error for human-readable TTY output.
@@ -1701,6 +1976,71 @@ fn collect_help_commands(commands: &BTreeMap<String, CommandEntry>) -> Vec<Comma
         })
         .collect();
     result.sort_by(|a, b| a.name.cmp(&b.name));
+    result
+}
+
+/// Recursively collects all leaf commands as `CommandInfo` for skill generation.
+fn collect_command_info(
+    commands: &BTreeMap<String, CommandEntry>,
+    prefix: &[&str],
+) -> Vec<skill::CommandInfo> {
+    let mut result = Vec::new();
+    for (name, entry) in commands {
+        let mut path_parts: Vec<&str> = prefix.to_vec();
+        path_parts.push(name);
+        match entry {
+            CommandEntry::Leaf(def) => {
+                result.push(skill::CommandInfo {
+                    name: path_parts.join(" "),
+                    description: def.description.clone(),
+                    args_fields: def.args_fields.clone(),
+                    options_fields: def.options_fields.clone(),
+                    env_fields: def.env_fields.clone(),
+                    hint: def.hint.clone(),
+                    examples: def
+                        .examples
+                        .iter()
+                        .map(|e| skill::Example {
+                            command: e.command.clone(),
+                            description: e.description.clone(),
+                        })
+                        .collect(),
+                    output_schema: def.output_schema.clone(),
+                });
+            }
+            CommandEntry::Group {
+                commands: sub, ..
+            } => {
+                result.extend(collect_command_info(sub, &path_parts));
+            }
+            CommandEntry::FetchGateway { .. } => {}
+        }
+    }
+    result
+}
+
+/// Collects group descriptions for skill file generation.
+fn collect_group_descriptions(
+    commands: &BTreeMap<String, CommandEntry>,
+    prefix: &[&str],
+) -> BTreeMap<String, String> {
+    let mut result = BTreeMap::new();
+    for (name, entry) in commands {
+        if let CommandEntry::Group {
+            description,
+            commands: sub,
+            ..
+        } = entry
+        {
+            let mut path_parts: Vec<&str> = prefix.to_vec();
+            path_parts.push(name);
+            let key = path_parts.join(" ");
+            if let Some(desc) = description {
+                result.insert(key.clone(), desc.clone());
+            }
+            result.extend(collect_group_descriptions(sub, &path_parts));
+        }
+    }
     result
 }
 
@@ -1822,6 +2162,104 @@ async fn handle_streaming(
         } else {
             writeln_stdout(&format_value(&data, format));
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MCP command conversion
+// ---------------------------------------------------------------------------
+
+/// Converts CLI command entries to MCP command entries.
+#[cfg(feature = "mcp")]
+fn convert_to_mcp_commands(
+    commands: &BTreeMap<String, CommandEntry>,
+) -> BTreeMap<String, crate::mcp::CommandEntry> {
+    let mut result = BTreeMap::new();
+    for (name, entry) in commands {
+        match entry {
+            CommandEntry::Leaf(def) => {
+                result.insert(
+                    name.clone(),
+                    crate::mcp::CommandEntry {
+                        is_group: false,
+                        description: def.description.clone(),
+                        commands: BTreeMap::new(),
+                        args_fields: def.args_fields.clone(),
+                        options_fields: def.options_fields.clone(),
+                        output_schema: def.output_schema.clone(),
+                    },
+                );
+            }
+            CommandEntry::Group {
+                description,
+                commands: sub,
+                ..
+            } => {
+                result.insert(
+                    name.clone(),
+                    crate::mcp::CommandEntry {
+                        is_group: true,
+                        description: description.clone(),
+                        commands: convert_to_mcp_commands(sub),
+                        args_fields: Vec::new(),
+                        options_fields: Vec::new(),
+                        output_schema: None,
+                    },
+                );
+            }
+            CommandEntry::FetchGateway { .. } => {}
+        }
+    }
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Token operations
+// ---------------------------------------------------------------------------
+
+/// Applies token operations (count, offset, limit) to a formatted output string.
+fn apply_token_ops(output: &str, builtin: &BuiltinFlags) -> Option<String> {
+    if builtin.token_count {
+        #[cfg(feature = "tokens")]
+        {
+            let count = tiktoken_rs::cl100k_base()
+                .ok()
+                .map(|bpe| bpe.encode_with_special_tokens(output).len())
+                .unwrap_or(0);
+            return Some(count.to_string());
+        }
+        #[cfg(not(feature = "tokens"))]
+        return Some(output.split_whitespace().count().to_string());
+    }
+    if builtin.token_offset.is_some() || builtin.token_limit.is_some() {
+        #[cfg(feature = "tokens")]
+        {
+            if let Ok(bpe) = tiktoken_rs::cl100k_base() {
+                let tokens = bpe.encode_with_special_tokens(output);
+                let offset = builtin.token_offset.unwrap_or(0);
+                let sliced = if offset < tokens.len() {
+                    &tokens[offset..]
+                } else {
+                    &[]
+                };
+                let limited = if let Some(limit) = builtin.token_limit {
+                    &sliced[..limit.min(sliced.len())]
+                } else {
+                    sliced
+                };
+                return Some(bpe.decode(limited.to_vec()).unwrap_or_default());
+            }
+        }
+    }
+    None
+}
+
+/// Writes output to stdout, applying token operations if any are set.
+fn write_with_token_ops(output: &str, builtin: &BuiltinFlags, write_fn: fn(&str)) {
+    if let Some(token_output) = apply_token_ops(output, builtin) {
+        write_fn(&token_output);
+    } else {
+        write_fn(output);
     }
 }
 
@@ -2032,4 +2470,336 @@ mod tests {
             "Error (AUTH_FAILED): Not logged in"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // FetchGateway tests
+    // -----------------------------------------------------------------------
+
+    /// A test fetch handler that echoes the request back as JSON.
+    struct EchoFetchHandler;
+
+    #[async_trait::async_trait]
+    impl crate::fetch::FetchHandler for EchoFetchHandler {
+        async fn handle(
+            &self,
+            request: crate::fetch::FetchInput,
+        ) -> crate::fetch::FetchOutput {
+            let data = serde_json::json!({
+                "path": request.path,
+                "method": request.method,
+                "headers": request.headers.iter()
+                    .map(|(k, v)| serde_json::json!([k, v]))
+                    .collect::<Vec<_>>(),
+                "body": request.body,
+                "query": request.query.iter()
+                    .map(|(k, v)| serde_json::json!([k, v]))
+                    .collect::<Vec<_>>(),
+            });
+            crate::fetch::FetchOutput {
+                ok: true,
+                status: 200,
+                data,
+                headers: vec![],
+            }
+        }
+    }
+
+    /// A fetch handler that always returns an error.
+    struct ErrorFetchHandler;
+
+    #[async_trait::async_trait]
+    impl crate::fetch::FetchHandler for ErrorFetchHandler {
+        async fn handle(
+            &self,
+            _request: crate::fetch::FetchInput,
+        ) -> crate::fetch::FetchOutput {
+            crate::fetch::FetchOutput {
+                ok: false,
+                status: 500,
+                data: serde_json::json!({ "message": "Internal Server Error" }),
+                headers: vec![],
+            }
+        }
+    }
+
+    #[test]
+    fn test_fetch_gateway_builder() {
+        let cli = Cli::create("test-cli").fetch_gateway(
+            "api",
+            EchoFetchHandler,
+            crate::fetch::FetchGatewayOptions {
+                description: Some("API gateway".to_string()),
+                base_path: Some("/v1".to_string()),
+                output_policy: None,
+            },
+        );
+
+        assert!(cli.commands.contains_key("api"));
+        match &cli.commands["api"] {
+            CommandEntry::FetchGateway {
+                description,
+                base_path,
+                ..
+            } => {
+                assert_eq!(description.as_deref(), Some("API gateway"));
+                assert_eq!(base_path.as_deref(), Some("/v1"));
+            }
+            _ => panic!("Expected FetchGateway"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_command_fetch_gateway() {
+        let mut commands = BTreeMap::new();
+        commands.insert(
+            "api".to_string(),
+            CommandEntry::FetchGateway {
+                description: Some("API gateway".to_string()),
+                base_path: Some("/v1".to_string()),
+                output_policy: None,
+                handler: Arc::new(EchoFetchHandler),
+            },
+        );
+
+        let tokens = vec![
+            "api".to_string(),
+            "users".to_string(),
+            "123".to_string(),
+            "--limit".to_string(),
+            "10".to_string(),
+        ];
+        match resolve_command(&commands, &tokens) {
+            ResolvedCommand::Gateway {
+                path,
+                rest,
+                base_path,
+                ..
+            } => {
+                assert_eq!(path, "api");
+                assert_eq!(rest, vec!["users", "123", "--limit", "10"]);
+                assert_eq!(base_path.as_deref(), Some("/v1"));
+            }
+            _ => panic!("Expected Gateway"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_command_fetch_gateway_no_args() {
+        let mut commands = BTreeMap::new();
+        commands.insert(
+            "api".to_string(),
+            CommandEntry::FetchGateway {
+                description: None,
+                base_path: None,
+                output_policy: None,
+                handler: Arc::new(EchoFetchHandler),
+            },
+        );
+
+        let tokens = vec!["api".to_string()];
+        match resolve_command(&commands, &tokens) {
+            ResolvedCommand::Gateway {
+                path,
+                rest,
+                base_path,
+                ..
+            } => {
+                assert_eq!(path, "api");
+                assert!(rest.is_empty());
+                assert!(base_path.is_none());
+            }
+            _ => panic!("Expected Gateway"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_fetch_gateway_basic() {
+        let cli = Cli::create("test-cli").fetch_gateway(
+            "api",
+            EchoFetchHandler,
+            crate::fetch::FetchGatewayOptions {
+                description: None,
+                base_path: None,
+                output_policy: None,
+            },
+        );
+
+        let mut output = Vec::new();
+        let argv = vec![
+            "api".to_string(),
+            "users".to_string(),
+            "123".to_string(),
+        ];
+        let result = cli.serve_to(argv, &mut output, false).await.unwrap();
+
+        assert_eq!(result, None);
+        let output_str = String::from_utf8(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output_str.trim()).unwrap();
+        assert_eq!(parsed["path"], "/users/123");
+        assert_eq!(parsed["method"], "GET");
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_fetch_gateway_with_base_path() {
+        let cli = Cli::create("test-cli").fetch_gateway(
+            "api",
+            EchoFetchHandler,
+            crate::fetch::FetchGatewayOptions {
+                description: None,
+                base_path: Some("/v2".to_string()),
+                output_policy: None,
+            },
+        );
+
+        let mut output = Vec::new();
+        let argv = vec!["api".to_string(), "items".to_string()];
+        let result = cli.serve_to(argv, &mut output, false).await.unwrap();
+
+        assert_eq!(result, None);
+        let output_str = String::from_utf8(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output_str.trim()).unwrap();
+        assert_eq!(parsed["path"], "/v2/items");
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_fetch_gateway_with_curl_args() {
+        let cli = Cli::create("test-cli").fetch_gateway(
+            "api",
+            EchoFetchHandler,
+            crate::fetch::FetchGatewayOptions {
+                description: None,
+                base_path: None,
+                output_policy: None,
+            },
+        );
+
+        let mut output = Vec::new();
+        let argv = vec![
+            "api".to_string(),
+            "-X".to_string(),
+            "POST".to_string(),
+            "-d".to_string(),
+            r#"{"name":"test"}"#.to_string(),
+            "-H".to_string(),
+            "Content-Type: application/json".to_string(),
+            "users".to_string(),
+        ];
+        let result = cli.serve_to(argv, &mut output, false).await.unwrap();
+
+        assert_eq!(result, None);
+        let output_str = String::from_utf8(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output_str.trim()).unwrap();
+        assert_eq!(parsed["path"], "/users");
+        assert_eq!(parsed["method"], "POST");
+        assert_eq!(parsed["body"], r#"{"name":"test"}"#);
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_fetch_gateway_error_returns_exit_code() {
+        let cli = Cli::create("test-cli").fetch_gateway(
+            "api",
+            ErrorFetchHandler,
+            crate::fetch::FetchGatewayOptions {
+                description: None,
+                base_path: None,
+                output_policy: None,
+            },
+        );
+
+        let mut output = Vec::new();
+        let argv = vec!["api".to_string(), "users".to_string()];
+        let result = cli.serve_to(argv, &mut output, false).await.unwrap();
+
+        assert_eq!(result, Some(1));
+        let output_str = String::from_utf8(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output_str.trim()).unwrap();
+        assert_eq!(parsed["ok"], false);
+        assert_eq!(parsed["status"], 500);
+    }
+
+    #[test]
+    fn test_collect_help_commands_includes_fetch_gateway() {
+        let mut commands = BTreeMap::new();
+        commands.insert(
+            "api".to_string(),
+            CommandEntry::FetchGateway {
+                description: Some("API gateway".to_string()),
+                base_path: None,
+                output_policy: None,
+                handler: Arc::new(EchoFetchHandler),
+            },
+        );
+        commands.insert(
+            "deploy".to_string(),
+            CommandEntry::Leaf(Arc::new(CommandDef {
+                name: "deploy".to_string(),
+                description: Some("Deploy the app".to_string()),
+                args_fields: vec![],
+                options_fields: vec![],
+                env_fields: vec![],
+                aliases: std::collections::HashMap::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(NoopHandler),
+                middleware: vec![],
+                output_schema: None,
+            })),
+        );
+
+        let summaries = collect_help_commands(&commands);
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].name, "api");
+        assert_eq!(
+            summaries[0].description.as_deref(),
+            Some("API gateway")
+        );
+        assert_eq!(summaries[1].name, "deploy");
+    }
+
+    #[test]
+    fn test_resolve_gateway_in_group() {
+        let mut sub_commands = BTreeMap::new();
+        sub_commands.insert(
+            "fetch".to_string(),
+            CommandEntry::FetchGateway {
+                description: Some("Fetch endpoint".to_string()),
+                base_path: Some("/api".to_string()),
+                output_policy: None,
+                handler: Arc::new(EchoFetchHandler),
+            },
+        );
+
+        let mut commands = BTreeMap::new();
+        commands.insert(
+            "service".to_string(),
+            CommandEntry::Group {
+                description: Some("Service commands".to_string()),
+                commands: sub_commands,
+                middleware: vec![],
+                output_policy: None,
+            },
+        );
+
+        let tokens = vec![
+            "service".to_string(),
+            "fetch".to_string(),
+            "users".to_string(),
+        ];
+        match resolve_command(&commands, &tokens) {
+            ResolvedCommand::Gateway {
+                path,
+                rest,
+                base_path,
+                ..
+            } => {
+                assert_eq!(path, "service fetch");
+                assert_eq!(rest, vec!["users"]);
+                assert_eq!(base_path.as_deref(), Some("/api"));
+            }
+            _ => panic!("Expected Gateway"),
+        }
+    }
+
 }
