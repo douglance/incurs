@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/incur", "crates/incur-macros", "crates/incur-cli"]
+resolver = "2"
