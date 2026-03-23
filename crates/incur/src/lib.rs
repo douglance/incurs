@@ -21,3 +21,6 @@ pub mod skill;
 pub mod streaming;
 pub mod sync_mcp;
 pub mod sync_skills;
+
+// Re-export derive macros so users can write `#[derive(incur::Args)]`
+pub use incur_macros::{IncurArgs as Args, IncurEnv as Env, IncurOptions as Options};

@@ -77,6 +77,112 @@ pub struct CommandDef {
     pub output_schema: Option<Value>,
 }
 
+impl CommandDef {
+    /// Creates a new command builder with the given name and handler.
+    ///
+    /// Use with derive macros for ergonomic command definition:
+    /// ```ignore
+    /// #[derive(incur::Args, serde::Deserialize)]
+    /// struct GetArgs {
+    ///     /// The user ID
+    ///     id: u64,
+    /// }
+    ///
+    /// #[derive(incur::Options, serde::Deserialize)]
+    /// struct GetOptions {
+    ///     /// Output format
+    ///     #[incur(alias = "f", default = "json")]
+    ///     format: String,
+    /// }
+    ///
+    /// CommandDef::build("get", handler)
+    ///     .description("Get a user")
+    ///     .args::<GetArgs>()
+    ///     .options::<GetOptions>()
+    ///     .done()
+    /// ```
+    pub fn build(name: impl Into<String>, handler: impl CommandHandler + 'static) -> CommandBuilder {
+        CommandBuilder {
+            def: CommandDef {
+                name: name.into(),
+                description: None,
+                args_fields: Vec::new(),
+                options_fields: Vec::new(),
+                env_fields: Vec::new(),
+                aliases: HashMap::new(),
+                examples: Vec::new(),
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(handler),
+                middleware: Vec::new(),
+                output_schema: None,
+            },
+        }
+    }
+}
+
+/// Builder for constructing a [`CommandDef`] ergonomically with derive macros.
+pub struct CommandBuilder {
+    def: CommandDef,
+}
+
+impl CommandBuilder {
+    /// Sets the command description.
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.def.description = Some(desc.into());
+        self
+    }
+
+    /// Sets positional args from a type that implements `IncurSchema`.
+    pub fn args<T: crate::schema::IncurSchema>(mut self) -> Self {
+        self.def.args_fields = T::fields();
+        self
+    }
+
+    /// Sets named options from a type that implements `IncurSchema`.
+    /// Automatically extracts aliases from field metadata.
+    pub fn options<T: crate::schema::IncurSchema>(mut self) -> Self {
+        let fields = T::fields();
+        for field in &fields {
+            if let Some(alias) = field.alias {
+                self.def.aliases.insert(field.name.to_string(), alias);
+            }
+        }
+        self.def.options_fields = fields;
+        self
+    }
+
+    /// Sets env var bindings from a type that implements `IncurSchema`.
+    pub fn env<T: crate::schema::IncurSchema>(mut self) -> Self {
+        self.def.env_fields = T::fields();
+        self
+    }
+
+    /// Adds usage examples.
+    pub fn examples(mut self, examples: Vec<Example>) -> Self {
+        self.def.examples = examples;
+        self
+    }
+
+    /// Sets the hint text.
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.def.hint = Some(hint.into());
+        self
+    }
+
+    /// Sets the default output format.
+    pub fn format(mut self, format: crate::output::Format) -> Self {
+        self.def.format = Some(format);
+        self
+    }
+
+    /// Finishes building and returns the [`CommandDef`].
+    pub fn done(self) -> CommandDef {
+        self.def
+    }
+}
+
 /// Trait for command handlers.
 ///
 /// This trait provides type erasure for command handlers so that the framework
