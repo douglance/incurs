@@ -2,9 +2,12 @@
 name = "incurs"
 version = "0.1.0"
 edition = "2024"
+description = "A declarative CLI framework for Rust with built-in JSON/CSV output, MCP support, and shell completions"
+license = "MIT"
+repository = "https://github.com/douglance/incurs"
 
 [dependencies]
-incurs-macros = { path = "../incurs-macros" }
+incurs-macros = { path = "../incurs-macros", version = "0.1.0" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

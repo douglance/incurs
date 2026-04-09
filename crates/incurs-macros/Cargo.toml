@@ -2,6 +2,9 @@
 name = "incurs-macros"
 version = "0.1.0"
 edition = "2024"
+description = "Derive macros for the incurs CLI framework"
+license = "MIT"
+repository = "https://github.com/douglance/incurs"
 
 [lib]
 proc-macro = true
