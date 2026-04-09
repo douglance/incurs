@@ -6,7 +6,7 @@
 //! - **`IncurOptions`** — named options and flags
 //! - **`IncurEnv`** — environment-variable bindings
 //!
-//! All three macros read doc comments as field descriptions and support `#[incur(...)]`
+//! All three macros read doc comments as field descriptions and support `#[incurs(...)]`
 //! attributes for fine-grained control.
 
 mod args;
@@ -32,14 +32,14 @@ use proc_macro::TokenStream;
 ///
 /// Fields are treated as positional args in declaration order. `Option<T>` fields
 /// are optional; all others are required.
-#[proc_macro_derive(IncurArgs, attributes(incur))]
+#[proc_macro_derive(IncurArgs, attributes(incurs))]
 pub fn derive_incur_args(input: TokenStream) -> TokenStream {
     args::derive(input)
 }
 
 /// Derive `IncurSchema` for a named-options struct.
 ///
-/// # Supported `#[incur(...)]` attributes
+/// # Supported `#[incurs(...)]` attributes
 ///
 /// | Attribute | Effect |
 /// |-----------|--------|
@@ -54,26 +54,26 @@ pub fn derive_incur_args(input: TokenStream) -> TokenStream {
 /// #[derive(IncurOptions, serde::Deserialize, schemars::JsonSchema)]
 /// struct ListOptions {
 ///     /// Maximum number of results
-///     #[incur(alias = "n", default = 10)]
+///     #[incurs(alias = "n", default = 10)]
 ///     limit: u32,
 ///     /// Include archived items
-///     #[incur(alias = "a")]
+///     #[incurs(alias = "a")]
 ///     archived: bool,
 ///     /// Filter by tag (repeatable)
 ///     tag: Vec<String>,
 ///     /// Verbosity level
-///     #[incur(count)]
+///     #[incurs(count)]
 ///     verbose: u8,
 /// }
 /// ```
-#[proc_macro_derive(IncurOptions, attributes(incur))]
+#[proc_macro_derive(IncurOptions, attributes(incurs))]
 pub fn derive_incur_options(input: TokenStream) -> TokenStream {
     options::derive(input)
 }
 
 /// Derive `IncurSchema` for an environment-variable binding struct.
 ///
-/// # Supported `#[incur(...)]` attributes
+/// # Supported `#[incurs(...)]` attributes
 ///
 /// | Attribute | Effect |
 /// |-----------|--------|
@@ -86,14 +86,14 @@ pub fn derive_incur_options(input: TokenStream) -> TokenStream {
 /// #[derive(IncurEnv, serde::Deserialize, schemars::JsonSchema)]
 /// struct AppEnv {
 ///     /// API token for authentication
-///     #[incur(env = "API_TOKEN")]
+///     #[incurs(env = "API_TOKEN")]
 ///     api_token: String,
 ///     /// Base URL
-///     #[incur(env = "BASE_URL", default = "https://api.example.com")]
+///     #[incurs(env = "BASE_URL", default = "https://api.example.com")]
 ///     base_url: String,
 /// }
 /// ```
-#[proc_macro_derive(IncurEnv, attributes(incur))]
+#[proc_macro_derive(IncurEnv, attributes(incurs))]
 pub fn derive_incur_env(input: TokenStream) -> TokenStream {
     env::derive(input)
 }

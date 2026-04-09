@@ -130,7 +130,7 @@ pub fn parse_incur_attrs(attrs: &[Attribute]) -> IncurAttr {
     let mut result = IncurAttr::default();
 
     for attr in attrs {
-        if !attr.path().is_ident("incur") {
+        if !attr.path().is_ident("incurs") {
             continue;
         }
         // Parse the comma-separated list inside #[incur(...)].
