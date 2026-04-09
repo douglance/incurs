@@ -1142,7 +1142,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "incur"
+name = "incurs"
 version = "0.1.0"
 dependencies = [
  "async-stream",
@@ -1152,7 +1152,7 @@ dependencies = [
  "dirs",
  "futures",
  "hyper",
- "incur-macros",
+ "incurs-macros",
  "oas3",
  "openapiv3",
  "regex-lite",
@@ -1172,15 +1172,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "incur-cli"
+name = "incurs-cli"
 version = "0.1.0"
 dependencies = [
- "incur",
+ "incurs",
  "tokio",
 ]
 
 [[package]]
-name = "incur-macros"
+name = "incurs-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
