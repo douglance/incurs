@@ -33,10 +33,7 @@ pub enum CtaEntry {
 /// Result of executing a command.
 pub enum CommandResult {
     /// Successful execution with data.
-    Ok {
-        data: Value,
-        cta: Option<CtaBlock>,
-    },
+    Ok { data: Value, cta: Option<CtaBlock> },
     /// Failed execution with error details.
     Error {
         code: String,

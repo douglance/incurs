@@ -6,7 +6,7 @@
 //!
 //! Ported from `src/internal/configSchema.ts`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 use crate::cli::CommandEntry;
@@ -39,9 +39,7 @@ pub fn from_command_tree(
 
     // Insert $schema property at the root level.
     if let Value::Object(ref mut map) = node {
-        let props = map
-            .entry("properties")
-            .or_insert_with(|| json!({}));
+        let props = map.entry("properties").or_insert_with(|| json!({}));
         if let Value::Object(props_map) = props {
             props_map.insert("$schema".to_string(), json!({ "type": "string" }));
         }
@@ -55,10 +53,7 @@ pub fn from_command_tree(
 /// Each level can have:
 /// - An `options` property (from `FieldMeta` slices)
 /// - A `commands` property (from subcommands in the tree)
-fn build_node(
-    commands: &BTreeMap<String, CommandEntry>,
-    options: &[FieldMeta],
-) -> Value {
+fn build_node(commands: &BTreeMap<String, CommandEntry>, options: &[FieldMeta]) -> Value {
     let mut properties = serde_json::Map::new();
 
     // Add `options` property from the options schema fields.
@@ -85,10 +80,7 @@ fn build_node(
                 ..
             } => {
                 // Recurse into group without options (groups don't have their own options).
-                command_props.insert(
-                    name.clone(),
-                    build_node(sub_commands, &[]),
-                );
+                command_props.insert(name.clone(), build_node(sub_commands, &[]));
             }
             CommandEntry::Leaf(def) => {
                 // Leaf command: use its options_fields.
@@ -147,7 +139,10 @@ fn fields_to_json_schema_properties(fields: &[FieldMeta]) -> serde_json::Map<Str
             }
             FieldType::Array(inner) => {
                 prop.insert("type".to_string(), json!("array"));
-                prop.insert("items".to_string(), json!({ "type": field_type_to_json_schema_type(inner) }));
+                prop.insert(
+                    "items".to_string(),
+                    json!({ "type": field_type_to_json_schema_type(inner) }),
+                );
             }
             FieldType::Enum(values) => {
                 prop.insert("type".to_string(), json!("string"));
@@ -228,11 +223,7 @@ mod tests {
         }
     }
 
-    fn make_field_with_desc(
-        name: &'static str,
-        ft: FieldType,
-        desc: &'static str,
-    ) -> FieldMeta {
+    fn make_field_with_desc(name: &'static str, ft: FieldType, desc: &'static str) -> FieldMeta {
         FieldMeta {
             name,
             cli_name: crate::schema::to_kebab(name),
@@ -300,10 +291,7 @@ mod tests {
         let mut commands = BTreeMap::new();
         commands.insert(
             "deploy".to_string(),
-            make_leaf(
-                "deploy",
-                vec![make_field("environment", FieldType::String)],
-            ),
+            make_leaf("deploy", vec![make_field("environment", FieldType::String)]),
         );
 
         let schema = from_command_tree(&commands, &[]);

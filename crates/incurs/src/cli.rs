@@ -11,7 +11,7 @@
 //!
 //! Ported from `src/Cli.ts`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::IsTerminal;
 use std::sync::Arc;
 
@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use crate::command::{self, CommandDef, ExecuteOptions, InternalResult, ParseMode};
 use crate::config;
-use crate::fetch::{self, FetchHandler, FetchGatewayOptions};
+use crate::fetch::{self, FetchGatewayOptions, FetchHandler};
 use crate::filter;
 use crate::help::{self, CommandSummary, FormatCommandOptions, FormatRootOptions};
 use crate::middleware::MiddlewareFn;
@@ -208,8 +208,7 @@ impl Cli {
         if let Some(root_cmd) = cli.root_command {
             if cli.commands.is_empty() {
                 // Leaf CLI: mount the root command directly as a leaf.
-                self.commands
-                    .insert(cli.name, CommandEntry::Leaf(root_cmd));
+                self.commands.insert(cli.name, CommandEntry::Leaf(root_cmd));
                 return self;
             }
             // Has both root command and subcommands — mount as a group but
@@ -295,7 +294,10 @@ impl Cli {
         };
 
         // --- Step 2: Handle --version ---
-        if builtin.version && !builtin.help && let Some(v) = &self.version {
+        if builtin.version
+            && !builtin.help
+            && let Some(v) = &self.version
+        {
             writeln_stdout(v);
             return Ok(());
         }
@@ -308,11 +310,7 @@ impl Cli {
                 let output = skill::generate(&self.name, &commands_info, &groups);
                 writeln_stdout(&output);
             } else {
-                let output = skill::index(
-                    &self.name,
-                    &commands_info,
-                    self.description.as_deref(),
-                );
+                let output = skill::index(&self.name, &commands_info, self.description.as_deref());
                 writeln_stdout(&output);
             }
             return Ok(());
@@ -339,6 +337,290 @@ impl Cli {
                 writeln_stdout("MCP support requires the 'mcp' feature flag.");
                 std::process::exit(1);
             }
+        }
+
+        if let Some(output) = completion_output(
+            &self.name,
+            &self.aliases,
+            &self.commands,
+            self.root_command.as_ref(),
+            &argv,
+            std::env::var("COMPLETE").ok().as_deref(),
+            std::env::var("_COMPLETE_INDEX").ok().as_deref(),
+        ) {
+            writeln_stdout(&output);
+            return Ok(());
+        }
+
+        let builtins = builtin_commands(&self.name);
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "completions") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "completions")
+                .expect("completions builtin must exist");
+            let shell = builtin.rest.get(index + 1).map(|token| token.as_str());
+
+            if builtin.help || shell.is_none() {
+                writeln_stdout(&help::format_command(
+                    &format!("{} completions", self.name),
+                    &FormatCommandOptions {
+                        aliases: None,
+                        args_fields: builtin_def.args_fields.clone(),
+                        config_flag: None,
+                        commands: Vec::new(),
+                        description: Some(builtin_def.description.to_string()),
+                        env_fields: Vec::new(),
+                        examples: Vec::new(),
+                        hint: builtin_def.hint.clone(),
+                        hide_global_options: true,
+                        options_fields: Vec::new(),
+                        option_aliases: HashMap::new(),
+                        root: false,
+                        version: None,
+                    },
+                ));
+                return Ok(());
+            }
+
+            let shell = shell.expect("checked above");
+            if crate::completions::Shell::from_str(shell).is_none() {
+                writeln_stdout(&format_human_error(
+                    "INVALID_SHELL",
+                    &format!("Unknown shell '{shell}'. Supported: bash, fish, nushell, zsh"),
+                ));
+                std::process::exit(1);
+            }
+
+            let output = std::iter::once(self.name.clone())
+                .chain(self.aliases.iter().cloned())
+                .map(|name| {
+                    crate::completions::register(
+                        crate::completions::Shell::from_str(shell).expect("checked above"),
+                        &name,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            writeln_stdout(&output);
+            return Ok(());
+        }
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "skills") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "skills")
+                .expect("skills builtin must exist");
+
+            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+                writeln_stdout(&format_builtin_help(&self.name, builtin_def));
+                return Ok(());
+            }
+
+            if builtin.help {
+                writeln_stdout(&format_builtin_subcommand_help(
+                    &self.name,
+                    builtin_def,
+                    "add",
+                ));
+                return Ok(());
+            }
+
+            let rest = builtin.rest[(index + 2)..].to_vec();
+            let depth = if let Some(depth_index) = rest.iter().position(|token| token == "--depth")
+            {
+                rest.get(depth_index + 1)
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(1)
+            } else if let Some(token) = rest.iter().find(|token| token.starts_with("--depth=")) {
+                token
+                    .split_once('=')
+                    .and_then(|(_, value)| value.parse::<usize>().ok())
+                    .unwrap_or(1)
+            } else {
+                1
+            };
+
+            let result = crate::sync_skills::sync(
+                &self.name,
+                &collect_command_info(&self.commands, &[]),
+                &crate::sync_skills::SyncOptions {
+                    cwd: None,
+                    depth: Some(depth),
+                    description: self.description.clone(),
+                    global: !rest.iter().any(|token| token == "--no-global"),
+                    include: None,
+                },
+            )
+            .await;
+
+            match result {
+                Ok(result) => {
+                    let mut lines = vec![format!(
+                        "Synced {} skill{}",
+                        result.skills.len(),
+                        if result.skills.len() == 1 { "" } else { "s" },
+                    )];
+                    for skill in &result.skills {
+                        lines.push(format!("  {}", skill.name));
+                    }
+                    writeln_stdout(&lines.join("\n"));
+
+                    if builtin.verbose || builtin.format_explicit {
+                        let mut output = serde_json::Map::new();
+                        output.insert(
+                            "skills".to_string(),
+                            Value::Array(
+                                result
+                                    .paths
+                                    .iter()
+                                    .map(|path| Value::String(path.to_string_lossy().to_string()))
+                                    .collect(),
+                            ),
+                        );
+                        if builtin.verbose {
+                            output.insert(
+                                "agents".to_string(),
+                                Value::Array(
+                                    result
+                                        .agents
+                                        .iter()
+                                        .map(|agent| {
+                                            serde_json::json!({
+                                                "agent": agent.agent,
+                                                "path": agent.path.to_string_lossy().to_string(),
+                                                "mode": match agent.mode {
+                                                    crate::agents::InstallMode::Symlink => "symlink",
+                                                    crate::agents::InstallMode::Copy => "copy",
+                                                },
+                                            })
+                                        })
+                                        .collect(),
+                                ),
+                            );
+                        }
+                        writeln_stdout(&format_value(
+                            &Value::Object(output),
+                            if builtin.format_explicit {
+                                builtin.format
+                            } else {
+                                Format::Toon
+                            },
+                        ));
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    writeln_stdout(&format_human_error(
+                        "SYNC_SKILLS_FAILED",
+                        &error.to_string(),
+                    ));
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "mcp") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "mcp")
+                .expect("mcp builtin must exist");
+
+            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+                writeln_stdout(&format_builtin_help(&self.name, builtin_def));
+                return Ok(());
+            }
+
+            if builtin.help {
+                writeln_stdout(&format_builtin_subcommand_help(
+                    &self.name,
+                    builtin_def,
+                    "add",
+                ));
+                return Ok(());
+            }
+
+            let rest = builtin.rest[(index + 2)..].to_vec();
+            let mut command = None;
+            let mut agents = Vec::new();
+            let mut cursor = 0;
+
+            while cursor < rest.len() {
+                if (rest[cursor] == "--command" || rest[cursor] == "-c")
+                    && let Some(value) = rest.get(cursor + 1)
+                {
+                    command = Some(value.clone());
+                    cursor += 2;
+                    continue;
+                }
+                if rest[cursor] == "--agent"
+                    && let Some(value) = rest.get(cursor + 1)
+                {
+                    agents.push(value.clone());
+                    cursor += 2;
+                    continue;
+                }
+                cursor += 1;
+            }
+
+            let result = crate::sync_mcp::register(
+                &self.name,
+                &crate::sync_mcp::RegisterOptions {
+                    agents: if agents.is_empty() {
+                        None
+                    } else {
+                        Some(agents)
+                    },
+                    command,
+                    global: !rest.iter().any(|token| token == "--no-global"),
+                },
+            )
+            .await;
+
+            match result {
+                Ok(result) => {
+                    let mut lines = vec![format!("Registered {} as MCP server", self.name)];
+                    if !result.agents.is_empty() {
+                        lines.push(format!("Agents: {}", result.agents.join(", ")));
+                    }
+                    writeln_stdout(&lines.join("\n"));
+
+                    if builtin.verbose || builtin.format_explicit {
+                        writeln_stdout(&format_value(
+                            &serde_json::json!({
+                                "name": self.name,
+                                "command": result.command,
+                                "agents": result.agents,
+                            }),
+                            if builtin.format_explicit {
+                                builtin.format
+                            } else {
+                                Format::Toon
+                            },
+                        ));
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    writeln_stdout(&format_human_error("MCP_ADD_FAILED", &error.to_string()));
+                    std::process::exit(1);
+                }
+            }
+        }
+
+        if builtin.config_schema {
+            if self.config.is_none() {
+                writeln_stdout(&format_human_error(
+                    "CONFIG_SCHEMA_UNAVAILABLE",
+                    "--config-schema requires CLI config support.",
+                ));
+                std::process::exit(1);
+            }
+            writeln_stdout(&format_config_schema(
+                self.root_command.as_ref(),
+                &self.commands,
+            )?);
+            return Ok(());
         }
 
         // --- Step 3: Handle --help at root level ---
@@ -404,11 +686,7 @@ impl Cli {
         // --- Step 5: Handle --help ---
         if builtin.help {
             match &resolved {
-                ResolvedCommand::Leaf {
-                    command,
-                    path,
-                    ..
-                } => {
+                ResolvedCommand::Leaf { command, path, .. } => {
                     let is_root = path == &self.name;
                     let help_cmds = if is_root && !self.commands.is_empty() {
                         collect_help_commands(&self.commands)
@@ -439,11 +717,7 @@ impl Cli {
                             options_fields: command.options_fields.clone(),
                             option_aliases: command.aliases.clone(),
                             root: is_root,
-                            version: if is_root {
-                                self.version.clone()
-                            } else {
-                                None
-                            },
+                            version: if is_root { self.version.clone() } else { None },
                         },
                     ));
                 }
@@ -460,7 +734,10 @@ impl Cli {
                     let is_root = path == &self.name;
 
                     // Root with both a handler and subcommands
-                    if is_root && let Some(root_cmd) = &self.root_command && !commands.is_empty() {
+                    if is_root
+                        && let Some(root_cmd) = &self.root_command
+                        && !commands.is_empty()
+                    {
                         writeln_stdout(&format_command_help(
                             &self.name,
                             root_cmd,
@@ -483,11 +760,7 @@ impl Cli {
                                 commands: collect_help_commands(commands),
                                 description: description.clone(),
                                 root: is_root,
-                                version: if is_root {
-                                    self.version.clone()
-                                } else {
-                                    None
-                                },
+                                version: if is_root { self.version.clone() } else { None },
                             },
                         ));
                     }
@@ -633,11 +906,7 @@ impl Cli {
                             None,
                         )
                     } else {
-                        let parent = if path.is_empty() {
-                            &self.name
-                        } else {
-                            &path
-                        };
+                        let parent = if path.is_empty() { &self.name } else { &path };
                         let message = format!("'{error}' is not a command for '{parent}'.");
                         if human {
                             writeln_stdout(&format_human_error("COMMAND_NOT_FOUND", &message));
@@ -684,24 +953,27 @@ impl Cli {
         let policy = effective_output_policy
             .or(command.output_policy)
             .or(self.output_policy);
-        let render_output = !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
+        let render_output =
+            !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
 
         // --- Step 8: Load config defaults ---
         let defaults = if let Some(ref cfg) = self.config {
             if builtin.config_disabled {
                 None
             } else {
-                let config_path = config::resolve_config_path(
-                    builtin.config_path.as_deref(),
-                    &cfg.files,
-                );
+                let config_path =
+                    config::resolve_config_path(builtin.config_path.as_deref(), &cfg.files);
                 if let Some(path) = config_path {
                     match config::load_config(&path) {
                         Ok(tree) => {
-                            match config::extract_command_section(&tree, &self.name, &command_path) {
+                            match config::extract_command_section(&tree, &self.name, &command_path)
+                            {
                                 Ok(section) => section,
                                 Err(e) => {
-                                    writeln_stdout(&format_human_error("CONFIG_ERROR", &e.to_string()));
+                                    writeln_stdout(&format_human_error(
+                                        "CONFIG_ERROR",
+                                        &e.to_string(),
+                                    ));
                                     std::process::exit(1);
                                 }
                             }
@@ -781,7 +1053,10 @@ impl Cli {
                     meta.insert("command".to_string(), Value::String(command_path));
                     meta.insert("duration".to_string(), Value::String(duration_str));
                     if let Some(cta) = &formatted_cta {
-                        meta.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
+                        meta.insert(
+                            "cta".to_string(),
+                            serde_json::to_value(cta).unwrap_or(Value::Null),
+                        );
                     }
                     envelope.insert("meta".to_string(), Value::Object(meta));
                     let output = format_value(&Value::Object(envelope), format);
@@ -799,7 +1074,10 @@ impl Cli {
                     if let Some(cta) = &formatted_cta {
                         if let Value::Object(ref map) = data {
                             let mut out = map.clone();
-                            out.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
+                            out.insert(
+                                "cta".to_string(),
+                                serde_json::to_value(cta).unwrap_or(Value::Null),
+                            );
                             let output = format_value(&Value::Object(out), format);
                             write_with_token_ops(&output, &builtin, writeln_stdout);
                         } else {
@@ -847,7 +1125,10 @@ impl Cli {
                     error_obj.insert("code".to_string(), Value::String(code.clone()));
                     error_obj.insert("message".to_string(), Value::String(message.clone()));
                     if let Some(cta) = &formatted_cta {
-                        error_obj.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
+                        error_obj.insert(
+                            "cta".to_string(),
+                            serde_json::to_value(cta).unwrap_or(Value::Null),
+                        );
                     }
                     writeln_stdout(&format_value(&Value::Object(error_obj), format));
                 }
@@ -935,11 +1216,7 @@ impl Cli {
                 let output = skill::generate(&self.name, &commands_info, &groups);
                 wln!(&output);
             } else {
-                let output = skill::index(
-                    &self.name,
-                    &commands_info,
-                    self.description.as_deref(),
-                );
+                let output = skill::index(&self.name, &commands_info, self.description.as_deref());
                 wln!(&output);
             }
             return Ok(None);
@@ -966,6 +1243,290 @@ impl Cli {
                 wln!("MCP support requires the 'mcp' feature flag.");
                 return Ok(Some(1));
             }
+        }
+
+        if let Some(output) = completion_output(
+            &self.name,
+            &self.aliases,
+            &self.commands,
+            self.root_command.as_ref(),
+            &argv,
+            std::env::var("COMPLETE").ok().as_deref(),
+            std::env::var("_COMPLETE_INDEX").ok().as_deref(),
+        ) {
+            wln!(&output);
+            return Ok(None);
+        }
+
+        let builtins = builtin_commands(&self.name);
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "completions") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "completions")
+                .expect("completions builtin must exist");
+            let shell = builtin.rest.get(index + 1).map(|token| token.as_str());
+
+            if builtin.help || shell.is_none() {
+                wln!(&help::format_command(
+                    &format!("{} completions", self.name),
+                    &FormatCommandOptions {
+                        aliases: None,
+                        args_fields: builtin_def.args_fields.clone(),
+                        config_flag: None,
+                        commands: Vec::new(),
+                        description: Some(builtin_def.description.to_string()),
+                        env_fields: Vec::new(),
+                        examples: Vec::new(),
+                        hint: builtin_def.hint.clone(),
+                        hide_global_options: true,
+                        options_fields: Vec::new(),
+                        option_aliases: HashMap::new(),
+                        root: false,
+                        version: None,
+                    },
+                ));
+                return Ok(None);
+            }
+
+            let shell = shell.expect("checked above");
+            if crate::completions::Shell::from_str(shell).is_none() {
+                wln!(&format_human_error(
+                    "INVALID_SHELL",
+                    &format!("Unknown shell '{shell}'. Supported: bash, fish, nushell, zsh"),
+                ));
+                return Ok(Some(1));
+            }
+
+            let output = std::iter::once(self.name.clone())
+                .chain(self.aliases.iter().cloned())
+                .map(|name| {
+                    crate::completions::register(
+                        crate::completions::Shell::from_str(shell).expect("checked above"),
+                        &name,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            wln!(&output);
+            return Ok(None);
+        }
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "skills") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "skills")
+                .expect("skills builtin must exist");
+
+            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+                wln!(&format_builtin_help(&self.name, builtin_def));
+                return Ok(None);
+            }
+
+            if builtin.help {
+                wln!(&format_builtin_subcommand_help(
+                    &self.name,
+                    builtin_def,
+                    "add"
+                ));
+                return Ok(None);
+            }
+
+            let rest = builtin.rest[(index + 2)..].to_vec();
+            let depth = if let Some(depth_index) = rest.iter().position(|token| token == "--depth")
+            {
+                rest.get(depth_index + 1)
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .unwrap_or(1)
+            } else if let Some(token) = rest.iter().find(|token| token.starts_with("--depth=")) {
+                token
+                    .split_once('=')
+                    .and_then(|(_, value)| value.parse::<usize>().ok())
+                    .unwrap_or(1)
+            } else {
+                1
+            };
+
+            let result = crate::sync_skills::sync(
+                &self.name,
+                &collect_command_info(&self.commands, &[]),
+                &crate::sync_skills::SyncOptions {
+                    cwd: None,
+                    depth: Some(depth),
+                    description: self.description.clone(),
+                    global: !rest.iter().any(|token| token == "--no-global"),
+                    include: None,
+                },
+            )
+            .await;
+
+            match result {
+                Ok(result) => {
+                    let mut lines = vec![format!(
+                        "Synced {} skill{}",
+                        result.skills.len(),
+                        if result.skills.len() == 1 { "" } else { "s" },
+                    )];
+                    for skill in &result.skills {
+                        lines.push(format!("  {}", skill.name));
+                    }
+                    wln!(&lines.join("\n"));
+
+                    if builtin.verbose || builtin.format_explicit {
+                        let mut output = serde_json::Map::new();
+                        output.insert(
+                            "skills".to_string(),
+                            Value::Array(
+                                result
+                                    .paths
+                                    .iter()
+                                    .map(|path| Value::String(path.to_string_lossy().to_string()))
+                                    .collect(),
+                            ),
+                        );
+                        if builtin.verbose {
+                            output.insert(
+                                "agents".to_string(),
+                                Value::Array(
+                                    result
+                                        .agents
+                                        .iter()
+                                        .map(|agent| {
+                                            serde_json::json!({
+                                                "agent": agent.agent,
+                                                "path": agent.path.to_string_lossy().to_string(),
+                                                "mode": match agent.mode {
+                                                    crate::agents::InstallMode::Symlink => "symlink",
+                                                    crate::agents::InstallMode::Copy => "copy",
+                                                },
+                                            })
+                                        })
+                                        .collect(),
+                                ),
+                            );
+                        }
+                        wln!(&format_value(
+                            &Value::Object(output),
+                            if builtin.format_explicit {
+                                builtin.format
+                            } else {
+                                Format::Toon
+                            },
+                        ));
+                    }
+                    return Ok(None);
+                }
+                Err(error) => {
+                    wln!(&format_human_error(
+                        "SYNC_SKILLS_FAILED",
+                        &error.to_string()
+                    ));
+                    return Ok(Some(1));
+                }
+            }
+        }
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "mcp") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "mcp")
+                .expect("mcp builtin must exist");
+
+            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+                wln!(&format_builtin_help(&self.name, builtin_def));
+                return Ok(None);
+            }
+
+            if builtin.help {
+                wln!(&format_builtin_subcommand_help(
+                    &self.name,
+                    builtin_def,
+                    "add"
+                ));
+                return Ok(None);
+            }
+
+            let rest = builtin.rest[(index + 2)..].to_vec();
+            let mut command = None;
+            let mut agents = Vec::new();
+            let mut cursor = 0;
+
+            while cursor < rest.len() {
+                if (rest[cursor] == "--command" || rest[cursor] == "-c")
+                    && let Some(value) = rest.get(cursor + 1)
+                {
+                    command = Some(value.clone());
+                    cursor += 2;
+                    continue;
+                }
+                if rest[cursor] == "--agent"
+                    && let Some(value) = rest.get(cursor + 1)
+                {
+                    agents.push(value.clone());
+                    cursor += 2;
+                    continue;
+                }
+                cursor += 1;
+            }
+
+            let result = crate::sync_mcp::register(
+                &self.name,
+                &crate::sync_mcp::RegisterOptions {
+                    agents: if agents.is_empty() {
+                        None
+                    } else {
+                        Some(agents)
+                    },
+                    command,
+                    global: !rest.iter().any(|token| token == "--no-global"),
+                },
+            )
+            .await;
+
+            match result {
+                Ok(result) => {
+                    let mut lines = vec![format!("Registered {} as MCP server", self.name)];
+                    if !result.agents.is_empty() {
+                        lines.push(format!("Agents: {}", result.agents.join(", ")));
+                    }
+                    wln!(&lines.join("\n"));
+
+                    if builtin.verbose || builtin.format_explicit {
+                        wln!(&format_value(
+                            &serde_json::json!({
+                                "name": self.name,
+                                "command": result.command,
+                                "agents": result.agents,
+                            }),
+                            if builtin.format_explicit {
+                                builtin.format
+                            } else {
+                                Format::Toon
+                            },
+                        ));
+                    }
+                    return Ok(None);
+                }
+                Err(error) => {
+                    wln!(&format_human_error("MCP_ADD_FAILED", &error.to_string()));
+                    return Ok(Some(1));
+                }
+            }
+        }
+
+        if builtin.config_schema {
+            if self.config.is_none() {
+                wln!(&format_human_error(
+                    "CONFIG_SCHEMA_UNAVAILABLE",
+                    "--config-schema requires CLI config support.",
+                ));
+                return Ok(Some(1));
+            }
+            wln!(&format_config_schema(
+                self.root_command.as_ref(),
+                &self.commands
+            )?);
+            return Ok(None);
         }
 
         // --- Step 3: Handle --help at root level ---
@@ -1027,11 +1588,7 @@ impl Cli {
         // --- Step 5: Handle --help ---
         if builtin.help {
             match &resolved {
-                ResolvedCommand::Leaf {
-                    command,
-                    path,
-                    ..
-                } => {
+                ResolvedCommand::Leaf { command, path, .. } => {
                     let is_root = path == &self.name;
                     let help_cmds = if is_root && !self.commands.is_empty() {
                         collect_help_commands(&self.commands)
@@ -1062,11 +1619,7 @@ impl Cli {
                             options_fields: command.options_fields.clone(),
                             option_aliases: command.aliases.clone(),
                             root: is_root,
-                            version: if is_root {
-                                self.version.clone()
-                            } else {
-                                None
-                            },
+                            version: if is_root { self.version.clone() } else { None },
                         },
                     ));
                 }
@@ -1082,7 +1635,10 @@ impl Cli {
                     };
                     let is_root = path == &self.name;
 
-                    if is_root && let Some(root_cmd) = &self.root_command && !commands.is_empty() {
+                    if is_root
+                        && let Some(root_cmd) = &self.root_command
+                        && !commands.is_empty()
+                    {
                         wln!(&format_command_help(
                             &self.name,
                             root_cmd,
@@ -1105,11 +1661,7 @@ impl Cli {
                                 commands: collect_help_commands(commands),
                                 description: description.clone(),
                                 root: is_root,
-                                version: if is_root {
-                                    self.version.clone()
-                                } else {
-                                    None
-                                },
+                                version: if is_root { self.version.clone() } else { None },
                             },
                         ));
                     }
@@ -1160,7 +1712,7 @@ impl Cli {
             return Ok(None);
         }
 
-                // --- Step 6b: Handle FetchGateway resolution ---
+        // --- Step 6b: Handle FetchGateway resolution ---
         if let ResolvedCommand::Gateway {
             handler,
             path,
@@ -1209,7 +1761,7 @@ impl Cli {
             return Ok(None);
         }
 
-// --- Step 7: Handle command resolution errors ---
+        // --- Step 7: Handle command resolution errors ---
         let (command, command_path, rest, collected_mw, effective_output_policy) = match resolved {
             ResolvedCommand::Leaf {
                 command,
@@ -1254,18 +1806,11 @@ impl Cli {
                             None,
                         )
                     } else {
-                        let parent = if path.is_empty() {
-                            &self.name
-                        } else {
-                            &path
-                        };
+                        let parent = if path.is_empty() { &self.name } else { &path };
                         let message = format!("'{error}' is not a command for '{parent}'.");
                         if human {
                             wln!(&format_human_error("COMMAND_NOT_FOUND", &message));
-                            wln!(&format!(
-                                "\nSuggested commands:\n  {} --help",
-                                self.name
-                            ));
+                            wln!(&format!("\nSuggested commands:\n  {} --help", self.name));
                         } else {
                             let cta_json = serde_json::json!({
                                 "code": "COMMAND_NOT_FOUND",
@@ -1315,21 +1860,21 @@ impl Cli {
         let policy = effective_output_policy
             .or(command.output_policy)
             .or(self.output_policy);
-        let render_output = !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
+        let render_output =
+            !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
 
         // --- Step 8: Load config defaults ---
         let defaults = if let Some(ref cfg) = self.config {
             if builtin.config_disabled {
                 None
             } else {
-                let config_path = config::resolve_config_path(
-                    builtin.config_path.as_deref(),
-                    &cfg.files,
-                );
+                let config_path =
+                    config::resolve_config_path(builtin.config_path.as_deref(), &cfg.files);
                 if let Some(path) = config_path {
                     match config::load_config(&path) {
                         Ok(tree) => {
-                            match config::extract_command_section(&tree, &self.name, &command_path) {
+                            match config::extract_command_section(&tree, &self.name, &command_path)
+                            {
                                 Ok(section) => section,
                                 Err(e) => {
                                     wln!(&format_human_error("CONFIG_ERROR", &e.to_string()));
@@ -1423,7 +1968,10 @@ impl Cli {
                     meta.insert("command".to_string(), Value::String(command_path));
                     meta.insert("duration".to_string(), Value::String(duration_str));
                     if let Some(cta) = &formatted_cta {
-                        meta.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
+                        meta.insert(
+                            "cta".to_string(),
+                            serde_json::to_value(cta).unwrap_or(Value::Null),
+                        );
                     }
                     envelope.insert("meta".to_string(), Value::Object(meta));
                     let output = format_value(&Value::Object(envelope), format);
@@ -1466,7 +2014,10 @@ impl Cli {
                     meta.insert("command".to_string(), Value::String(command_path));
                     meta.insert("duration".to_string(), Value::String(duration_str));
                     if let Some(cta) = &formatted_cta {
-                        meta.insert("cta".to_string(), serde_json::to_value(cta).unwrap_or(Value::Null));
+                        meta.insert(
+                            "cta".to_string(),
+                            serde_json::to_value(cta).unwrap_or(Value::Null),
+                        );
                     }
                     envelope.insert("meta".to_string(), Value::Object(meta));
                     wln!(&format_value(&Value::Object(envelope), format));
@@ -1575,10 +2126,7 @@ enum ResolvedCommand<'a> {
         commands: &'a BTreeMap<String, CommandEntry>,
     },
     /// No matching command was found.
-    Error {
-        error: String,
-        path: String,
-    },
+    Error { error: String, path: String },
 }
 
 /// Walks argv tokens through the command tree to find the target command.
@@ -1592,7 +2140,7 @@ fn resolve_command<'a>(
             return ResolvedCommand::Error {
                 error: "(none)".to_string(),
                 path: String::new(),
-            }
+            };
         }
     };
 
@@ -1602,7 +2150,7 @@ fn resolve_command<'a>(
             return ResolvedCommand::Error {
                 error: first.clone(),
                 path: String::new(),
-            }
+            };
         }
     };
 
@@ -1642,7 +2190,7 @@ fn resolve_command<'a>(
                             path: path.join(" "),
                             description: description.clone(),
                             commands: sub_commands,
-                        }
+                        };
                     }
                 };
 
@@ -1656,7 +2204,7 @@ fn resolve_command<'a>(
                         return ResolvedCommand::Error {
                             error: next.clone(),
                             path: path.join(" "),
-                        }
+                        };
                     }
                 }
             }
@@ -1698,6 +2246,7 @@ struct BuiltinFlags {
     help: bool,
     version: bool,
     schema: bool,
+    config_schema: bool,
     config_path: Option<String>,
     config_disabled: bool,
     rest: Vec<String>,
@@ -1716,6 +2265,7 @@ fn extract_builtin_flags(
     let mut help = false;
     let mut version = false;
     let mut schema = false;
+    let mut config_schema = false;
     let mut format = Format::Toon;
     let mut format_explicit = false;
     let mut config_path: Option<String> = None;
@@ -1748,6 +2298,8 @@ fn extract_builtin_flags(
             version = true;
         } else if token == "--schema" {
             schema = true;
+        } else if token == "--config-schema" {
+            config_schema = true;
         } else if token == "--json" {
             format = Format::Json;
             format_explicit = true;
@@ -1842,6 +2394,7 @@ fn extract_builtin_flags(
         help,
         version,
         schema,
+        config_schema,
         config_path,
         config_disabled,
         rest,
@@ -1952,7 +2505,12 @@ fn format_cta_block(name: &str, block: Option<&CtaBlock>) -> Option<FormattedCta
 /// Formats a CTA block for human-readable TTY output.
 fn format_human_cta(cta: &FormattedCtaBlock) -> String {
     let mut lines = vec![String::new(), cta.description.clone()];
-    let max_len = cta.commands.iter().map(|c| c.command.len()).max().unwrap_or(0);
+    let max_len = cta
+        .commands
+        .iter()
+        .map(|c| c.command.len())
+        .max()
+        .unwrap_or(0);
     for c in &cta.commands {
         let desc = match &c.description {
             Some(d) => {
@@ -2008,9 +2566,7 @@ fn collect_command_info(
                     output_schema: def.output_schema.clone(),
                 });
             }
-            CommandEntry::Group {
-                commands: sub, ..
-            } => {
+            CommandEntry::Group { commands: sub, .. } => {
                 result.extend(collect_command_info(sub, &path_parts));
             }
             CommandEntry::FetchGateway { .. } => {}
@@ -2081,6 +2637,388 @@ fn format_command_help(
             version: version.map(|s| s.to_string()),
         },
     )
+}
+
+struct BuiltinCommand {
+    name: &'static str,
+    description: &'static str,
+    args_fields: Vec<FieldMeta>,
+    hint: Option<String>,
+    subcommands: Vec<BuiltinSubcommand>,
+}
+
+struct BuiltinSubcommand {
+    name: &'static str,
+    description: &'static str,
+    options_fields: Vec<FieldMeta>,
+    option_aliases: HashMap<String, char>,
+}
+
+fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
+    let completions_rows = [
+        (
+            "bash",
+            format!("eval \"$({cli_name} completions bash)\""),
+            "# add to ~/.bashrc".to_string(),
+        ),
+        (
+            "fish",
+            format!("{cli_name} completions fish | source"),
+            "# add to ~/.config/fish/config.fish".to_string(),
+        ),
+        (
+            "nushell",
+            format!("see `{cli_name} completions nushell`"),
+            "# add to config.nu".to_string(),
+        ),
+        (
+            "zsh",
+            format!("eval \"$({cli_name} completions zsh)\""),
+            "# add to ~/.zshrc".to_string(),
+        ),
+    ];
+    let shell_w = completions_rows
+        .iter()
+        .map(|(shell, _, _)| shell.len())
+        .max()
+        .unwrap_or(0);
+    let cmd_w = completions_rows
+        .iter()
+        .map(|(_, cmd, _)| cmd.len())
+        .max()
+        .unwrap_or(0);
+
+    vec![
+        BuiltinCommand {
+            name: "completions",
+            description: "Generate shell completion script",
+            args_fields: vec![FieldMeta {
+                name: "shell",
+                cli_name: "shell".to_string(),
+                description: Some("Shell to generate completions for"),
+                field_type: crate::schema::FieldType::Enum(
+                    ["bash", "fish", "nushell", "zsh"]
+                        .into_iter()
+                        .map(|value| value.to_string())
+                        .collect(),
+                ),
+                required: true,
+                default: None,
+                alias: None,
+                deprecated: false,
+                env_name: None,
+            }],
+            hint: Some(format!(
+                "Setup:\n{}",
+                completions_rows
+                    .iter()
+                    .map(|(shell, cmd, comment)| {
+                        format!("  {:<shell_w$}  {:<cmd_w$}  {}", shell, cmd, comment)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )),
+            subcommands: Vec::new(),
+        },
+        BuiltinCommand {
+            name: "mcp",
+            description: "Register as MCP server",
+            args_fields: Vec::new(),
+            hint: None,
+            subcommands: vec![BuiltinSubcommand {
+                name: "add",
+                description: "Register as MCP server",
+                options_fields: vec![
+                    FieldMeta {
+                        name: "agent",
+                        cli_name: "agent".to_string(),
+                        description: Some("Target a specific agent (e.g. claude-code, cursor)"),
+                        field_type: crate::schema::FieldType::String,
+                        required: false,
+                        default: None,
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "command",
+                        cli_name: "command".to_string(),
+                        description: Some(
+                            "Override the command agents will run (e.g. \"my-cli --mcp\")",
+                        ),
+                        field_type: crate::schema::FieldType::String,
+                        required: false,
+                        default: None,
+                        alias: Some('c'),
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "no_global",
+                        cli_name: "no-global".to_string(),
+                        description: Some("Install to project instead of globally"),
+                        field_type: crate::schema::FieldType::Boolean,
+                        required: false,
+                        default: Some(Value::Bool(false)),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                ],
+                option_aliases: HashMap::from([(String::from("command"), 'c')]),
+            }],
+        },
+        BuiltinCommand {
+            name: "skills",
+            description: "Sync skill files to agents",
+            args_fields: Vec::new(),
+            hint: None,
+            subcommands: vec![BuiltinSubcommand {
+                name: "add",
+                description: "Sync skill files to agents",
+                options_fields: vec![
+                    FieldMeta {
+                        name: "depth",
+                        cli_name: "depth".to_string(),
+                        description: Some("Grouping depth for skill files (default: 1)"),
+                        field_type: crate::schema::FieldType::Number,
+                        required: false,
+                        default: Some(Value::Number(serde_json::Number::from(1))),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "no_global",
+                        cli_name: "no-global".to_string(),
+                        description: Some("Install to project instead of globally"),
+                        field_type: crate::schema::FieldType::Boolean,
+                        required: false,
+                        default: Some(Value::Bool(false)),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                ],
+                option_aliases: HashMap::new(),
+            }],
+        },
+    ]
+}
+
+fn format_builtin_help(cli_name: &str, builtin: &BuiltinCommand) -> String {
+    help::format_root(
+        &format!("{cli_name} {}", builtin.name),
+        &FormatRootOptions {
+            aliases: None,
+            config_flag: None,
+            commands: builtin
+                .subcommands
+                .iter()
+                .map(|sub| CommandSummary {
+                    name: sub.name.to_string(),
+                    description: Some(sub.description.to_string()),
+                })
+                .collect(),
+            description: Some(builtin.description.to_string()),
+            root: false,
+            version: None,
+        },
+    )
+}
+
+fn format_builtin_subcommand_help(
+    cli_name: &str,
+    builtin: &BuiltinCommand,
+    sub_name: &str,
+) -> String {
+    let sub = builtin.subcommands.iter().find(|sub| sub.name == sub_name);
+
+    help::format_command(
+        &format!("{cli_name} {} {sub_name}", builtin.name),
+        &FormatCommandOptions {
+            aliases: None,
+            args_fields: Vec::new(),
+            config_flag: None,
+            commands: Vec::new(),
+            description: sub.map(|item| item.description.to_string()),
+            env_fields: Vec::new(),
+            examples: Vec::new(),
+            hint: None,
+            hide_global_options: true,
+            options_fields: sub
+                .map(|item| item.options_fields.clone())
+                .unwrap_or_default(),
+            option_aliases: sub
+                .map(|item| item.option_aliases.clone())
+                .unwrap_or_default(),
+            root: false,
+            version: None,
+        },
+    )
+}
+
+fn builtin_command_index(tokens: &[String], cli_name: &str, builtin_name: &str) -> Option<usize> {
+    if tokens.first().map(|token| token.as_str()) == Some(builtin_name) {
+        return Some(0);
+    }
+    if tokens.first().map(|token| token.as_str()) == Some(cli_name)
+        && tokens.get(1).map(|token| token.as_str()) == Some(builtin_name)
+    {
+        return Some(1);
+    }
+    None
+}
+
+fn convert_to_completion_commands(
+    commands: &BTreeMap<String, CommandEntry>,
+) -> BTreeMap<String, crate::completions::CommandEntry> {
+    let mut result = BTreeMap::new();
+
+    for (name, entry) in commands {
+        match entry {
+            CommandEntry::Leaf(def) => {
+                result.insert(
+                    name.clone(),
+                    crate::completions::CommandEntry {
+                        is_group: false,
+                        description: def.description.clone(),
+                        commands: BTreeMap::new(),
+                        options_fields: def.options_fields.clone(),
+                        aliases: def
+                            .aliases
+                            .iter()
+                            .map(|(key, value)| (key.clone(), *value))
+                            .collect(),
+                    },
+                );
+            }
+            CommandEntry::Group {
+                description,
+                commands: sub_commands,
+                ..
+            } => {
+                result.insert(
+                    name.clone(),
+                    crate::completions::CommandEntry {
+                        is_group: true,
+                        description: description.clone(),
+                        commands: convert_to_completion_commands(sub_commands),
+                        options_fields: Vec::new(),
+                        aliases: BTreeMap::new(),
+                    },
+                );
+            }
+            CommandEntry::FetchGateway { .. } => {}
+        }
+    }
+
+    result
+}
+
+fn completion_root_command(
+    root_command: Option<&Arc<CommandDef>>,
+) -> Option<crate::completions::CommandDef> {
+    root_command.map(|command| crate::completions::CommandDef {
+        options_fields: command.options_fields.clone(),
+        aliases: command
+            .aliases
+            .iter()
+            .map(|(key, value)| (key.clone(), *value))
+            .collect(),
+    })
+}
+
+fn completion_output(
+    cli_name: &str,
+    aliases: &[String],
+    commands: &BTreeMap<String, CommandEntry>,
+    root_command: Option<&Arc<CommandDef>>,
+    argv: &[String],
+    complete_shell: Option<&str>,
+    complete_index: Option<&str>,
+) -> Option<String> {
+    let shell = crate::completions::Shell::from_str(complete_shell?)?;
+    let separator = argv.iter().position(|token| token == "--");
+    let words = separator
+        .map(|index| argv[(index + 1)..].to_vec())
+        .unwrap_or_else(|| argv.to_vec());
+
+    if words.is_empty() {
+        let names = std::iter::once(cli_name.to_string())
+            .chain(aliases.iter().cloned())
+            .collect::<Vec<_>>();
+        return Some(
+            names
+                .iter()
+                .map(|name| crate::completions::register(shell, name))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+
+    let index = complete_index
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or_else(|| words.len().saturating_sub(1));
+    let commands = convert_to_completion_commands(commands);
+    let root = completion_root_command(root_command);
+    let mut candidates = crate::completions::complete(&commands, root.as_ref(), &words, index);
+    let builtins = builtin_commands(cli_name);
+    let current = words.get(index).map(|word| word.as_str()).unwrap_or("");
+    let mut non_flags = words
+        .iter()
+        .take(index)
+        .filter(|word| !word.starts_with('-'))
+        .map(|word| word.to_string())
+        .collect::<Vec<_>>();
+
+    if let Some(first) = non_flags.first()
+        && (first == cli_name || aliases.iter().any(|alias| alias == first))
+    {
+        non_flags.remove(0);
+    }
+
+    if non_flags.is_empty() {
+        for builtin in &builtins {
+            if builtin.name.starts_with(current)
+                && !candidates
+                    .iter()
+                    .any(|candidate| candidate.value == builtin.name)
+            {
+                candidates.push(crate::completions::Candidate {
+                    value: builtin.name.to_string(),
+                    description: Some(builtin.description.to_string()),
+                    no_space: !builtin.subcommands.is_empty(),
+                });
+            }
+        }
+    } else if non_flags.len() == 1
+        && let Some(parent) = non_flags.last()
+        && let Some(builtin) = builtins.iter().find(|builtin| builtin.name == parent)
+    {
+        for subcommand in &builtin.subcommands {
+            if subcommand.name.starts_with(current) {
+                candidates.push(crate::completions::Candidate {
+                    value: subcommand.name.to_string(),
+                    description: Some(subcommand.description.to_string()),
+                    no_space: false,
+                });
+            }
+        }
+    }
+
+    Some(crate::completions::format(shell, &candidates))
+}
+
+fn format_config_schema(
+    root_command: Option<&Arc<CommandDef>>,
+    commands: &BTreeMap<String, CommandEntry>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let root_options = root_command
+        .map(|command| command.options_fields.as_slice())
+        .unwrap_or(&[]);
+    let schema = crate::config_schema::from_command_tree(commands, root_options);
+    Ok(serde_json::to_string_pretty(&schema)?)
 }
 
 /// Options for streaming output handling.
@@ -2459,6 +3397,30 @@ mod tests {
         }
     }
 
+    fn make_leaf_command(name: &str, description: Option<&str>) -> CommandDef {
+        CommandDef {
+            name: name.to_string(),
+            description: description.map(|value| value.to_string()),
+            args_fields: vec![],
+            options_fields: vec![],
+            env_fields: vec![],
+            aliases: HashMap::new(),
+            examples: vec![],
+            hint: None,
+            format: None,
+            output_policy: None,
+            handler: Box::new(NoopHandler),
+            middleware: vec![],
+            output_schema: None,
+        }
+    }
+
+    fn make_test_cli() -> Cli {
+        Cli::create("test")
+            .description("Test CLI")
+            .command("ping", make_leaf_command("ping", Some("Ping the server")))
+    }
+
     #[test]
     fn test_format_human_error() {
         assert_eq!(
@@ -2471,6 +3433,221 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_extract_builtin_flags_config_schema() {
+        let argv: Vec<String> = vec!["--config-schema".to_string()];
+        let result = extract_builtin_flags(&argv, Some("config")).unwrap();
+        assert!(result.config_schema);
+    }
+
+    #[test]
+    fn test_completion_output_includes_builtins_at_root() {
+        let output = completion_output(
+            "test",
+            &[],
+            &make_test_cli().commands,
+            None,
+            &["--".to_string(), "test".to_string(), "".to_string()],
+            Some("bash"),
+            Some("1"),
+        )
+        .unwrap();
+
+        assert!(output.contains("completions"));
+        assert!(output.contains("mcp"));
+        assert!(output.contains("skills"));
+    }
+
+    #[test]
+    fn test_completion_output_includes_builtin_subcommands() {
+        let output = completion_output(
+            "test",
+            &[],
+            &make_test_cli().commands,
+            None,
+            &[
+                "--".to_string(),
+                "test".to_string(),
+                "skills".to_string(),
+                "".to_string(),
+            ],
+            Some("bash"),
+            Some("2"),
+        )
+        .unwrap();
+
+        assert!(output.contains("add"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_completions_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec!["completions".to_string(), "--help".to_string()],
+                &mut output,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test completions"));
+        assert!(output.contains("Generate shell completion script"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_completions_shell() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec!["completions".to_string(), "bash".to_string()],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("COMPLETE=\"bash\""));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_skills_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(vec!["skills".to_string()], &mut output, true)
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test skills"));
+        assert!(output.contains("add"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_skills_add_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "skills".to_string(),
+                    "add".to_string(),
+                    "--help".to_string(),
+                ],
+                &mut output,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test skills add"));
+        assert!(output.contains("--depth"));
+        assert!(output.contains("--no-global"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_mcp_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(vec!["mcp".to_string()], &mut output, true)
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test mcp"));
+        assert!(output.contains("add"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_mcp_add_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec!["mcp".to_string(), "add".to_string(), "--help".to_string()],
+                &mut output,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test mcp add"));
+        assert!(output.contains("--command"));
+        assert!(output.contains("--agent"));
+        assert!(output.contains("--no-global"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_config_schema() {
+        let cli = Cli::create("test")
+            .root(CommandDef {
+                name: "test".to_string(),
+                description: Some("Test CLI".to_string()),
+                args_fields: vec![],
+                options_fields: vec![FieldMeta {
+                    name: "repo",
+                    cli_name: "repo".to_string(),
+                    description: Some("Repository path"),
+                    field_type: crate::schema::FieldType::String,
+                    required: false,
+                    default: Some(Value::String(".".to_string())),
+                    alias: None,
+                    deprecated: false,
+                    env_name: None,
+                }],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(NoopHandler),
+                middleware: vec![],
+                output_schema: None,
+            })
+            .command("ping", make_leaf_command("ping", Some("Ping the server")))
+            .config(ConfigOptions {
+                flag: "config".to_string(),
+                files: vec!["test.config.json".to_string()],
+            });
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(vec!["--config-schema".to_string()], &mut output, false)
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(parsed["properties"]["$schema"]["type"], "string");
+        assert_eq!(
+            parsed["properties"]["options"]["properties"]["repo"]["type"],
+            "string"
+        );
+        assert!(parsed["properties"]["commands"]["properties"]["ping"].is_object());
+    }
+
     // -----------------------------------------------------------------------
     // FetchGateway tests
     // -----------------------------------------------------------------------
@@ -2480,10 +3657,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::fetch::FetchHandler for EchoFetchHandler {
-        async fn handle(
-            &self,
-            request: crate::fetch::FetchInput,
-        ) -> crate::fetch::FetchOutput {
+        async fn handle(&self, request: crate::fetch::FetchInput) -> crate::fetch::FetchOutput {
             let data = serde_json::json!({
                 "path": request.path,
                 "method": request.method,
@@ -2509,10 +3683,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl crate::fetch::FetchHandler for ErrorFetchHandler {
-        async fn handle(
-            &self,
-            _request: crate::fetch::FetchInput,
-        ) -> crate::fetch::FetchOutput {
+        async fn handle(&self, _request: crate::fetch::FetchInput) -> crate::fetch::FetchOutput {
             crate::fetch::FetchOutput {
                 ok: false,
                 status: 500,
@@ -2625,11 +3796,7 @@ mod tests {
         );
 
         let mut output = Vec::new();
-        let argv = vec![
-            "api".to_string(),
-            "users".to_string(),
-            "123".to_string(),
-        ];
+        let argv = vec!["api".to_string(), "users".to_string(), "123".to_string()];
         let result = cli.serve_to(argv, &mut output, false).await.unwrap();
 
         assert_eq!(result, None);
@@ -2751,10 +3918,7 @@ mod tests {
         let summaries = collect_help_commands(&commands);
         assert_eq!(summaries.len(), 2);
         assert_eq!(summaries[0].name, "api");
-        assert_eq!(
-            summaries[0].description.as_deref(),
-            Some("API gateway")
-        );
+        assert_eq!(summaries[0].description.as_deref(), Some("API gateway"));
         assert_eq!(summaries[1].name, "deploy");
     }
 
@@ -2801,5 +3965,4 @@ mod tests {
             _ => panic!("Expected Gateway"),
         }
     }
-
 }

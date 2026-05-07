@@ -79,14 +79,11 @@ pub async fn sync(
     let depth = options.depth.unwrap_or(1);
     let is_global = options.global;
 
-    let cwd = options
-        .cwd
-        .clone()
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| ".".to_string())
-        });
+    let cwd = options.cwd.clone().unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| ".".to_string())
+    });
 
     // Build groups from description
     let mut groups: BTreeMap<String, String> = BTreeMap::new();
@@ -97,10 +94,19 @@ pub async fn sync(
     let files = skill::split(name, commands, depth, &groups);
 
     // Create temp directory
-    let tmp_dir = std::env::temp_dir().join(format!("incurs-skills-{}-{}", name, std::process::id()));
+    let tmp_dir =
+        std::env::temp_dir().join(format!("incurs-skills-{}-{}", name, std::process::id()));
     let _ = fs::create_dir_all(&tmp_dir);
 
-    let result = sync_inner(name, commands, &files, &tmp_dir, &cwd, is_global, &options.include);
+    let result = sync_inner(
+        name,
+        commands,
+        &files,
+        &tmp_dir,
+        &cwd,
+        is_global,
+        &options.include,
+    );
 
     // Cleanup temp directory
     let _ = fs::remove_dir_all(&tmp_dir);
@@ -200,7 +206,11 @@ fn sync_inner(
     let current_names: std::collections::HashSet<String> = install_result
         .paths
         .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+        .filter_map(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+        })
         .collect();
 
     let prev = read_meta(name);
@@ -245,7 +255,12 @@ fn meta_path(name: &str) -> PathBuf {
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".local").join("share"));
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_default()
+                .join(".local")
+                .join("share")
+        });
     data_home.join("incurs").join(format!("{}.json", name))
 }
 
@@ -338,10 +353,7 @@ mod tests {
     #[test]
     fn test_extract_skill_name() {
         let content = "---\nname: my-skill\n---\n";
-        assert_eq!(
-            extract_skill_name(content),
-            Some("my-skill".to_string())
-        );
+        assert_eq!(extract_skill_name(content), Some("my-skill".to_string()));
     }
 
     #[test]

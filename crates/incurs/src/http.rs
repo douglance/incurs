@@ -19,12 +19,12 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use futures::StreamExt;
 use serde_json::Value;
 
@@ -39,10 +39,7 @@ use crate::schema::FieldMeta;
 // ---------------------------------------------------------------------------
 
 /// Starts an HTTP server that exposes all registered commands as routes.
-pub async fn serve_http(
-    cli: &Cli,
-    addr: SocketAddr,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     let state = build_app_state(cli);
     let app = build_router(state);
 

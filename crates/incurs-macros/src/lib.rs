@@ -1,6 +1,6 @@
 //! Derive macros for the incurs CLI framework.
 //!
-//! Provides three derive macros that generate [`incur::schema::IncurSchema`] implementations:
+//! Provides three derive macros that generate [`incurs::schema::IncurSchema`] implementations:
 //!
 //! - **`IncurArgs`** — positional arguments
 //! - **`IncurOptions`** — named options and flags

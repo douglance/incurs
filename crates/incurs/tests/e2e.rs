@@ -31,7 +31,10 @@ struct ServeResult {
 async fn serve(cli: &Cli, argv: &[&str]) -> ServeResult {
     let mut argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
     // Add --json unless the test already specifies a format flag
-    if !argv.iter().any(|a| a == "--json" || a == "--format" || a == "--table" || a == "--csv") {
+    if !argv
+        .iter()
+        .any(|a| a == "--json" || a == "--format" || a == "--table" || a == "--csv")
+    {
         argv.push("--json".to_string());
     }
     let mut buf = Vec::new();
@@ -148,9 +151,21 @@ struct EchoHandler;
 #[async_trait::async_trait]
 impl CommandHandler for EchoHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let message = ctx.args.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        let upper = ctx.options.get("upper").and_then(|v| v.as_bool()).unwrap_or(false);
-        let prefix = ctx.options.get("prefix").and_then(|v| v.as_str()).unwrap_or("");
+        let message = ctx
+            .args
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let upper = ctx
+            .options
+            .get("upper")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let prefix = ctx
+            .options
+            .get("prefix")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let repeat = ctx.args.get("repeat").and_then(|v| v.as_u64()).unwrap_or(1);
 
         let mut msg = if prefix.is_empty() {
@@ -179,8 +194,16 @@ struct ProjectListHandler;
 #[async_trait::async_trait]
 impl CommandHandler for ProjectListHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let archived = ctx.options.get("archived").and_then(|v| v.as_bool()).unwrap_or(false);
-        let limit = ctx.options.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+        let archived = ctx
+            .options
+            .get("archived")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let limit = ctx
+            .options
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(20) as usize;
 
         let all_items = vec![
             serde_json::json!({"id": "p1", "name": "Alpha", "archived": false}),
@@ -230,7 +253,11 @@ struct ProjectGetHandler;
 #[async_trait::async_trait]
 impl CommandHandler for ProjectGetHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let id = ctx.args.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let id = ctx
+            .args
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         CommandResult::Ok {
             data: serde_json::json!({
                 "id": id,
@@ -249,7 +276,11 @@ struct ProjectCreateHandler;
 #[async_trait::async_trait]
 impl CommandHandler for ProjectCreateHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let name = ctx.args.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed");
+        let name = ctx
+            .args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed");
         CommandResult::Ok {
             data: serde_json::json!({
                 "id": "p-new",
@@ -275,8 +306,16 @@ struct ProjectDeleteHandler;
 #[async_trait::async_trait]
 impl CommandHandler for ProjectDeleteHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let id = ctx.args.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let force = ctx.options.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+        let id = ctx
+            .args
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let force = ctx
+            .options
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if !force {
             return CommandResult::Error {
                 code: "CONFIRMATION_REQUIRED".to_string(),
@@ -299,7 +338,11 @@ struct DeployStatusHandler;
 #[async_trait::async_trait]
 impl CommandHandler for DeployStatusHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let deploy_id = ctx.args.get("deploy_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let deploy_id = ctx
+            .args
+            .get("deploy_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         CommandResult::Ok {
             data: serde_json::json!({
                 "deployId": deploy_id,
@@ -317,8 +360,16 @@ struct DeployCreateHandler;
 #[async_trait::async_trait]
 impl CommandHandler for DeployCreateHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let env = ctx.args.get("env").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let dry_run = ctx.options.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+        let env = ctx
+            .args
+            .get("env")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let dry_run = ctx
+            .options
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         CommandResult::Ok {
             data: serde_json::json!({
                 "deployId": "d-123",
@@ -336,7 +387,11 @@ struct DeployRollbackHandler;
 #[async_trait::async_trait]
 impl CommandHandler for DeployRollbackHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let deploy_id = ctx.args.get("deploy_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let deploy_id = ctx
+            .args
+            .get("deploy_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         CommandResult::Ok {
             data: serde_json::json!({"rolledBack": true, "deployId": deploy_id}),
             cta: None,
@@ -483,7 +538,7 @@ impl CommandHandler for StreamOkHandler {
 fn make_field(name: &'static str, desc: &'static str, ft: FieldType, required: bool) -> FieldMeta {
     FieldMeta {
         name,
-        cli_name: incur::schema::to_kebab(name),
+        cli_name: incurs::schema::to_kebab(name),
         description: Some(desc),
         field_type: ft,
         required,
@@ -502,7 +557,7 @@ fn make_field_with_default(
 ) -> FieldMeta {
     FieldMeta {
         name,
-        cli_name: incur::schema::to_kebab(name),
+        cli_name: incurs::schema::to_kebab(name),
         description: Some(desc),
         field_type: ft,
         required: false,
@@ -619,7 +674,12 @@ fn create_app() -> Cli {
             CommandDef {
                 name: "create".to_string(),
                 description: Some("Create a deployment".to_string()),
-                args_fields: vec![make_field("env", "Target environment", FieldType::String, true)],
+                args_fields: vec![make_field(
+                    "env",
+                    "Target environment",
+                    FieldType::String,
+                    true,
+                )],
                 options_fields: vec![
                     FieldMeta {
                         name: "branch",
@@ -1125,11 +1185,7 @@ mod routing {
 
     #[tokio::test]
     async fn nested_group_command_3_levels_deep() {
-        let r = serve(
-            &create_app(),
-            &["project", "deploy", "status", "d-456"],
-        )
-        .await;
+        let r = serve(&create_app(), &["project", "deploy", "status", "d-456"]).await;
         assert!(r.exit_code.is_none());
         let parsed = json(&r.output);
         assert_eq!(parsed["deployId"], "d-456");
@@ -1166,7 +1222,8 @@ mod routing {
             r.output
         );
         assert!(
-            r.output.contains("'nonexistent' is not a command for 'app'"),
+            r.output
+                .contains("'nonexistent' is not a command for 'app'"),
             "Expected error message in output, got: {}",
             r.output
         );
@@ -1177,7 +1234,8 @@ mod routing {
         let r = serve_human(&create_app(), &["nonexistent"]).await;
         assert_eq!(r.exit_code, Some(1));
         assert!(
-            r.output.contains("Error: 'nonexistent' is not a command for 'app'"),
+            r.output
+                .contains("Error: 'nonexistent' is not a command for 'app'"),
             "Expected human error message, got: {}",
             r.output
         );
@@ -1188,19 +1246,21 @@ mod routing {
         let r = serve(&create_app(), &["auth", "whoami"]).await;
         assert_eq!(r.exit_code, Some(1));
         assert!(r.output.contains("COMMAND_NOT_FOUND"));
-        assert!(r.output.contains("'whoami' is not a command for 'app auth'"));
+        assert!(
+            r.output
+                .contains("'whoami' is not a command for 'app auth'")
+        );
     }
 
     #[tokio::test]
     async fn unknown_nested_subcommand() {
-        let r = serve(
-            &create_app(),
-            &["project", "deploy", "nope"],
-        )
-        .await;
+        let r = serve(&create_app(), &["project", "deploy", "nope"]).await;
         assert_eq!(r.exit_code, Some(1));
         assert!(r.output.contains("COMMAND_NOT_FOUND"));
-        assert!(r.output.contains("'nope' is not a command for 'app project deploy'"));
+        assert!(
+            r.output
+                .contains("'nope' is not a command for 'app project deploy'")
+        );
     }
 }
 
@@ -1218,7 +1278,9 @@ mod args_and_options {
     async fn flag_value_form() {
         let r = serve(
             &create_app(),
-            &["echo", "hello", "--upper", "--prefix", ">>", "--format", "json"],
+            &[
+                "echo", "hello", "--upper", "--prefix", ">>", "--format", "json",
+            ],
         )
         .await;
         let parsed = json(&r.output);
@@ -1282,10 +1344,12 @@ mod args_and_options {
         assert_eq!(r.exit_code, Some(1));
         let parsed = json(&r.output);
         assert_eq!(parsed["code"], "CONFIRMATION_REQUIRED");
-        assert!(parsed["message"]
-            .as_str()
-            .unwrap()
-            .contains("Use --force to delete project p1"));
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("Use --force to delete project p1")
+        );
     }
 }
 
@@ -1318,11 +1382,7 @@ mod output_formats {
 
     #[tokio::test]
     async fn verbose_full_envelope() {
-        let r = serve(
-            &create_app(),
-            &["ping", "--verbose", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["ping", "--verbose", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["data"]["pong"], true);
@@ -1335,7 +1395,13 @@ mod output_formats {
         let r = serve(
             &create_app(),
             &[
-                "project", "deploy", "status", "d-1", "--verbose", "--format", "json",
+                "project",
+                "deploy",
+                "status",
+                "d-1",
+                "--verbose",
+                "--format",
+                "json",
             ],
         )
         .await;
@@ -1349,26 +1415,24 @@ mod output_formats {
 
     #[tokio::test]
     async fn cli_level_default_format() {
-        let cli = Cli::create("test")
-            .format(Format::Json)
-            .command(
-                "ping",
-                CommandDef {
-                    name: "ping".to_string(),
-                    description: Some("Health check".to_string()),
-                    args_fields: vec![],
-                    options_fields: vec![],
-                    env_fields: vec![],
-                    aliases: HashMap::new(),
-                    examples: vec![],
-                    hint: None,
-                    format: None,
-                    output_policy: None,
-                    handler: Box::new(StaticHandler(serde_json::json!({"pong": true}))),
-                    middleware: vec![],
-                    output_schema: None,
-                },
-            );
+        let cli = Cli::create("test").format(Format::Json).command(
+            "ping",
+            CommandDef {
+                name: "ping".to_string(),
+                description: Some("Health check".to_string()),
+                args_fields: vec![],
+                options_fields: vec![],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(StaticHandler(serde_json::json!({"pong": true}))),
+                middleware: vec![],
+                output_schema: None,
+            },
+        );
         let r = serve(&cli, &["ping"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["pong"], true);
@@ -1413,11 +1477,7 @@ mod undefined_output {
 
     #[tokio::test]
     async fn void_command_verbose_shows_envelope() {
-        let r = serve(
-            &create_app(),
-            &["noop", "--verbose", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["noop", "--verbose", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["meta"]["command"], "noop");
@@ -1450,11 +1510,7 @@ mod error_handling {
 
     #[tokio::test]
     async fn incur_error_preserves_code_and_retryable() {
-        let r = serve(
-            &create_app(),
-            &["explode-clac", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["explode-clac", "--format", "json"]).await;
         assert_eq!(r.exit_code, Some(1));
         let parsed = json(&r.output);
         assert_eq!(parsed["code"], "QUOTA_EXCEEDED");
@@ -1487,35 +1543,31 @@ mod error_handling {
         assert_eq!(r.exit_code, Some(1));
         let parsed = json(&r.output);
         assert_eq!(parsed["code"], "CONFIRMATION_REQUIRED");
-        assert!(parsed["message"]
-            .as_str()
-            .unwrap()
-            .contains("Use --force to delete project p1"));
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("Use --force to delete project p1")
+        );
     }
 
     #[tokio::test]
     async fn command_not_found_returns_error_envelope() {
-        let r = serve(
-            &create_app(),
-            &["nonexistent", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["nonexistent", "--format", "json"]).await;
         assert_eq!(r.exit_code, Some(1));
         let parsed = json(&r.output);
         assert_eq!(parsed["code"], "COMMAND_NOT_FOUND");
-        assert!(parsed["message"]
-            .as_str()
-            .unwrap()
-            .contains("'nonexistent' is not a command for 'app'"));
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("'nonexistent' is not a command for 'app'")
+        );
     }
 
     #[tokio::test]
     async fn error_envelope_respects_format_json() {
-        let r = serve(
-            &create_app(),
-            &["explode", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["explode", "--format", "json"]).await;
         assert_eq!(r.exit_code, Some(1));
         let parsed = json(&r.output);
         assert_eq!(parsed["code"], "UNKNOWN");
@@ -1543,7 +1595,14 @@ mod cta {
     async fn ok_with_object_ctas_including_descriptions() {
         let r = serve(
             &create_app(),
-            &["project", "create", "MyProject", "--verbose", "--format", "json"],
+            &[
+                "project",
+                "create",
+                "MyProject",
+                "--verbose",
+                "--format",
+                "json",
+            ],
         )
         .await;
         let parsed = json(&r.output);
@@ -1555,11 +1614,7 @@ mod cta {
 
     #[tokio::test]
     async fn plain_return_omits_cta() {
-        let r = serve(
-            &create_app(),
-            &["ping", "--verbose", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["ping", "--verbose", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert!(parsed["meta"]["cta"].is_null());
     }
@@ -1582,11 +1637,7 @@ mod streaming {
 
     #[tokio::test]
     async fn format_json_buffers_all_chunks() {
-        let r = serve(
-            &create_app(),
-            &["stream", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["stream", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert!(parsed.is_array());
         let arr = parsed.as_array().unwrap();
@@ -1597,11 +1648,7 @@ mod streaming {
 
     #[tokio::test]
     async fn format_json_verbose_buffers_with_envelope() {
-        let r = serve(
-            &create_app(),
-            &["stream", "--verbose", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["stream", "--verbose", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         let data = parsed["data"].as_array().unwrap();
@@ -1613,18 +1660,18 @@ mod streaming {
 
     #[tokio::test]
     async fn format_jsonl_explicit() {
-        let r = serve(
-            &create_app(),
-            &["stream", "--format", "jsonl"],
-        )
-        .await;
+        let r = serve(&create_app(), &["stream", "--format", "jsonl"]).await;
         let lines: Vec<serde_json::Value> = r
             .output
             .trim()
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
             .collect();
-        assert!(lines.len() >= 3, "Expected at least 3 JSONL lines, got {}", lines.len());
+        assert!(
+            lines.len() >= 3,
+            "Expected at least 3 JSONL lines, got {}",
+            lines.len()
+        );
         assert_eq!(lines[0]["type"], "chunk");
         assert_eq!(lines[0]["data"]["content"], "hello");
         assert_eq!(lines[1]["type"], "chunk");
@@ -1634,11 +1681,7 @@ mod streaming {
 
     #[tokio::test]
     async fn plain_text_streams_as_jsonl_chunks() {
-        let r = serve(
-            &create_app(),
-            &["stream-text", "--format", "jsonl"],
-        )
-        .await;
+        let r = serve(&create_app(), &["stream-text", "--format", "jsonl"]).await;
         let lines: Vec<serde_json::Value> = r
             .output
             .trim()
@@ -1751,7 +1794,11 @@ mod composition {
     #[tokio::test]
     async fn deeply_nested_deploy_commands_work_alongside_siblings() {
         let cli = create_app();
-        let r1 = serve(&cli, &["project", "deploy", "create", "staging", "--format", "json"]).await;
+        let r1 = serve(
+            &cli,
+            &["project", "deploy", "create", "staging", "--format", "json"],
+        )
+        .await;
         let p1 = json(&r1.output);
         assert_eq!(p1["deployId"], "d-123");
         assert_eq!(p1["url"], "https://staging.example.com");
@@ -1903,11 +1950,7 @@ mod edge_cases {
 
     #[tokio::test]
     async fn command_with_only_args_no_options() {
-        let r = serve(
-            &create_app(),
-            &["project", "get", "p1", "--format", "json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["project", "get", "p1", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["id"], "p1");
         assert_eq!(parsed["name"], "Alpha");
@@ -1935,7 +1978,14 @@ mod edge_cases {
         let r = serve(
             &create_app(),
             &[
-                "--format", "json", "project", "deploy", "create", "prod", "--branch", "release",
+                "--format",
+                "json",
+                "project",
+                "deploy",
+                "create",
+                "prod",
+                "--branch",
+                "release",
                 "--verbose",
             ],
         )

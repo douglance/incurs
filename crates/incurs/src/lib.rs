@@ -15,6 +15,7 @@ pub mod mcp;
 pub mod middleware;
 pub mod openapi;
 pub mod output;
+pub mod pager;
 pub mod parser;
 pub mod schema;
 pub mod skill;

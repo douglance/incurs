@@ -101,7 +101,10 @@ impl CommandDef {
     ///     .options::<GetOptions>()
     ///     .done()
     /// ```
-    pub fn build(name: impl Into<String>, handler: impl CommandHandler + 'static) -> CommandBuilder {
+    pub fn build(
+        name: impl Into<String>,
+        handler: impl CommandHandler + 'static,
+    ) -> CommandBuilder {
         CommandBuilder {
             def: CommandDef {
                 name: name.into(),
@@ -261,10 +264,7 @@ pub struct ExecuteOptions {
 /// HTTP returns a Response, MCP returns tool results).
 pub enum InternalResult {
     /// Successful execution with data.
-    Ok {
-        data: Value,
-        cta: Option<CtaBlock>,
-    },
+    Ok { data: Value, cta: Option<CtaBlock> },
     /// Failed execution with error details.
     Error {
         code: String,
@@ -366,7 +366,11 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
                 }
                 ParseMode::Flat => {
                     // MCP mode: split input_options into args vs options by field names.
-                    split_flat_params(&input_options, &command.args_fields, &command.options_fields)
+                    split_flat_params(
+                        &input_options,
+                        &command.args_fields,
+                        &command.options_fields,
+                    )
                 }
             };
 
@@ -489,12 +493,10 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
             // We need to take ownership. Drop the guard and re-acquire mutably.
             drop(result_guard);
             let mut result_guard = result.lock().await;
-            result_guard
-                .take()
-                .unwrap_or(InternalResult::Ok {
-                    data: Value::Null,
-                    cta: None,
-                })
+            result_guard.take().unwrap_or(InternalResult::Ok {
+                data: Value::Null,
+                cta: None,
+            })
         }
         None => InternalResult::Ok {
             data: Value::Null,
@@ -643,7 +645,9 @@ fn parse_argv_mode(
     // Apply field defaults
     for field in options_fields {
         let key = field.name.to_string();
-        if !opts_map.contains_key(&key) && let Some(default) = &field.default {
+        if !opts_map.contains_key(&key)
+            && let Some(default) = &field.default
+        {
             opts_map.insert(key, default.clone());
         }
     }
@@ -680,8 +684,7 @@ fn split_flat_params(
     args_fields: &[FieldMeta],
     options_fields: &[FieldMeta],
 ) -> (Value, Value) {
-    let arg_names: std::collections::HashSet<&str> =
-        args_fields.iter().map(|f| f.name).collect();
+    let arg_names: std::collections::HashSet<&str> = args_fields.iter().map(|f| f.name).collect();
     let _option_names: std::collections::HashSet<&str> =
         options_fields.iter().map(|f| f.name).collect();
 
@@ -701,10 +704,7 @@ fn split_flat_params(
 }
 
 /// Parses environment variables from the env source using field metadata.
-fn parse_env_fields(
-    env_fields: &[FieldMeta],
-    env_source: &HashMap<String, String>,
-) -> Value {
+fn parse_env_fields(env_fields: &[FieldMeta], env_source: &HashMap<String, String>) -> Value {
     let mut env_map = serde_json::Map::new();
 
     for field in env_fields {
@@ -725,9 +725,7 @@ fn parse_env_fields(
 /// Parses a string value into the appropriate JSON type based on field type.
 fn parse_env_value(value: &str, field_type: &crate::schema::FieldType) -> Value {
     match field_type {
-        crate::schema::FieldType::Boolean => {
-            Value::Bool(matches!(value, "1" | "true" | "yes"))
-        }
+        crate::schema::FieldType::Boolean => Value::Bool(matches!(value, "1" | "true" | "yes")),
         crate::schema::FieldType::Number => {
             if let Ok(n) = value.parse::<f64>() {
                 Value::from(n)

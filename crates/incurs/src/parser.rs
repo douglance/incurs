@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde_json::Value;
 
 use crate::errors::ParseError;
-use crate::schema::{to_kebab, to_snake, FieldMeta, FieldType};
+use crate::schema::{FieldMeta, FieldType, to_kebab, to_snake};
 
 /// Options controlling how [`parse`] interprets argv tokens.
 pub struct ParseOptions {
@@ -151,9 +151,7 @@ fn coerce(value: Value, field_type: &FieldType) -> Value {
             _ => value,
         },
         FieldType::Array(inner) => match value {
-            Value::Array(arr) => {
-                Value::Array(arr.into_iter().map(|v| coerce(v, inner)).collect())
-            }
+            Value::Array(arr) => Value::Array(arr.into_iter().map(|v| coerce(v, inner)).collect()),
             _ => value,
         },
         _ => value,
@@ -213,10 +211,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
                     cause: None,
                 })?;
                 if names.is_count(&name) {
-                    let prev = raw_options
-                        .get(&name)
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let prev = raw_options.get(&name).and_then(|v| v.as_u64()).unwrap_or(0);
                     raw_options.insert(name, Value::Number((prev + 1).into()));
                     i += 1;
                 } else if names.is_boolean(&name) {
@@ -244,10 +239,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
                 if !is_last {
                     // Non-last chars in a stack must be boolean or count.
                     if names.is_count(name) {
-                        let prev = raw_options
-                            .get(name)
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
+                        let prev = raw_options.get(name).and_then(|v| v.as_u64()).unwrap_or(0);
                         raw_options.insert(name.clone(), Value::Number((prev + 1).into()));
                     } else if names.is_boolean(name) {
                         raw_options.insert(name.clone(), Value::Bool(true));
@@ -261,10 +253,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
                         });
                     }
                 } else if names.is_count(name) {
-                    let prev = raw_options
-                        .get(name)
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let prev = raw_options.get(name).and_then(|v| v.as_u64()).unwrap_or(0);
                     raw_options.insert(name.clone(), Value::Number((prev + 1).into()));
                 } else if names.is_boolean(name) {
                     raw_options.insert(name.clone(), Value::Bool(true));
@@ -307,10 +296,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
             let normalised = to_snake(key);
 
             // Reject unknown config keys.
-            let field = options
-                .options_fields
-                .iter()
-                .find(|f| f.name == normalised);
+            let field = options.options_fields.iter().find(|f| f.name == normalised);
             if field.is_none() {
                 return Err(ParseError {
                     message: format!("Unknown config option: {}", key),
@@ -372,7 +358,10 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
 ///
 /// Each field with an `env_name` is looked up in `source`. Values are coerced
 /// from strings to the field's declared type.
-pub fn parse_env(fields: &[FieldMeta], source: &HashMap<String, String>) -> BTreeMap<String, Value> {
+pub fn parse_env(
+    fields: &[FieldMeta],
+    source: &HashMap<String, String>,
+) -> BTreeMap<String, Value> {
     let mut result = BTreeMap::new();
 
     for field in fields {

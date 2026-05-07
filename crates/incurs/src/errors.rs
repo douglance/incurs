@@ -40,7 +40,9 @@ impl fmt::Display for BaseError {
 
 impl std::error::Error for BaseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cause.as_ref().map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
+        self.cause
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -69,7 +71,9 @@ impl fmt::Display for IncurError {
 
 impl std::error::Error for IncurError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cause.as_ref().map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
+        self.cause
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -92,7 +96,9 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cause.as_ref().map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
+        self.cause
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 
@@ -113,7 +119,9 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        self.cause.as_ref().map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
+        self.cause
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 

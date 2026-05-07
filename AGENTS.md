@@ -36,6 +36,7 @@
 ## Testing Conventions
 
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
+- **Builtin CLI changes need dual-path coverage** — `crates/incur/src/cli.rs` has both `serve_with` and `serve_to` execution paths. When adding or changing built-in CLI behavior, update both paths and add focused tests through `serve_to`, since that's the stable non-process test surface.
 
 ## Git Conventions
 

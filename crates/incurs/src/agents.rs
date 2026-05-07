@@ -501,10 +501,7 @@ fn extract_skill_name(content: &str) -> Option<String> {
 
 /// Sanitizes a skill name for use as a directory name.
 fn sanitize_name(name: &str) -> String {
-    let sanitized: String = name
-        .trim()
-        .replace(['/', '\\'], "-")
-        .replace("..", "");
+    let sanitized: String = name.trim().replace(['/', '\\'], "-").replace("..", "");
     if sanitized.len() > 255 {
         sanitized[..255].to_string()
     } else {
@@ -622,10 +619,23 @@ mod tests {
     #[test]
     fn test_universal_agents() {
         let agents = all_agents();
-        let universal: Vec<&str> = agents.iter().filter(|a| a.universal).map(|a| a.name).collect();
+        let universal: Vec<&str> = agents
+            .iter()
+            .filter(|a| a.universal)
+            .map(|a| a.name)
+            .collect();
         assert_eq!(
             universal,
-            vec!["Amp", "Cline", "Codex", "Cursor", "Gemini CLI", "GitHub Copilot", "Kimi CLI", "OpenCode"]
+            vec![
+                "Amp",
+                "Cline",
+                "Codex",
+                "Cursor",
+                "Gemini CLI",
+                "GitHub Copilot",
+                "Kimi CLI",
+                "OpenCode"
+            ]
         );
     }
 

@@ -112,9 +112,7 @@ fn is_flat(obj: &serde_json::Map<String, Value>) -> bool {
 /// Whether a value is a non-empty array of plain objects.
 fn is_array_of_objects(value: &Value) -> bool {
     match value {
-        Value::Array(arr) => {
-            !arr.is_empty() && arr.iter().all(|v| matches!(v, Value::Object(_)))
-        }
+        Value::Array(arr) => !arr.is_empty() && arr.iter().all(|v| matches!(v, Value::Object(_))),
         _ => false,
     }
 }
@@ -126,7 +124,11 @@ fn table(headers: &[String], rows: &[Vec<String>]) -> String {
         .iter()
         .enumerate()
         .map(|(i, h)| {
-            let max_row = rows.iter().map(|r| r.get(i).map_or(0, |c| c.len())).max().unwrap_or(0);
+            let max_row = rows
+                .iter()
+                .map(|r| r.get(i).map_or(0, |c| c.len()))
+                .max()
+                .unwrap_or(0);
             h.len().max(max_row)
         })
         .collect();
@@ -230,7 +232,11 @@ fn format_markdown(value: &Value, path: &[String]) -> String {
             return format!("## {}\n\n{}", path.join("."), tbl);
         }
         // Fallback: stringify the array.
-        let s = arr.iter().map(scalar_to_string).collect::<Vec<_>>().join(", ");
+        let s = arr
+            .iter()
+            .map(scalar_to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
         return format_markdown(&Value::String(s), path);
     }
 
@@ -295,7 +301,11 @@ fn format_table(value: &Value) -> String {
             return ascii_table_from_array(arr);
         }
         // Array of scalars — one per line
-        return arr.iter().map(scalar_to_string).collect::<Vec<_>>().join("\n");
+        return arr
+            .iter()
+            .map(scalar_to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
     }
 
     if let Value::Object(obj) = value {
@@ -353,14 +363,22 @@ fn ascii_table(headers: &[String], rows: &[Vec<String>]) -> String {
         .iter()
         .enumerate()
         .map(|(i, h)| {
-            let max_row = rows.iter().map(|r| r.get(i).map_or(0, |c| c.len())).max().unwrap_or(0);
+            let max_row = rows
+                .iter()
+                .map(|r| r.get(i).map_or(0, |c| c.len()))
+                .max()
+                .unwrap_or(0);
             h.len().max(max_row)
         })
         .collect();
 
     let sep_line = format!(
         "+-{}-+",
-        widths.iter().map(|w| "-".repeat(*w)).collect::<Vec<_>>().join("-+-")
+        widths
+            .iter()
+            .map(|w| "-".repeat(*w))
+            .collect::<Vec<_>>()
+            .join("-+-")
     );
 
     let header_row = format!(
@@ -379,7 +397,13 @@ fn ascii_table(headers: &[String], rows: &[Vec<String>]) -> String {
             let cells: Vec<String> = headers
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format!("{:<width$}", r.get(i).map_or("", |s| s.as_str()), width = widths[i]))
+                .map(|(i, _)| {
+                    format!(
+                        "{:<width$}",
+                        r.get(i).map_or("", |s| s.as_str()),
+                        width = widths[i]
+                    )
+                })
                 .collect();
             format!("| {} |", cells.join(" | "))
         })
@@ -430,13 +454,21 @@ fn format_csv(value: &Value) -> String {
             return csv_from_array(arr);
         }
         // Array of scalars — one per line
-        return arr.iter().map(|v| csv_escape(&scalar_to_string(v))).collect::<Vec<_>>().join("\n");
+        return arr
+            .iter()
+            .map(|v| csv_escape(&scalar_to_string(v)))
+            .collect::<Vec<_>>()
+            .join("\n");
     }
 
     if let Value::Object(obj) = value {
         // Single object — header + one data row
         let keys: Vec<&String> = obj.keys().collect();
-        let header = keys.iter().map(|k| csv_escape(k)).collect::<Vec<_>>().join(",");
+        let header = keys
+            .iter()
+            .map(|k| csv_escape(k))
+            .collect::<Vec<_>>()
+            .join(",");
         let row = keys
             .iter()
             .map(|k| csv_escape(&value_to_cell(obj.get(*k).unwrap_or(&Value::Null))))
@@ -463,7 +495,11 @@ fn csv_from_array(items: &[Value]) -> String {
         }
     }
 
-    let header = keys.iter().map(|k| csv_escape(k)).collect::<Vec<_>>().join(",");
+    let header = keys
+        .iter()
+        .map(|k| csv_escape(k))
+        .collect::<Vec<_>>()
+        .join(",");
 
     let rows: Vec<String> = items
         .iter()

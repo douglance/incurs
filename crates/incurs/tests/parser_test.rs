@@ -4,9 +4,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use incurs::parser::{parse, ParseOptions};
-use incurs::schema::{to_kebab, FieldMeta, FieldType};
-use serde_json::{json, Value};
+use incurs::parser::{ParseOptions, parse};
+use incurs::schema::{FieldMeta, FieldType, to_kebab};
+use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -240,7 +240,13 @@ fn stacks_boolean_short_aliases() {
     aliases.insert("debug".to_string(), 'D');
     let opts = ParseOptions {
         options_fields: vec![
-            make_field("verbose", FieldType::Boolean, false, Some(json!(false)), None),
+            make_field(
+                "verbose",
+                FieldType::Boolean,
+                false,
+                Some(json!(false)),
+                None,
+            ),
             make_field("debug", FieldType::Boolean, false, Some(json!(false)), None),
         ],
         aliases,
@@ -259,9 +265,21 @@ fn last_flag_in_stack_takes_a_value() {
     aliases.insert("format".to_string(), 'f');
     let opts = ParseOptions {
         options_fields: vec![
-            make_field("verbose", FieldType::Boolean, false, Some(json!(false)), None),
+            make_field(
+                "verbose",
+                FieldType::Boolean,
+                false,
+                Some(json!(false)),
+                None,
+            ),
             make_field("debug", FieldType::Boolean, false, Some(json!(false)), None),
-            make_field("format", FieldType::String, false, Some(json!("text")), None),
+            make_field(
+                "format",
+                FieldType::String,
+                false,
+                Some(json!("text")),
+                None,
+            ),
         ],
         aliases,
         ..empty_opts()
@@ -280,7 +298,13 @@ fn returns_error_for_non_boolean_mid_stack() {
     let opts = ParseOptions {
         options_fields: vec![
             make_field("format", FieldType::String, true, None, None),
-            make_field("verbose", FieldType::Boolean, false, Some(json!(false)), None),
+            make_field(
+                "verbose",
+                FieldType::Boolean,
+                false,
+                Some(json!(false)),
+                None,
+            ),
         ],
         aliases,
         ..empty_opts()
@@ -296,7 +320,13 @@ fn returns_error_when_last_flag_in_stack_missing_value() {
     aliases.insert("format".to_string(), 'f');
     let opts = ParseOptions {
         options_fields: vec![
-            make_field("verbose", FieldType::Boolean, false, Some(json!(false)), None),
+            make_field(
+                "verbose",
+                FieldType::Boolean,
+                false,
+                Some(json!(false)),
+                None,
+            ),
             make_field("format", FieldType::String, true, None, None),
         ],
         aliases,

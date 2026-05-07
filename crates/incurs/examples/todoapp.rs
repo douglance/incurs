@@ -26,7 +26,7 @@ use incurs::command::{CommandContext, CommandDef, CommandHandler, Example};
 use incurs::middleware::{BoxFuture, MiddlewareContext, MiddlewareFn, MiddlewareNext};
 use incurs::output::{CommandResult, CtaBlock, CtaEntry};
 use incurs::schema::{FieldMeta, FieldType};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::pin::Pin;
 
 // ---------------------------------------------------------------------------
@@ -39,7 +39,11 @@ struct AddHandler;
 #[async_trait::async_trait]
 impl CommandHandler for AddHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let title = ctx.args.get("title").and_then(|v| v.as_str()).unwrap_or("untitled");
+        let title = ctx
+            .args
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("untitled");
         let priority = ctx
             .options
             .get("priority")
@@ -109,11 +113,7 @@ struct GetHandler;
 #[async_trait::async_trait]
 impl CommandHandler for GetHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let id = ctx
-            .args
-            .get("id")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let id = ctx.args.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
 
         if id == 0 || id > 5 {
             return CommandResult::Error {
@@ -147,11 +147,7 @@ struct CompleteHandler;
 #[async_trait::async_trait]
 impl CommandHandler for CompleteHandler {
     async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let id = ctx
-            .args
-            .get("id")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
+        let id = ctx.args.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
 
         CommandResult::Ok {
             data: json!({
@@ -330,10 +326,7 @@ fn build_cli() -> Cli {
                     },
                 ],
                 env_fields: vec![],
-                aliases: HashMap::from([
-                    ("status".to_string(), 's'),
-                    ("limit".to_string(), 'n'),
-                ]),
+                aliases: HashMap::from([("status".to_string(), 's'), ("limit".to_string(), 'n')]),
                 examples: vec![
                     Example {
                         command: "".to_string(),

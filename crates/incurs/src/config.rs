@@ -39,10 +39,7 @@ pub fn load_config(path: &str) -> Result<BTreeMap<String, Value>, Box<dyn std::e
             let btree: BTreeMap<String, Value> = map.into_iter().collect();
             Ok(btree)
         }
-        _ => Err(format!(
-            "Invalid config file: expected a top-level object in '{path}'"
-        )
-        .into()),
+        _ => Err(format!("Invalid config file: expected a top-level object in '{path}'").into()),
     }
 }
 
@@ -94,26 +91,22 @@ pub fn extract_command_section(
         command_path.split(' ').collect()
     };
 
-    let mut node: &Value = &Value::Object(
-        config
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
-    );
+    let mut node: &Value =
+        &Value::Object(config.iter().map(|(k, v)| (k.clone(), v.clone())).collect());
 
     for seg in &segments {
-        let obj = node
-            .as_object()
-            .ok_or_else(|| format!("Invalid config section for '{command_path}': expected an object"))?;
+        let obj = node.as_object().ok_or_else(|| {
+            format!("Invalid config section for '{command_path}': expected an object")
+        })?;
 
         let commands = match obj.get("commands") {
             Some(c) => c,
             None => return Ok(None),
         };
 
-        let commands_obj = commands
-            .as_object()
-            .ok_or_else(|| format!("Invalid config 'commands' for '{command_path}': expected an object"))?;
+        let commands_obj = commands.as_object().ok_or_else(|| {
+            format!("Invalid config 'commands' for '{command_path}': expected an object")
+        })?;
 
         node = match commands_obj.get(*seg) {
             Some(n) => n,
@@ -121,34 +114,36 @@ pub fn extract_command_section(
         };
     }
 
-    let obj = node
-        .as_object()
-        .ok_or_else(|| format!("Invalid config section for '{command_path}': expected an object"))?;
+    let obj = node.as_object().ok_or_else(|| {
+        format!("Invalid config section for '{command_path}': expected an object")
+    })?;
 
     let options = match obj.get("options") {
         Some(o) => o,
         None => return Ok(None),
     };
 
-    let options_obj = options
-        .as_object()
-        .ok_or_else(|| format!("Invalid config 'options' for '{command_path}': expected an object"))?;
+    let options_obj = options.as_object().ok_or_else(|| {
+        format!("Invalid config 'options' for '{command_path}': expected an object")
+    })?;
 
     if options_obj.is_empty() {
         return Ok(None);
     }
 
-    let btree: BTreeMap<String, Value> = options_obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let btree: BTreeMap<String, Value> = options_obj
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     Ok(Some(btree))
 }
 
 /// Resolves a file path, expanding `~` to the user's home directory.
 fn resolve_path(file_path: &str) -> String {
-    if (file_path.starts_with("~/") || file_path == "~") && let Some(home) = dirs::home_dir() {
-        return home
-            .join(&file_path[1..])
-            .to_string_lossy()
-            .into_owned();
+    if (file_path.starts_with("~/") || file_path == "~")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(&file_path[1..]).to_string_lossy().into_owned();
     }
 
     // Resolve relative to current working directory
@@ -181,10 +176,8 @@ mod tests {
 
     #[test]
     fn test_extract_command_section_root() {
-        let config: BTreeMap<String, Value> = serde_json::from_str(
-            r#"{ "options": { "verbose": true } }"#,
-        )
-        .unwrap();
+        let config: BTreeMap<String, Value> =
+            serde_json::from_str(r#"{ "options": { "verbose": true } }"#).unwrap();
 
         let result = extract_command_section(&config, "my-cli", "my-cli").unwrap();
         let opts = result.unwrap();
@@ -225,10 +218,8 @@ mod tests {
 
     #[test]
     fn test_extract_command_section_empty_options() {
-        let config: BTreeMap<String, Value> = serde_json::from_str(
-            r#"{ "commands": { "test": { "options": {} } } }"#,
-        )
-        .unwrap();
+        let config: BTreeMap<String, Value> =
+            serde_json::from_str(r#"{ "commands": { "test": { "options": {} } } }"#).unwrap();
 
         let result = extract_command_section(&config, "my-cli", "test").unwrap();
         assert!(result.is_none());

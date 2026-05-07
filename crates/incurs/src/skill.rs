@@ -91,11 +91,7 @@ pub fn index(name: &str, commands: &[CommandInfo], description: Option<&str>) ->
 /// Generates a full Markdown skill file from a CLI name and collected commands.
 ///
 /// When `groups` is non-empty, commands are organized under group headings.
-pub fn generate(
-    name: &str,
-    commands: &[CommandInfo],
-    groups: &BTreeMap<String, String>,
-) -> String {
+pub fn generate(name: &str, commands: &[CommandInfo], groups: &BTreeMap<String, String>) -> String {
     if groups.is_empty() {
         return commands
             .iter()
@@ -174,7 +170,10 @@ pub fn hash(commands: &[CommandInfo]) -> String {
         .iter()
         .map(|cmd| {
             let mut obj = serde_json::Map::new();
-            obj.insert("name".to_string(), serde_json::Value::String(cmd.name.clone()));
+            obj.insert(
+                "name".to_string(),
+                serde_json::Value::String(cmd.name.clone()),
+            );
             if let Some(desc) = &cmd.description {
                 obj.insert(
                     "description".to_string(),
@@ -302,8 +301,12 @@ fn render_command_body(cli: &str, cmd: &CommandInfo, level: usize) -> String {
             let type_name = field.field_type.display_name();
             let req = if field.required { "yes" } else { "no" };
             let desc = field.description.unwrap_or("");
-            write!(table, "\n| `{}` | `{}` | {} | {} |", field.name, type_name, req, desc)
-                .unwrap();
+            write!(
+                table,
+                "\n| `{}` | `{}` | {} | {} |",
+                field.name, type_name, req, desc
+            )
+            .unwrap();
         }
         sections.push(table);
     }
@@ -390,7 +393,11 @@ fn render_command_body(cli: &str, cmd: &CommandInfo, level: usize) -> String {
         if lines.last().map(|l| l.is_empty()).unwrap_or(false) {
             lines.pop();
         }
-        sections.push(format!("{} Examples\n\n```sh\n{}\n```", sub, lines.join("\n")));
+        sections.push(format!(
+            "{} Examples\n\n```sh\n{}\n```",
+            sub,
+            lines.join("\n")
+        ));
     }
 
     // Hint
@@ -440,7 +447,10 @@ fn schema_to_table(schema: &serde_json::Value, prefix: &str) -> Option<String> {
             .and_then(|o| o.get("description"))
             .and_then(|d| d.as_str())
             .unwrap_or("");
-        rows.push(format!("| `{}` | `{}` | {} | {} |", name, type_name, req, desc));
+        rows.push(format!(
+            "| `{}` | `{}` | {} | {} |",
+            name, type_name, req, desc
+        ));
 
         // Expand nested objects
         if let Some(prop_obj) = prop.as_object() {
@@ -558,10 +568,7 @@ fn fields_to_json(fields: &[FieldMeta]) -> serde_json::Value {
         "type".to_string(),
         serde_json::Value::String("object".to_string()),
     );
-    schema.insert(
-        "properties".to_string(),
-        serde_json::Value::Object(props),
-    );
+    schema.insert("properties".to_string(), serde_json::Value::Object(props));
     if !required.is_empty() {
         schema.insert("required".to_string(), serde_json::Value::Array(required));
     }

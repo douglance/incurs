@@ -3,5 +3,5 @@ dist
 node_modules
 clac.generated.ts
 tasks
-*.tsbuildinfo/target/
-/target
+*.tsbuildinfo
+target/

@@ -102,7 +102,13 @@ pub fn register(shell: Shell, name: &str) -> String {
 /// Sanitizes a CLI name into a valid shell identifier.
 fn ident(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -441,7 +447,7 @@ fn possible_values(name: &str, fields: &[FieldMeta]) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{to_kebab, FieldType};
+    use crate::schema::{FieldType, to_kebab};
 
     fn make_field(name: &'static str, ft: FieldType) -> FieldMeta {
         FieldMeta {

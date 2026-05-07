@@ -146,10 +146,7 @@ pub async fn generate_commands(
             let mut options_fields: Vec<FieldMeta> = Vec::new();
 
             for p in &query_params {
-                let required = p
-                    .get("required")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let required = p.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
                 options_fields.push(param_to_field_meta(p, required));
             }
 
@@ -164,11 +161,19 @@ pub async fn generate_commands(
             let handler_fetch = Arc::clone(&fetch_fn);
             let handler_path_param_names: Vec<String> = path_params
                 .iter()
-                .filter_map(|p| p.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .filter_map(|p| {
+                    p.get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
             let handler_query_param_names: Vec<String> = query_params
                 .iter()
-                .filter_map(|p| p.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+                .filter_map(|p| {
+                    p.get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
             let handler_body_prop_names: Vec<String> =
                 body_props.iter().map(|(k, _)| k.clone()).collect();
@@ -667,10 +672,7 @@ mod tests {
         let schema = resolved
             .pointer("/paths/~1users/get/responses/200/content/application~1json/schema")
             .unwrap();
-        assert_eq!(
-            schema.get("type").and_then(|v| v.as_str()),
-            Some("object")
-        );
+        assert_eq!(schema.get("type").and_then(|v| v.as_str()), Some("object"));
     }
 
     #[test]

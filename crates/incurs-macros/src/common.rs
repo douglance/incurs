@@ -84,8 +84,8 @@ fn scalar_field_type(ty: &Type) -> TokenStream2 {
         }
         Some("bool") => quote! { ::incurs::schema::FieldType::Boolean },
         Some("u8") | Some("u16") | Some("u32") | Some("u64") | Some("u128") | Some("usize")
-        | Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128")
-        | Some("isize") | Some("f32") | Some("f64") => {
+        | Some("i8") | Some("i16") | Some("i32") | Some("i64") | Some("i128") | Some("isize")
+        | Some("f32") | Some("f64") => {
             quote! { ::incurs::schema::FieldType::Number }
         }
         _ => quote! { ::incurs::schema::FieldType::Value },

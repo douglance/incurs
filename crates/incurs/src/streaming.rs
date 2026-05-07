@@ -83,10 +83,8 @@ mod tests {
     #[tokio::test]
     async fn test_signal_fires_on_completion() {
         let (tx, rx) = oneshot::channel();
-        let inner: ValueStream = Box::pin(futures::stream::iter(vec![
-            Value::from(1),
-            Value::from(2),
-        ]));
+        let inner: ValueStream =
+            Box::pin(futures::stream::iter(vec![Value::from(1), Value::from(2)]));
 
         let mut wrapped = wrap_stream_with_signal(inner, tx);
 

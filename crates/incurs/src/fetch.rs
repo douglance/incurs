@@ -76,19 +76,17 @@ pub fn parse_argv(argv: &[String]) -> FetchInput {
     let mut method: Option<String> = None;
     let mut body: Option<String> = None;
 
-    let mut handle_reserved = |key: &str, value: &str| {
-        match key {
-            "method" => method = Some(value.to_uppercase()),
-            "body" | "data" => body = Some(value.to_string()),
-            "header" => {
-                if let Some(colon_idx) = value.find(':') {
-                    let name = value[..colon_idx].trim().to_string();
-                    let val = value[colon_idx + 1..].trim().to_string();
-                    headers.push((name, val));
-                }
+    let mut handle_reserved = |key: &str, value: &str| match key {
+        "method" => method = Some(value.to_uppercase()),
+        "body" | "data" => body = Some(value.to_string()),
+        "header" => {
+            if let Some(colon_idx) = value.find(':') {
+                let name = value[..colon_idx].trim().to_string();
+                let val = value[colon_idx + 1..].trim().to_string();
+                headers.push((name, val));
             }
-            _ => {}
         }
+        _ => {}
     };
 
     let mut i = 0;
@@ -293,11 +291,17 @@ mod tests {
     #[test]
     fn test_mixed_everything() {
         let input = parse_argv(&argv(&[
-            "-X", "POST",
-            "-H", "Authorization: Bearer tok",
-            "-d", r#"{"a":1}"#,
-            "--limit", "5",
-            "api", "v1", "data",
+            "-X",
+            "POST",
+            "-H",
+            "Authorization: Bearer tok",
+            "-d",
+            r#"{"a":1}"#,
+            "--limit",
+            "5",
+            "api",
+            "v1",
+            "data",
         ]));
         assert_eq!(input.method, "POST");
         assert_eq!(input.path, "/api/v1/data");

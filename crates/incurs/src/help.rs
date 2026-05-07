@@ -86,7 +86,9 @@ pub fn format_root(name: &str, options: &FormatRootOptions) -> String {
 
     // Synopsis
     lines.push(format!("Usage: {name} <command>"));
-    if let Some(aliases) = &options.aliases && !aliases.is_empty() {
+    if let Some(aliases) = &options.aliases
+        && !aliases.is_empty()
+    {
         lines.push(format!("Aliases: {}", aliases.join(", ")));
     }
 
@@ -94,7 +96,12 @@ pub fn format_root(name: &str, options: &FormatRootOptions) -> String {
     if !options.commands.is_empty() {
         lines.push(String::new());
         lines.push("Commands:".to_string());
-        let max_len = options.commands.iter().map(|c| c.name.len()).max().unwrap_or(0);
+        let max_len = options
+            .commands
+            .iter()
+            .map(|c| c.name.len())
+            .max()
+            .unwrap_or(0);
         for cmd in &options.commands {
             if let Some(desc) = &cmd.description {
                 let padding = " ".repeat(max_len - cmd.name.len());
@@ -106,7 +113,10 @@ pub fn format_root(name: &str, options: &FormatRootOptions) -> String {
     }
 
     // Global options
-    lines.extend(global_options_lines(options.root, options.config_flag.as_deref()));
+    lines.extend(global_options_lines(
+        options.root,
+        options.config_flag.as_deref(),
+    ));
 
     lines.join("\n")
 }
@@ -142,8 +152,12 @@ pub fn format_command(name: &str, options: &FormatCommandOptions) -> String {
     } else {
         " | <command>"
     };
-    lines.push(format!("Usage: {synopsis}{options_suffix}{commands_suffix}"));
-    if let Some(aliases) = &options.aliases && !aliases.is_empty() {
+    lines.push(format!(
+        "Usage: {synopsis}{options_suffix}{commands_suffix}"
+    ));
+    if let Some(aliases) = &options.aliases
+        && !aliases.is_empty()
+    {
         lines.push(format!("Aliases: {}", aliases.join(", ")));
     }
 
@@ -196,7 +210,11 @@ pub fn format_command(name: &str, options: &FormatCommandOptions) -> String {
             let max_len = entries.iter().map(|e| e.flag.len()).max().unwrap_or(0);
             for entry in &entries {
                 let padding = " ".repeat(max_len - entry.flag.len());
-                let prefix = if entry.deprecated { "[deprecated] " } else { "" };
+                let prefix = if entry.deprecated {
+                    "[deprecated] "
+                } else {
+                    ""
+                };
                 let desc = match &entry.default_value {
                     Some(dv) => format!("{prefix}{} (default: {dv})", entry.description),
                     None => format!("{prefix}{}", entry.description),
@@ -247,7 +265,12 @@ pub fn format_command(name: &str, options: &FormatCommandOptions) -> String {
     if !options.commands.is_empty() {
         lines.push(String::new());
         lines.push("Commands:".to_string());
-        let max_len = options.commands.iter().map(|c| c.name.len()).max().unwrap_or(0);
+        let max_len = options
+            .commands
+            .iter()
+            .map(|c| c.name.len())
+            .max()
+            .unwrap_or(0);
         for cmd in &options.commands {
             if let Some(desc) = &cmd.description {
                 let padding = " ".repeat(max_len - cmd.name.len());
@@ -260,7 +283,10 @@ pub fn format_command(name: &str, options: &FormatCommandOptions) -> String {
 
     // Global options
     if !options.hide_global_options {
-        lines.extend(global_options_lines(options.root, options.config_flag.as_deref()));
+        lines.extend(global_options_lines(
+            options.root,
+            options.config_flag.as_deref(),
+        ));
     }
 
     // Environment Variables
@@ -393,6 +419,13 @@ fn global_options_lines(root: bool, config_flag: Option<&str>) -> Vec<String> {
 
     if root {
         owned_flags.push(("--mcp".to_string(), "Start as MCP stdio server".to_string()));
+    }
+
+    if root && config_flag.is_some() {
+        owned_flags.push((
+            "--config-schema".to_string(),
+            "Show JSON Schema for config file".to_string(),
+        ));
     }
 
     if let Some(cfg) = config_flag {

@@ -65,7 +65,11 @@ pub async fn register(
     }
 
     // Register with Claude Code (writes to ~/.claude.json or project .claude.json)
-    if target_agents.is_empty() || target_agents.iter().any(|a| a == "claude-code" || a == "claude") {
+    if target_agents.is_empty()
+        || target_agents
+            .iter()
+            .any(|a| a == "claude-code" || a == "claude")
+    {
         if register_claude_code(name, &command, options.global) {
             registered_agents.push("Claude Code".to_string());
         }
@@ -198,10 +202,7 @@ fn register_claude_code(name: &str, command: &str, global: bool) -> bool {
         ),
     );
     servers.insert(name.to_string(), serde_json::Value::Object(entry));
-    config.insert(
-        "mcpServers".to_string(),
-        serde_json::Value::Object(servers),
-    );
+    config.insert("mcpServers".to_string(), serde_json::Value::Object(servers));
 
     if let Some(dir) = config_path.parent() {
         if !dir.exists() {

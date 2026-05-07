@@ -170,20 +170,20 @@ mod server {
     use futures::StreamExt;
     use serde_json::Value;
 
+    use rmcp::Error as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
         CallToolRequestParam, CallToolResult, Content, Implementation, ListToolsResult,
         PaginatedRequestParam, ServerCapabilities, ServerInfo, Tool,
     };
     use rmcp::service::{Peer, RequestContext, RoleServer};
-    use rmcp::Error as McpError;
 
     use crate::command::{self, CommandDef, ExecuteOptions, ParseMode};
     use crate::middleware::MiddlewareFn;
     use crate::output::Format;
     use crate::schema::FieldMeta;
 
-    use super::{build_tool_schema, McpServeOptions};
+    use super::{McpServeOptions, build_tool_schema};
 
     // -----------------------------------------------------------------------
     // Tool resolution from the CLI command tree
@@ -221,8 +221,7 @@ mod server {
             match entry {
                 crate::cli::CommandEntry::Leaf(def) => {
                     let tool_name = path.join("_");
-                    let schema_value =
-                        build_tool_schema(&def.args_fields, &def.options_fields);
+                    let schema_value = build_tool_schema(&def.args_fields, &def.options_fields);
                     let input_schema = match schema_value {
                         Value::Object(map) => Arc::new(map),
                         _ => Arc::new(serde_json::Map::new()),
@@ -346,7 +345,8 @@ mod server {
             &self,
             _request: PaginatedRequestParam,
             _context: RequestContext<RoleServer>,
-        ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
+        ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_
+        {
             let tools = (*self.tool_list).clone();
             std::future::ready(Ok(ListToolsResult {
                 tools,
@@ -358,7 +358,8 @@ mod server {
             &self,
             request: CallToolRequestParam,
             _context: RequestContext<RoleServer>,
-        ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+        ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_
+        {
             let tools_by_name = Arc::clone(&self.tools_by_name);
             let cli_name = self.cli_name.clone();
             let cli_version = self.cli_version.clone();
@@ -406,8 +407,7 @@ mod server {
 
                 match result {
                     command::InternalResult::Ok { data, .. } => {
-                        let text =
-                            serde_json::to_string(&data).unwrap_or_else(|_| "null".into());
+                        let text = serde_json::to_string(&data).unwrap_or_else(|_| "null".into());
                         Ok(CallToolResult::success(vec![Content::text(text)]))
                     }
                     command::InternalResult::Error { message, .. } => {
@@ -421,8 +421,7 @@ mod server {
                     command::InternalResult::Stream(stream) => {
                         // Buffer all stream chunks, then return the collected result.
                         let chunks: Vec<Value> = stream.collect().await;
-                        let text =
-                            serde_json::to_string(&chunks).unwrap_or_else(|_| "[]".into());
+                        let text = serde_json::to_string(&chunks).unwrap_or_else(|_| "[]".into());
                         Ok(CallToolResult::success(vec![Content::text(text)]))
                     }
                 }
@@ -452,8 +451,8 @@ mod server {
         env_fields: &[FieldMeta],
         _options: &McpServeOptions,
     ) -> Result<(), crate::errors::Error> {
-        use rmcp::transport::io::stdio;
         use rmcp::ServiceExt;
+        use rmcp::transport::io::stdio;
 
         let resolved = collect_resolved_tools(commands, &[], &[]);
 
@@ -503,7 +502,15 @@ pub async fn serve(
     env_fields: &[FieldMeta],
     options: &McpServeOptions,
 ) -> Result<(), crate::errors::Error> {
-    server::serve(name, version, commands, root_middleware, env_fields, options).await
+    server::serve(
+        name,
+        version,
+        commands,
+        root_middleware,
+        env_fields,
+        options,
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +520,7 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{to_kebab, FieldType};
+    use crate::schema::{FieldType, to_kebab};
 
     fn make_field(name: &'static str, ft: FieldType, required: bool) -> FieldMeta {
         FieldMeta {

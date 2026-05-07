@@ -161,7 +161,11 @@ fn parse_token(token: &str) -> FilterPath {
 
             remaining = if close_bracket + 1 < remaining.len() {
                 let rest = &remaining[close_bracket + 1..];
-                if rest.starts_with('.') { &rest[1..] } else { rest }
+                if rest.starts_with('.') {
+                    &rest[1..]
+                } else {
+                    rest
+                }
             } else {
                 ""
             };
