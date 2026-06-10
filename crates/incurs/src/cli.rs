@@ -5,7 +5,7 @@
 //!
 //! - Registering commands and command groups
 //! - Middleware that runs around every command
-//! - Built-in flags (--help, --version, --format, --json, --verbose, etc.)
+//! - Built-in flags (--help, --version, --format, --json, --full-output, etc.)
 //! - Config file loading for option defaults
 //! - Three-transport architecture (CLI, HTTP, MCP)
 //!
@@ -272,6 +272,27 @@ impl Cli {
     /// 4. Load config file defaults
     /// 5. Execute the command with middleware
     /// 6. Format and write output to stdout
+    /// Computes the "Skills are out of date" CTA: when installed skills exist
+    /// for this CLI and the stored hash differs from the live command tree.
+    /// Ported from `Cli.ts` `skillsCta`.
+    fn compute_skills_cta(&self) -> Option<FormattedCtaBlock> {
+        let stored = crate::sync_skills::read_hash(&self.name)?;
+        if !crate::sync_skills::has_installed_skills(&self.name, None) {
+            return None;
+        }
+        let live = skill::hash(&collect_command_info(&self.commands, &[]));
+        if live == stored {
+            return None;
+        }
+        Some(FormattedCtaBlock {
+            description: "Skills are out of date:".to_string(),
+            commands: vec![FormattedCta {
+                command: format!("{} skills add", self.name),
+                description: Some("sync outdated skills".to_string()),
+            }],
+        })
+    }
+
     pub async fn serve_with(&self, argv: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         let human = std::io::stdout().is_terminal();
         let config_flag = self.config.as_ref().map(|c| c.flag.as_str());
@@ -412,7 +433,58 @@ impl Cli {
                 .find(|item| item.name == "skills")
                 .expect("skills builtin must exist");
 
-            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+            let skills_sub_token = builtin.rest.get(index + 1).map(|token| token.as_str());
+            let skills_sub = skills_sub_token.map(|tok| {
+                builtin_def
+                    .subcommands
+                    .iter()
+                    .find(|s| s.name == tok || s.aliases.contains(&tok))
+                    .map(|s| s.name)
+                    .unwrap_or(tok)
+            });
+
+            // `skills list` / `skills ls`: list skills with installed status.
+            if skills_sub == Some("list") {
+                if builtin.help {
+                    writeln_stdout(&format_builtin_subcommand_help(
+                        &self.name,
+                        builtin_def,
+                        "list",
+                    ));
+                    return Ok(());
+                }
+                let skills = crate::sync_skills::list(
+                    &self.name,
+                    &collect_command_info(&self.commands, &[]),
+                    1,
+                    self.description.as_deref(),
+                );
+                if skills.is_empty() {
+                    writeln_stdout("No skills found.");
+                    return Ok(());
+                }
+                let max_len = skills.iter().map(|s| s.name.len()).max().unwrap_or(0);
+                let mut lines: Vec<String> = Vec::new();
+                for s in &skills {
+                    let icon = if s.installed { "\u{2713}" } else { "\u{2717}" };
+                    let padding = match &s.description {
+                        Some(d) => format!("{}  {d}", " ".repeat(max_len - s.name.len())),
+                        None => String::new(),
+                    };
+                    lines.push(format!("  {icon} {}{padding}", s.name));
+                }
+                let installed_count = skills.iter().filter(|s| s.installed).count();
+                lines.push(String::new());
+                lines.push(format!(
+                    "{} skill{} ({installed_count} installed)",
+                    skills.len(),
+                    if skills.len() == 1 { "" } else { "s" },
+                ));
+                writeln_stdout(&lines.join("\n"));
+                return Ok(());
+            }
+
+            if skills_sub != Some("add") {
                 writeln_stdout(&format_builtin_help(&self.name, builtin_def));
                 return Ok(());
             }
@@ -703,6 +775,8 @@ impl Cli {
                         &FormatCommandOptions {
                             aliases: if is_root && !self.aliases.is_empty() {
                                 Some(self.aliases.clone())
+                            } else if !is_root && !command.command_aliases.is_empty() {
+                                Some(command.command_aliases.clone())
                             } else {
                                 None
                             },
@@ -797,11 +871,13 @@ impl Cli {
         if builtin.schema {
             match &resolved {
                 ResolvedCommand::Leaf { command, .. } => {
-                    if let Some(schema) = &command.output_schema {
-                        writeln_stdout(&serde_json::to_string_pretty(schema)?);
+                    let schema = build_command_schema(command);
+                    let fmt = if builtin.format_explicit {
+                        builtin.format
                     } else {
-                        writeln_stdout("{}");
-                    }
+                        Format::Toon
+                    };
+                    writeln_stdout(&format_value(&schema, fmt));
                 }
                 _ => {
                     writeln_stdout("--schema requires a command.");
@@ -1007,6 +1083,15 @@ impl Cli {
         // --- Step 10: Build env source ---
         let env_source: std::collections::HashMap<String, String> = std::env::vars().collect();
 
+        // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
+        if human {
+            for warning in
+                deprecation_warnings(&rest, &command.options_fields, &command.aliases)
+            {
+                eprintln!("{warning}");
+            }
+        }
+
         // --- Step 11: Execute command ---
         let result = command::execute(
             Arc::clone(&command),
@@ -1032,6 +1117,9 @@ impl Cli {
         let duration = start.elapsed();
         let duration_str = format!("{}ms", duration.as_millis());
 
+        // Compute the "Skills are out of date" CTA (merged into output CTAs).
+        let skills_cta = self.compute_skills_cta();
+
         // --- Step 12: Handle result ---
         match result {
             InternalResult::Ok { data, cta } => {
@@ -1043,12 +1131,12 @@ impl Cli {
                     data
                 };
 
-                let formatted_cta = format_cta_block(&self.name, cta.as_ref());
+                let formatted_cta =
+                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
                     envelope.insert("ok".to_string(), Value::Bool(true));
-                    envelope.insert("data".to_string(), data);
                     let mut meta = serde_json::Map::new();
                     meta.insert("command".to_string(), Value::String(command_path));
                     meta.insert("duration".to_string(), Value::String(duration_str));
@@ -1058,9 +1146,25 @@ impl Cli {
                             serde_json::to_value(cta).unwrap_or(Value::Null),
                         );
                     }
+                    // Truncate `data` separately so meta (incl. nextOffset) stays visible.
+                    #[cfg(feature = "tokens")]
+                    let data = {
+                        let data_formatted = format_value(&data, format);
+                        if let Some((text, next_offset)) =
+                            truncate_tokens(&data_formatted, &builtin)
+                        {
+                            if let Some(n) = next_offset {
+                                meta.insert("nextOffset".to_string(), Value::from(n));
+                            }
+                            Value::String(text)
+                        } else {
+                            data
+                        }
+                    };
+                    envelope.insert("data".to_string(), data);
                     envelope.insert("meta".to_string(), Value::Object(meta));
                     let output = format_value(&Value::Object(envelope), format);
-                    write_with_token_ops(&output, &builtin, writeln_stdout);
+                    writeln_stdout(&output);
                 } else if human {
                     if render_output {
                         let output = format_value(&data, format);
@@ -1098,7 +1202,8 @@ impl Cli {
                 cta,
                 exit_code,
             } => {
-                let formatted_cta = format_cta_block(&self.name, cta.as_ref());
+                let formatted_cta =
+                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
@@ -1318,7 +1423,55 @@ impl Cli {
                 .find(|item| item.name == "skills")
                 .expect("skills builtin must exist");
 
-            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+            let skills_sub_token = builtin.rest.get(index + 1).map(|token| token.as_str());
+            // Resolve the subcommand, honoring declared aliases (e.g. `ls`→`list`).
+            let skills_sub = skills_sub_token.map(|tok| {
+                builtin_def
+                    .subcommands
+                    .iter()
+                    .find(|s| s.name == tok || s.aliases.contains(&tok))
+                    .map(|s| s.name)
+                    .unwrap_or(tok)
+            });
+
+            // `skills list` / `skills ls`: list skills with installed status.
+            if skills_sub == Some("list") {
+                if builtin.help {
+                    wln!(&format_builtin_subcommand_help(&self.name, builtin_def, "list"));
+                    return Ok(None);
+                }
+                let skills = crate::sync_skills::list(
+                    &self.name,
+                    &collect_command_info(&self.commands, &[]),
+                    1,
+                    self.description.as_deref(),
+                );
+                if skills.is_empty() {
+                    wln!("No skills found.");
+                    return Ok(None);
+                }
+                let max_len = skills.iter().map(|s| s.name.len()).max().unwrap_or(0);
+                let mut lines: Vec<String> = Vec::new();
+                for s in &skills {
+                    let icon = if s.installed { "\u{2713}" } else { "\u{2717}" };
+                    let padding = match &s.description {
+                        Some(d) => format!("{}  {d}", " ".repeat(max_len - s.name.len())),
+                        None => String::new(),
+                    };
+                    lines.push(format!("  {icon} {}{padding}", s.name));
+                }
+                let installed_count = skills.iter().filter(|s| s.installed).count();
+                lines.push(String::new());
+                lines.push(format!(
+                    "{} skill{} ({installed_count} installed)",
+                    skills.len(),
+                    if skills.len() == 1 { "" } else { "s" },
+                ));
+                wln!(&lines.join("\n"));
+                return Ok(None);
+            }
+
+            if skills_sub != Some("add") {
                 wln!(&format_builtin_help(&self.name, builtin_def));
                 return Ok(None);
             }
@@ -1605,6 +1758,8 @@ impl Cli {
                         &FormatCommandOptions {
                             aliases: if is_root && !self.aliases.is_empty() {
                                 Some(self.aliases.clone())
+                            } else if !is_root && !command.command_aliases.is_empty() {
+                                Some(command.command_aliases.clone())
                             } else {
                                 None
                             },
@@ -1698,11 +1853,13 @@ impl Cli {
         if builtin.schema {
             match &resolved {
                 ResolvedCommand::Leaf { command, .. } => {
-                    if let Some(schema) = &command.output_schema {
-                        wln!(&serde_json::to_string_pretty(schema)?);
+                    let schema = build_command_schema(command);
+                    let fmt = if builtin.format_explicit {
+                        builtin.format
                     } else {
-                        wln!("{}");
-                    }
+                        Format::Toon
+                    };
+                    wln!(&format_value(&schema, fmt));
                 }
                 _ => {
                     wln!("--schema requires a command.");
@@ -1796,46 +1953,91 @@ impl Cli {
                 return Ok(None);
             }
             ResolvedCommand::Error { error, path } => {
+                // Build the candidate set for did-you-mean. At the root level,
+                // also consider builtin command names.
+                let mut candidates = candidates_at_path(&self.commands, &path);
                 if path.is_empty() {
-                    if let Some(root_cmd) = &self.root_command {
-                        (
-                            Arc::clone(root_cmd),
-                            self.name.clone(),
-                            builtin.rest.clone(),
-                            Vec::new(),
-                            None,
-                        )
-                    } else {
-                        let parent = if path.is_empty() { &self.name } else { &path };
-                        let message = format!("'{error}' is not a command for '{parent}'.");
-                        if human {
-                            wln!(&format_human_error("COMMAND_NOT_FOUND", &message));
-                            wln!(&format!("\nSuggested commands:\n  {} --help", self.name));
-                        } else {
-                            let cta_json = serde_json::json!({
-                                "code": "COMMAND_NOT_FOUND",
-                                "message": message,
-                                "cta": {
-                                    "description": "See available commands:",
-                                    "commands": [{ "command": format!("{} --help", self.name) }]
-                                }
-                            });
-                            wln!(&format_value(&cta_json, builtin.format));
-                        }
-                        return Ok(Some(1));
+                    for b in builtin_commands(&self.name) {
+                        candidates.push(b.name.to_string());
                     }
+                }
+                let suggestion = suggest(&error, candidates.iter().map(|s| s.as_str()));
+
+                // Root fallback is blocked when the unknown token looks like a
+                // typo of a known command (TS rootFallbackBlocked guard).
+                if path.is_empty() && suggestion.is_none()
+                    && let Some(root_cmd) = &self.root_command
+                {
+                    (
+                        Arc::clone(root_cmd),
+                        self.name.clone(),
+                        builtin.rest.clone(),
+                        Vec::new(),
+                        None,
+                    )
                 } else {
-                    let parent = format!("{} {path}", self.name);
-                    let message = format!("'{error}' is not a command for '{parent}'.");
+                    let parent = if path.is_empty() {
+                        self.name.clone()
+                    } else {
+                        format!("{} {path}", self.name)
+                    };
+                    let help_cmd = if path.is_empty() {
+                        format!("{} --help", self.name)
+                    } else {
+                        format!("{parent} --help")
+                    };
+                    let did_you_mean = suggestion
+                        .as_ref()
+                        .map(|s| format!(" Did you mean '{s}'?"))
+                        .unwrap_or_default();
+                    let message =
+                        format!("'{error}' is not a command for '{parent}'.{did_you_mean}");
+
+                    // Build CTA commands: corrected command (if any), then help.
+                    let mut cta_commands: Vec<Value> = Vec::new();
+                    if let Some(s) = &suggestion {
+                        let corrected: Vec<String> = builtin
+                            .rest
+                            .iter()
+                            .map(|t| if t == &error { s.clone() } else { t.clone() })
+                            .collect();
+                        cta_commands.push(serde_json::json!({
+                            "command": format!("{} {}", self.name, corrected.join(" "))
+                        }));
+                    }
+                    cta_commands.push(serde_json::json!({
+                        "command": help_cmd,
+                        "description": "see all available commands"
+                    }));
+                    let cta_desc = if cta_commands.len() == 1 {
+                        "Suggested command:"
+                    } else {
+                        "Suggested commands:"
+                    };
+
                     if human {
                         wln!(&format_human_error("COMMAND_NOT_FOUND", &message));
+                        let cta_block = FormattedCtaBlock {
+                            description: cta_desc.to_string(),
+                            commands: cta_commands
+                                .iter()
+                                .map(|c| FormattedCta {
+                                    command: c["command"].as_str().unwrap_or("").to_string(),
+                                    description: c
+                                        .get("description")
+                                        .and_then(|d| d.as_str())
+                                        .map(|s| s.to_string()),
+                                })
+                                .collect(),
+                        };
+                        wln!(&format_human_cta(&cta_block));
                     } else {
                         let cta_json = serde_json::json!({
                             "code": "COMMAND_NOT_FOUND",
                             "message": message,
                             "cta": {
-                                "description": "See available commands:",
-                                "commands": [{ "command": format!("{} --help", parent) }]
+                                "description": cta_desc,
+                                "commands": cta_commands,
                             }
                         });
                         wln!(&format_value(&cta_json, builtin.format));
@@ -1910,6 +2112,15 @@ impl Cli {
         // --- Step 10: Build env source ---
         let env_source: std::collections::HashMap<String, String> = std::env::vars().collect();
 
+        // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
+        if human {
+            for warning in
+                deprecation_warnings(&rest, &command.options_fields, &command.aliases)
+            {
+                wln!(&warning);
+            }
+        }
+
         // --- Step 11: Execute command ---
         let result = command::execute(
             Arc::clone(&command),
@@ -1935,6 +2146,9 @@ impl Cli {
         let duration = start.elapsed();
         let duration_str = format!("{}ms", duration.as_millis());
 
+        // Compute the "Skills are out of date" CTA (merged into output CTAs).
+        let skills_cta = self.compute_skills_cta();
+
         // --- Step 12: Handle result ---
         match result {
             InternalResult::Ok { data, cta } => {
@@ -1946,7 +2160,8 @@ impl Cli {
                     data
                 };
 
-                let formatted_cta = format_cta_block(&self.name, cta.as_ref());
+                let formatted_cta =
+                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
 
                 // Macro to apply token ops before writing
                 macro_rules! wln_tok {
@@ -1963,7 +2178,6 @@ impl Cli {
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
                     envelope.insert("ok".to_string(), Value::Bool(true));
-                    envelope.insert("data".to_string(), data);
                     let mut meta = serde_json::Map::new();
                     meta.insert("command".to_string(), Value::String(command_path));
                     meta.insert("duration".to_string(), Value::String(duration_str));
@@ -1973,9 +2187,25 @@ impl Cli {
                             serde_json::to_value(cta).unwrap_or(Value::Null),
                         );
                     }
+                    // Truncate `data` separately so meta (incl. nextOffset) stays visible.
+                    #[cfg(feature = "tokens")]
+                    let data = {
+                        let data_formatted = format_value(&data, format);
+                        if let Some((text, next_offset)) =
+                            truncate_tokens(&data_formatted, &builtin)
+                        {
+                            if let Some(n) = next_offset {
+                                meta.insert("nextOffset".to_string(), Value::from(n));
+                            }
+                            Value::String(text)
+                        } else {
+                            data
+                        }
+                    };
+                    envelope.insert("data".to_string(), data);
                     envelope.insert("meta".to_string(), Value::Object(meta));
                     let output = format_value(&Value::Object(envelope), format);
-                    wln_tok!(&output);
+                    wln!(&output);
                 } else if human {
                     if render_output {
                         let output = format_value(&data, format);
@@ -1998,7 +2228,8 @@ impl Cli {
                 cta,
                 exit_code,
             } => {
-                let formatted_cta = format_cta_block(&self.name, cta.as_ref());
+                let formatted_cta =
+                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
@@ -2129,6 +2360,108 @@ enum ResolvedCommand<'a> {
     Error { error: String, path: String },
 }
 
+/// Computes the Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let m = a.len();
+    let n = b.len();
+    let mut dp: Vec<usize> = (0..=n).collect();
+    for i in 1..=m {
+        let mut prev = dp[0];
+        dp[0] = i;
+        for j in 1..=n {
+            let tmp = dp[j];
+            dp[j] = if a[i - 1] == b[j - 1] {
+                prev
+            } else {
+                1 + prev.min(dp[j]).min(dp[j - 1])
+            };
+            prev = tmp;
+        }
+    }
+    dp[n]
+}
+
+/// Suggests the closest command name from a set using tiered matching:
+/// prefix match → contains match → fuzzy (edit distance) match.
+fn suggest<'a>(input: &str, candidates: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let threshold = if input.len() <= 4 { 2 } else { input.len() / 2 };
+    let lower = input.to_lowercase();
+
+    let mut best: Option<String> = None;
+    let mut best_score = usize::MAX;
+
+    for c in candidates {
+        let lc = c.to_lowercase();
+        let dist = levenshtein(&lower, &lc);
+        let score = if lc.starts_with(&lower) && lc != lower {
+            dist
+        } else if lc.contains(&lower) {
+            100 + dist
+        } else if dist <= threshold {
+            200 + dist
+        } else {
+            continue;
+        };
+        if score < best_score {
+            best_score = score;
+            best = Some(c.to_string());
+        }
+    }
+    best
+}
+
+/// Looks up an entry by name, falling back to a leaf command's declared
+/// `command_aliases`. Returns the canonical name and the entry.
+fn lookup_entry<'a>(
+    commands: &'a BTreeMap<String, CommandEntry>,
+    token: &str,
+) -> Option<(&'a str, &'a CommandEntry)> {
+    if let Some((name, entry)) = commands.get_key_value(token) {
+        return Some((name.as_str(), entry));
+    }
+    for (name, entry) in commands {
+        if let CommandEntry::Leaf(def) = entry
+            && def.command_aliases.iter().any(|a| a == token)
+        {
+            return Some((name.as_str(), entry));
+        }
+    }
+    None
+}
+
+/// Collects candidate command names (including leaf aliases) at the group
+/// reached by following `path` (space-separated). An empty path returns the
+/// top-level names.
+fn candidates_at_path(
+    commands: &BTreeMap<String, CommandEntry>,
+    path: &str,
+) -> Vec<String> {
+    let mut current = commands;
+    if !path.is_empty() {
+        for segment in path.split(' ') {
+            match current.get(segment) {
+                Some(CommandEntry::Group {
+                    commands: sub_commands,
+                    ..
+                }) => current = sub_commands,
+                _ => return Vec::new(),
+            }
+        }
+    }
+    let mut names = Vec::new();
+    for (name, entry) in current {
+        names.push(name.clone());
+        if let CommandEntry::Leaf(def) = entry {
+            for alias in &def.command_aliases {
+                names.push(alias.clone());
+            }
+        }
+    }
+    names
+}
+
 /// Walks argv tokens through the command tree to find the target command.
 fn resolve_command<'a>(
     commands: &'a BTreeMap<String, CommandEntry>,
@@ -2144,7 +2477,7 @@ fn resolve_command<'a>(
         }
     };
 
-    let entry = match commands.get(first.as_str()) {
+    let (first_name, entry) = match lookup_entry(commands, first.as_str()) {
         Some(e) => e,
         None => {
             return ResolvedCommand::Error {
@@ -2154,7 +2487,7 @@ fn resolve_command<'a>(
         }
     };
 
-    let mut path = vec![first.as_str()];
+    let mut path = vec![first_name];
     let mut remaining = rest;
     let mut inherited_output_policy: Option<OutputPolicy> = None;
     let mut collected_middleware: Vec<MiddlewareFn> = Vec::new();
@@ -2194,9 +2527,9 @@ fn resolve_command<'a>(
                     }
                 };
 
-                match sub_commands.get(next.as_str()) {
-                    Some(child) => {
-                        path.push(next.as_str());
+                match lookup_entry(sub_commands, next.as_str()) {
+                    Some((child_name, child)) => {
+                        path.push(child_name);
                         remaining = &remaining[1..];
                         current = child;
                     }
@@ -2284,7 +2617,7 @@ fn extract_builtin_flags(
     while i < argv.len() {
         let token = &argv[i];
 
-        if token == "--verbose" {
+        if token == "--full-output" {
             verbose = true;
         } else if token == "--llms" {
             llms = true;
@@ -2502,6 +2835,24 @@ fn format_cta_block(name: &str, block: Option<&CtaBlock>) -> Option<FormattedCta
     })
 }
 
+/// Merges an optional secondary CTA block (e.g. the skills-staleness CTA) into
+/// a base CTA. When both exist, the secondary block's commands are appended to
+/// the base; otherwise whichever exists is returned.
+fn merge_cta(
+    base: Option<FormattedCtaBlock>,
+    extra: Option<&FormattedCtaBlock>,
+) -> Option<FormattedCtaBlock> {
+    match (base, extra) {
+        (Some(mut b), Some(e)) => {
+            b.commands.extend(e.commands.iter().cloned());
+            Some(b)
+        }
+        (Some(b), None) => Some(b),
+        (None, Some(e)) => Some(e.clone()),
+        (None, None) => None,
+    }
+}
+
 /// Formats a CTA block for human-readable TTY output.
 fn format_human_cta(cta: &FormattedCtaBlock) -> String {
     let mut lines = vec![String::new(), cta.description.clone()];
@@ -2600,6 +2951,83 @@ fn collect_group_descriptions(
     result
 }
 
+/// Builds a `--schema` JSON object for a command from its FieldMeta, with
+/// `args`, `env`, `options`, and `output` sections (each present only when the
+/// command declares them). Ported from `Cli.ts` `--schema` handling.
+fn build_command_schema(command: &CommandDef) -> Value {
+    let mut result = serde_json::Map::new();
+    if !command.args_fields.is_empty() {
+        result.insert(
+            "args".to_string(),
+            crate::schema::to_json_schema(&command.args_fields),
+        );
+    }
+    if !command.env_fields.is_empty() {
+        result.insert(
+            "env".to_string(),
+            crate::schema::to_json_schema(&command.env_fields),
+        );
+    }
+    if !command.options_fields.is_empty() {
+        result.insert(
+            "options".to_string(),
+            crate::schema::to_json_schema(&command.options_fields),
+        );
+    }
+    if let Some(output) = &command.output_schema {
+        result.insert("output".to_string(), output.clone());
+    }
+    Value::Object(result)
+}
+
+/// Scans command tokens for supplied deprecated options and returns the
+/// `Warning: --<cli-name> is deprecated` lines. Recognizes long flags, their
+/// `--no-` form, and short aliases. Ported from `Cli.ts` `emitDeprecationWarnings`.
+fn deprecation_warnings(
+    rest: &[String],
+    options_fields: &[FieldMeta],
+    aliases: &HashMap<String, char>,
+) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut deprecated_flags: HashSet<&str> = HashSet::new();
+    let mut deprecated_shorts: HashMap<char, &str> = HashMap::new();
+    for field in options_fields {
+        if field.deprecated {
+            deprecated_flags.insert(field.cli_name.as_str());
+            if let Some(&ch) = aliases.get(field.name) {
+                deprecated_shorts.insert(ch, field.cli_name.as_str());
+            }
+        }
+    }
+    if deprecated_flags.is_empty() {
+        return Vec::new();
+    }
+
+    let mut warnings = Vec::new();
+    for token in rest {
+        if let Some(stripped) = token.strip_prefix("--") {
+            let stripped = stripped.split('=').next().unwrap_or("");
+            let raw = if !deprecated_flags.contains(stripped) {
+                stripped.strip_prefix("no-").unwrap_or(stripped)
+            } else {
+                stripped
+            };
+            if deprecated_flags.contains(raw) {
+                warnings.push(format!("Warning: --{raw} is deprecated"));
+            }
+        } else if let Some(shorts) = token.strip_prefix('-')
+            && !token.is_empty()
+        {
+            for ch in shorts.chars() {
+                if let Some(name) = deprecated_shorts.get(&ch) {
+                    warnings.push(format!("Warning: --{name} is deprecated"));
+                }
+            }
+        }
+    }
+    warnings
+}
+
 /// Checks if any arg fields are required.
 fn has_required_args(args_fields: &[FieldMeta]) -> bool {
     args_fields.iter().any(|f| f.required)
@@ -2652,6 +3080,7 @@ struct BuiltinSubcommand {
     description: &'static str,
     options_fields: Vec<FieldMeta>,
     option_aliases: HashMap<String, char>,
+    aliases: Vec<&'static str>,
 }
 
 fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
@@ -2766,6 +3195,7 @@ fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
                     },
                 ],
                 option_aliases: HashMap::from([(String::from("command"), 'c')]),
+                aliases: Vec::new(),
             }],
         },
         BuiltinCommand {
@@ -2801,7 +3231,15 @@ fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
                     },
                 ],
                 option_aliases: HashMap::new(),
-            }],
+                aliases: Vec::new(),
+                },
+                BuiltinSubcommand {
+                    name: "list",
+                    description: "List skills and whether they are installed",
+                    options_fields: Vec::new(),
+                    option_aliases: HashMap::new(),
+                    aliases: vec!["ls"],
+                }],
         },
     ]
 }
@@ -3174,22 +3612,61 @@ fn apply_token_ops(output: &str, builtin: &BuiltinFlags) -> Option<String> {
         {
             if let Ok(bpe) = tiktoken_rs::cl100k_base() {
                 let tokens = bpe.encode_with_special_tokens(output);
+                let total = tokens.len();
                 let offset = builtin.token_offset.unwrap_or(0);
-                let sliced = if offset < tokens.len() {
-                    &tokens[offset..]
-                } else {
-                    &[]
+                let end = match builtin.token_limit {
+                    Some(limit) => offset + limit,
+                    None => total,
                 };
-                let limited = if let Some(limit) = builtin.token_limit {
-                    &sliced[..limit.min(sliced.len())]
-                } else {
-                    sliced
-                };
-                return Some(bpe.decode(limited.to_vec()).unwrap_or_default());
+                // No truncation needed when the full output fits in the window.
+                if offset == 0 && end >= total {
+                    return None;
+                }
+                let start = offset.min(total);
+                let actual_end = end.min(total);
+                let limited = &tokens[start..actual_end];
+                let sliced = bpe.decode(limited.to_vec()).unwrap_or_default();
+                return Some(format!(
+                    "{sliced}\n[truncated: showing tokens {offset}\u{2013}{actual_end} of {total}]"
+                ));
             }
         }
     }
     None
+}
+
+/// Truncates a formatted string by token window, returning the truncated text
+/// (with the `[truncated: …]` marker) and the next offset for pagination, or
+/// `None` when no truncation is needed. Used by the full-output envelope path
+/// so that `meta.nextOffset` can be surfaced. Ported from `Cli.ts` `truncate`.
+#[cfg(feature = "tokens")]
+fn truncate_tokens(output: &str, builtin: &BuiltinFlags) -> Option<(String, Option<usize>)> {
+    if builtin.token_offset.is_none() && builtin.token_limit.is_none() {
+        return None;
+    }
+    let bpe = tiktoken_rs::cl100k_base().ok()?;
+    let tokens = bpe.encode_with_special_tokens(output);
+    let total = tokens.len();
+    let offset = builtin.token_offset.unwrap_or(0);
+    let end = match builtin.token_limit {
+        Some(limit) => offset + limit,
+        None => total,
+    };
+    if offset == 0 && end >= total {
+        return None;
+    }
+    let start = offset.min(total);
+    let actual_end = end.min(total);
+    let sliced = bpe.decode(tokens[start..actual_end].to_vec()).unwrap_or_default();
+    let next_offset = if actual_end < total {
+        Some(actual_end)
+    } else {
+        None
+    };
+    Some((
+        format!("{sliced}\n[truncated: showing tokens {offset}\u{2013}{actual_end} of {total}]"),
+        next_offset,
+    ))
 }
 
 /// Writes output to stdout, applying token operations if any are set.
@@ -3208,7 +3685,7 @@ mod tests {
     #[test]
     fn test_extract_builtin_flags_basic() {
         let argv: Vec<String> = vec![
-            "--verbose".to_string(),
+            "--full-output".to_string(),
             "--json".to_string(),
             "list".to_string(),
         ];
@@ -3259,6 +3736,7 @@ mod tests {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: std::collections::HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -3297,6 +3775,7 @@ mod tests {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: std::collections::HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -3359,6 +3838,7 @@ mod tests {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: std::collections::HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -3405,6 +3885,7 @@ mod tests {
             options_fields: vec![],
             env_fields: vec![],
             aliases: HashMap::new(),
+            command_aliases: Vec::new(),
             examples: vec![],
             hint: None,
             format: None,
@@ -3617,6 +4098,7 @@ mod tests {
                 }],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -3905,6 +4387,7 @@ mod tests {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: std::collections::HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,

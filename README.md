@@ -13,7 +13,7 @@ Ported from incur v0.3.6 (TypeScript). 245 tests, 10/10 parity with the TS imple
 | CLI parsing (args, options, flags) | Done |
 | Three transports (CLI, HTTP, MCP) | CLI done, HTTP/MCP stubbed |
 | Help (`--help`, `--version`) | Done |
-| Output formats (`--json`, `--format`, `--verbose`) | Done |
+| Output formats (`--json`, `--format`, `--full-output`) | Done |
 | Output filtering (`--filter-output`) | Done |
 | Streaming (async generators) | Done |
 | Middleware (onion-style) | Done |
@@ -117,7 +117,7 @@ See [`crates/incur/examples/todoapp.rs`](crates/incur/examples/todoapp.rs) for a
 cargo run -p incur --example todoapp -- --help
 cargo run -p incur --example todoapp -- add "Buy groceries" --priority high
 cargo run -p incur --example todoapp -- list --json
-cargo run -p incur --example todoapp -- stats --verbose
+cargo run -p incur --example todoapp -- stats --full-output
 cargo run -p incur --example todoapp -- stream
 ```
 

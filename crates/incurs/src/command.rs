@@ -61,6 +61,8 @@ pub struct CommandDef {
     pub env_fields: Vec<FieldMeta>,
     /// Map of option names to single-char aliases.
     pub aliases: HashMap<String, char>,
+    /// Alternative names this command can be invoked by.
+    pub command_aliases: Vec<String>,
     /// Usage examples displayed in help output.
     pub examples: Vec<Example>,
     /// Plain-text hint displayed after examples in help output.
@@ -113,6 +115,7 @@ impl CommandDef {
                 options_fields: Vec::new(),
                 env_fields: Vec::new(),
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: Vec::new(),
                 hint: None,
                 format: None,
@@ -140,6 +143,12 @@ impl CommandBuilder {
     /// Sets positional args from a type that implements `IncurSchema`.
     pub fn args<T: crate::schema::IncurSchema>(mut self) -> Self {
         self.def.args_fields = T::fields();
+        self
+    }
+
+    /// Sets alternative names this command can be invoked by.
+    pub fn command_aliases(mut self, aliases: Vec<String>) -> Self {
+        self.def.command_aliases = aliases;
         self
     }
 

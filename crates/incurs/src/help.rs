@@ -452,7 +452,7 @@ fn global_options_lines(root: bool, config_flag: Option<&str>) -> Vec<String> {
         "Skip first n tokens of output".to_string(),
     ));
     owned_flags.push((
-        "--verbose".to_string(),
+        "--full-output".to_string(),
         "Show full output envelope".to_string(),
     ));
 

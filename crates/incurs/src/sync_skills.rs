@@ -245,6 +245,90 @@ pub fn read_hash(name: &str) -> Option<String> {
     read_meta(name).map(|m| m.hash)
 }
 
+/// Returns the set of stored skill names for this CLI that are currently
+/// installed (a `SKILL.md` exists under `~/.agents/skills/<skill>` or
+/// `<cwd>/.agents/skills/<skill>`). Ported from `SyncSkills.readInstalledSkills`.
+fn installed_skills(name: &str, cwd: Option<&str>) -> std::collections::HashSet<String> {
+    let meta = match read_meta(name) {
+        Some(m) if !m.skills.is_empty() => m,
+        _ => return std::collections::HashSet::new(),
+    };
+    let cwd = cwd
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+    let bases = [
+        dirs::home_dir()
+            .unwrap_or_default()
+            .join(".agents")
+            .join("skills"),
+        cwd.join(".agents").join("skills"),
+    ];
+    meta.skills
+        .into_iter()
+        .filter(|skill| {
+            bases
+                .iter()
+                .any(|base| base.join(skill).join("SKILL.md").exists())
+        })
+        .collect()
+}
+
+/// Returns `true` if any of the stored skills for this CLI are currently
+/// installed. Ported from `SyncSkills.hasInstalledSkills`.
+pub fn has_installed_skills(name: &str, cwd: Option<&str>) -> bool {
+    !installed_skills(name, cwd).is_empty()
+}
+
+/// A skill entry returned by [`list`].
+pub struct ListedSkill {
+    /// The skill name.
+    pub name: String,
+    /// The skill description, if any.
+    pub description: Option<String>,
+    /// Whether this skill is currently installed on disk.
+    pub installed: bool,
+}
+
+/// Lists the skills this CLI would generate, annotated with whether each is
+/// currently installed. Ported from `SyncSkills.list`.
+pub fn list(
+    name: &str,
+    commands: &[CommandInfo],
+    depth: usize,
+    description: Option<&str>,
+) -> Vec<ListedSkill> {
+    let mut groups: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(desc) = description {
+        groups.insert(name.to_string(), desc.to_string());
+    }
+    let files = skill::split(name, commands, depth, &groups);
+    let installed = installed_skills(name, None);
+
+    let mut skills: Vec<ListedSkill> = files
+        .iter()
+        .map(|file| {
+            let content = format!("{}\n", file.content);
+            let skill_name = extract_skill_name(&content).unwrap_or_else(|| {
+                if file.dir.is_empty() {
+                    name.to_string()
+                } else {
+                    file.dir.clone()
+                }
+            });
+            let desc = extract_description(&content);
+            let is_installed = installed.contains(&skill_name);
+            ListedSkill {
+                name: skill_name,
+                description: desc,
+                installed: is_installed,
+            }
+        })
+        .collect();
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    skills
+}
+
 // ---------------------------------------------------------------------------
 // Metadata persistence
 // ---------------------------------------------------------------------------
@@ -366,5 +450,38 @@ mod tests {
     #[test]
     fn test_read_hash_nonexistent() {
         assert_eq!(read_hash("nonexistent-test-cli-12345"), None);
+    }
+
+    // F10: has_installed_skills returns false when no meta exists.
+    #[test]
+    fn test_has_installed_skills_no_meta() {
+        assert!(!has_installed_skills("nonexistent-cli-f10-aaa", None));
+    }
+
+    // F10: has_installed_skills returns true when a stored skill has a SKILL.md
+    // under `<cwd>/.agents/skills/<skill>`.
+    #[test]
+    fn test_has_installed_skills_detects_installed() {
+        let unique = format!("f10-cli-{}", std::process::id());
+        // Record metadata (uses the ambient XDG/home data dir for this name only).
+        write_meta(&unique, "abc123", &[unique.clone()]);
+
+        // Create a temp cwd with the skill installed.
+        let tmp = std::env::temp_dir().join(format!("f10-cwd-{}", std::process::id()));
+        let skill_dir = tmp.join(".agents").join("skills").join(&unique);
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "x").unwrap();
+
+        assert!(has_installed_skills(&unique, Some(&tmp.to_string_lossy())));
+
+        // No matching skill dir → false.
+        let empty = std::env::temp_dir().join(format!("f10-empty-{}", std::process::id()));
+        fs::create_dir_all(&empty).unwrap();
+        assert!(!has_installed_skills(&unique, Some(&empty.to_string_lossy())));
+
+        // Cleanup
+        let _ = fs::remove_file(meta_path(&unique));
+        let _ = fs::remove_dir_all(&tmp);
+        let _ = fs::remove_dir_all(&empty);
     }
 }
