@@ -195,6 +195,7 @@ pub async fn generate_commands(
                 options_fields: options_fields.clone(),
                 env_fields: Vec::new(),
                 aliases: std::collections::HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: Vec::new(),
                 hint: None,
                 format: None,

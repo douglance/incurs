@@ -146,6 +146,19 @@ impl CommandHandler for IncurErrorHandler {
 }
 
 /// Echo handler: reads args and options, returns formatted result.
+/// A handler that returns the parsed options object verbatim.
+struct OptionsEchoHandler;
+
+#[async_trait::async_trait]
+impl CommandHandler for OptionsEchoHandler {
+    async fn run(&self, ctx: CommandContext) -> CommandResult {
+        CommandResult::Ok {
+            data: ctx.options.clone(),
+            cta: None,
+        }
+    }
+}
+
 struct EchoHandler;
 
 #[async_trait::async_trait]
@@ -620,6 +633,7 @@ fn create_app() -> Cli {
                     m.insert("web".to_string(), 'w');
                     m
                 },
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -638,6 +652,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -656,6 +671,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -710,6 +726,7 @@ fn create_app() -> Cli {
                     m.insert("branch".to_string(), 'b');
                     m
                 },
+                command_aliases: Vec::new(),
                 examples: vec![
                     Example {
                         command: "project deploy create staging".to_string(),
@@ -743,6 +760,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -766,6 +784,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -831,6 +850,7 @@ fn create_app() -> Cli {
                     m.insert("sort".to_string(), 's');
                     m
                 },
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -849,6 +869,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -880,6 +901,7 @@ fn create_app() -> Cli {
                 ],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -912,6 +934,7 @@ fn create_app() -> Cli {
                     m.insert("force".to_string(), 'f');
                     m
                 },
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -943,6 +966,7 @@ fn create_app() -> Cli {
             options_fields: vec![],
             env_fields: vec![],
             aliases: HashMap::new(),
+            command_aliases: Vec::new(),
             examples: vec![],
             hint: None,
             format: None,
@@ -965,6 +989,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1014,6 +1039,7 @@ fn create_app() -> Cli {
                     m.insert("prefix".to_string(), 'p');
                     m
                 },
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1032,6 +1058,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1050,6 +1077,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1070,6 +1098,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1092,6 +1121,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1110,6 +1140,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1128,6 +1159,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1146,6 +1178,7 @@ fn create_app() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1260,6 +1293,78 @@ mod routing {
         assert!(
             r.output
                 .contains("'nope' is not a command for 'app project deploy'")
+        );
+    }
+
+    // F3: a near-miss typo surfaces a "Did you mean" suggestion and a
+    // corrected-command CTA.
+    #[tokio::test]
+    async fn typo_suggests_closest_command() {
+        let r = serve(&create_app(), &["pign"]).await;
+        assert_eq!(r.exit_code, Some(1));
+        let parsed = json(&r.output);
+        assert_eq!(parsed["code"], "COMMAND_NOT_FOUND");
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("Did you mean 'ping'?"),
+            "got: {}",
+            r.output
+        );
+        let cmds = parsed["cta"]["commands"].as_array().unwrap();
+        assert_eq!(cmds[0]["command"], "app ping");
+    }
+
+    // F3: prefix matches are preferred over fuzzy matches.
+    #[tokio::test]
+    async fn prefix_match_is_preferred() {
+        // "auth" is a group; "aut" is a prefix of it.
+        let r = serve(&create_app(), &["aut"]).await;
+        assert_eq!(r.exit_code, Some(1));
+        let parsed = json(&r.output);
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("Did you mean 'auth'?"),
+            "got: {}",
+            r.output
+        );
+    }
+
+    // F3: did-you-mean is alias-aware.
+    #[tokio::test]
+    async fn suggestion_is_alias_aware() {
+        let cli = Cli::create("test").command(
+            "list",
+            CommandDef {
+                name: "list".to_string(),
+                description: Some("List".to_string()),
+                args_fields: vec![],
+                options_fields: vec![],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                command_aliases: vec!["status".to_string()],
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(StaticHandler(serde_json::json!([]))),
+                middleware: vec![],
+                output_schema: None,
+            },
+        );
+        let r = serve(&cli, &["statu"]).await;
+        assert_eq!(r.exit_code, Some(1));
+        let parsed = json(&r.output);
+        assert!(
+            parsed["message"]
+                .as_str()
+                .unwrap()
+                .contains("Did you mean 'status'?"),
+            "got: {}",
+            r.output
         );
     }
 }
@@ -1382,7 +1487,7 @@ mod output_formats {
 
     #[tokio::test]
     async fn verbose_full_envelope() {
-        let r = serve(&create_app(), &["ping", "--verbose", "--format", "json"]).await;
+        let r = serve(&create_app(), &["ping", "--full-output", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["data"]["pong"], true);
@@ -1399,7 +1504,7 @@ mod output_formats {
                 "deploy",
                 "status",
                 "d-1",
-                "--verbose",
+                "--full-output",
                 "--format",
                 "json",
             ],
@@ -1424,6 +1529,7 @@ mod output_formats {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1449,6 +1555,7 @@ mod output_formats {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: Some(Format::Json),
@@ -1461,6 +1568,101 @@ mod output_formats {
         let r = serve(&cli, &["ping"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["pong"], true);
+    }
+
+    // F1: `--verbose` is no longer a reserved global flag; it flows to a
+    // user-defined `verbose` option. `--full-output` is the envelope flag.
+    #[tokio::test]
+    async fn verbose_is_a_normal_option_not_a_global_flag() {
+        let cli = Cli::create("test").command(
+            "ping",
+            CommandDef {
+                name: "ping".to_string(),
+                description: Some("Health check".to_string()),
+                args_fields: vec![],
+                options_fields: vec![FieldMeta {
+                    name: "verbose",
+                    cli_name: "verbose".to_string(),
+                    description: Some("User-defined verbose"),
+                    field_type: FieldType::Boolean,
+                    required: false,
+                    default: Some(serde_json::json!(false)),
+                    alias: None,
+                    deprecated: false,
+                    env_name: None,
+                }],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                command_aliases: Vec::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(OptionsEchoHandler),
+                middleware: vec![],
+                output_schema: None,
+            },
+        );
+        // --verbose must reach the command (not be swallowed as a global flag),
+        // and must NOT produce a full envelope.
+        let r = serve(&cli, &["ping", "--verbose"]).await;
+        let parsed = json(&r.output);
+        assert_eq!(parsed["verbose"], true);
+        assert!(parsed.get("meta").is_none(), "should not be a full envelope");
+    }
+}
+
+mod command_aliases {
+    use super::*;
+
+    fn app_with_alias() -> Cli {
+        Cli::create("test").command(
+            "list",
+            CommandDef {
+                name: "list".to_string(),
+                description: Some("List items".to_string()),
+                args_fields: vec![],
+                options_fields: vec![],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                command_aliases: vec!["ls".to_string(), "l".to_string()],
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(StaticHandler(serde_json::json!({"items": []}))),
+                middleware: vec![],
+                output_schema: None,
+            },
+        )
+    }
+
+    // F2: an alias resolves to the target command.
+    #[tokio::test]
+    async fn alias_resolves_to_command() {
+        let r = serve(&app_with_alias(), &["ls"]).await;
+        assert!(r.exit_code.is_none());
+        let parsed = json(&r.output);
+        assert!(parsed["items"].is_array());
+    }
+
+    // F2: a full-output envelope reports the canonical command name, not the alias.
+    #[tokio::test]
+    async fn alias_full_output_uses_canonical_name() {
+        let r = serve(&app_with_alias(), &["l", "--full-output", "--format", "json"]).await;
+        let parsed = json(&r.output);
+        assert_eq!(parsed["meta"]["command"], "list");
+    }
+
+    // F2: help shows an "Aliases:" line for the command.
+    #[tokio::test]
+    async fn help_shows_aliases_line() {
+        let r = serve_human(&app_with_alias(), &["list", "--help"]).await;
+        assert!(
+            r.output.contains("Aliases: ls, l"),
+            "expected aliases line, got:\n{}",
+            r.output
+        );
     }
 }
 
@@ -1477,7 +1679,7 @@ mod undefined_output {
 
     #[tokio::test]
     async fn void_command_verbose_shows_envelope() {
-        let r = serve(&create_app(), &["noop", "--verbose", "--format", "json"]).await;
+        let r = serve(&create_app(), &["noop", "--full-output", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["meta"]["command"], "noop");
@@ -1522,7 +1724,7 @@ mod error_handling {
     async fn error_sentinel_returns_error_envelope() {
         let r = serve(
             &create_app(),
-            &["auth", "status", "--verbose", "--format", "json"],
+            &["auth", "status", "--full-output", "--format", "json"],
         )
         .await;
         assert_eq!(r.exit_code, Some(1));
@@ -1582,7 +1784,7 @@ mod cta {
     async fn ok_with_string_ctas() {
         let r = serve(
             &create_app(),
-            &["auth", "login", "--verbose", "--format", "json"],
+            &["auth", "login", "--full-output", "--format", "json"],
         )
         .await;
         let parsed = json(&r.output);
@@ -1599,7 +1801,7 @@ mod cta {
                 "project",
                 "create",
                 "MyProject",
-                "--verbose",
+                "--full-output",
                 "--format",
                 "json",
             ],
@@ -1614,7 +1816,7 @@ mod cta {
 
     #[tokio::test]
     async fn plain_return_omits_cta() {
-        let r = serve(&create_app(), &["ping", "--verbose", "--format", "json"]).await;
+        let r = serve(&create_app(), &["ping", "--full-output", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert!(parsed["meta"]["cta"].is_null());
     }
@@ -1648,7 +1850,7 @@ mod streaming {
 
     #[tokio::test]
     async fn format_json_verbose_buffers_with_envelope() {
-        let r = serve(&create_app(), &["stream", "--verbose", "--format", "json"]).await;
+        let r = serve(&create_app(), &["stream", "--full-output", "--format", "json"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         let data = parsed["data"].as_array().unwrap();
@@ -1845,6 +2047,7 @@ mod root_command_with_subcommands {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -1862,6 +2065,7 @@ mod root_command_with_subcommands {
                     options_fields: vec![],
                     env_fields: vec![],
                     aliases: HashMap::new(),
+                    command_aliases: Vec::new(),
                     examples: vec![],
                     hint: None,
                     format: None,
@@ -1880,6 +2084,7 @@ mod root_command_with_subcommands {
                     options_fields: vec![],
                     env_fields: vec![],
                     aliases: HashMap::new(),
+                    command_aliases: Vec::new(),
                     examples: vec![],
                     hint: None,
                     format: None,
@@ -1986,7 +2191,7 @@ mod edge_cases {
                 "prod",
                 "--branch",
                 "release",
-                "--verbose",
+                "--full-output",
             ],
         )
         .await;
@@ -2002,5 +2207,237 @@ mod edge_cases {
         let r = serve(&create_app(), &[]).await;
         assert!(r.exit_code.is_none());
         assert!(r.output.contains("Usage: app <command>"));
+    }
+}
+
+#[cfg(feature = "tokens")]
+mod token_pagination {
+    use super::*;
+
+    fn app_with_long_output() -> Cli {
+        // A long string so token slicing has something to truncate.
+        let long = "word ".repeat(200);
+        Cli::create("test").command(
+            "big",
+            CommandDef {
+                name: "big".to_string(),
+                description: Some("Big".to_string()),
+                args_fields: vec![],
+                options_fields: vec![],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                command_aliases: Vec::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(StaticHandler(serde_json::Value::String(long))),
+                middleware: vec![],
+                output_schema: None,
+            },
+        )
+    }
+
+    // F8: --token-count prints a numeric count instead of the output.
+    #[tokio::test]
+    async fn token_count_prints_a_number() {
+        let r = serve(&app_with_long_output(), &["big", "--token-count"]).await;
+        assert!(r.exit_code.is_none());
+        assert!(
+            r.output.trim().parse::<usize>().is_ok(),
+            "expected a number, got: {}",
+            r.output
+        );
+    }
+
+    // F8: --token-limit slices output and appends a truncation marker.
+    #[tokio::test]
+    async fn token_limit_appends_truncation_marker() {
+        let r = serve(&app_with_long_output(), &["big", "--token-limit", "10"]).await;
+        assert!(
+            r.output.contains("[truncated: showing tokens 0"),
+            "expected truncation marker, got:\n{}",
+            r.output
+        );
+        assert!(r.output.contains(" of "));
+    }
+
+    // F8: --token-offset combined with --token-limit reports the offset window.
+    #[tokio::test]
+    async fn token_offset_window_reported() {
+        let r = serve(
+            &app_with_long_output(),
+            &["big", "--token-offset", "5", "--token-limit", "10"],
+        )
+        .await;
+        assert!(
+            r.output.contains("[truncated: showing tokens 5"),
+            "got:\n{}",
+            r.output
+        );
+    }
+
+    // F8: in full-output mode, meta.nextOffset is set when more remains.
+    #[tokio::test]
+    async fn full_output_sets_next_offset() {
+        let r = serve(
+            &app_with_long_output(),
+            &["big", "--token-limit", "10", "--full-output", "--format", "json"],
+        )
+        .await;
+        let parsed = json(&r.output);
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["meta"]["nextOffset"], 10);
+        assert!(
+            parsed["data"].as_str().unwrap().contains("[truncated:"),
+            "got:\n{}",
+            r.output
+        );
+    }
+}
+
+mod deprecation_warnings {
+    use super::*;
+
+    fn app_with_deprecated_option() -> Cli {
+        Cli::create("test").command(
+            "run",
+            CommandDef {
+                name: "run".to_string(),
+                description: Some("Run".to_string()),
+                args_fields: vec![],
+                options_fields: vec![FieldMeta {
+                    name: "old_flag",
+                    cli_name: "old-flag".to_string(),
+                    description: Some("Deprecated flag"),
+                    field_type: FieldType::Boolean,
+                    required: false,
+                    default: Some(serde_json::json!(false)),
+                    alias: Some('o'),
+                    deprecated: true,
+                    env_name: None,
+                }],
+                env_fields: vec![],
+                aliases: {
+                    let mut m = HashMap::new();
+                    m.insert("old_flag".to_string(), 'o');
+                    m
+                },
+                command_aliases: Vec::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(StaticHandler(serde_json::json!({"ok": true}))),
+                middleware: vec![],
+                output_schema: None,
+            },
+        )
+    }
+
+    // F7: supplying a deprecated option in human/TTY mode emits a warning.
+    #[tokio::test]
+    async fn warns_on_deprecated_long_flag_in_human_mode() {
+        let r = serve_human(&app_with_deprecated_option(), &["run", "--old-flag"]).await;
+        assert!(
+            r.output.contains("Warning: --old-flag is deprecated"),
+            "got: {}",
+            r.output
+        );
+    }
+
+    // F7: the `--no-` form also triggers the warning.
+    #[tokio::test]
+    async fn warns_on_deprecated_no_form() {
+        let r = serve_human(&app_with_deprecated_option(), &["run", "--no-old-flag"]).await;
+        assert!(r.output.contains("Warning: --old-flag is deprecated"));
+    }
+
+    // F7: short aliases trigger the warning.
+    #[tokio::test]
+    async fn warns_on_deprecated_short_alias() {
+        let r = serve_human(&app_with_deprecated_option(), &["run", "-o"]).await;
+        assert!(r.output.contains("Warning: --old-flag is deprecated"));
+    }
+
+    // F7: no warning in agent (non-TTY) mode.
+    #[tokio::test]
+    async fn no_warning_in_agent_mode() {
+        let r = serve(&app_with_deprecated_option(), &["run", "--old-flag"]).await;
+        assert!(!r.output.contains("deprecated"), "got: {}", r.output);
+    }
+
+    // F7: no warning when the deprecated option is not supplied.
+    #[tokio::test]
+    async fn no_warning_when_not_supplied() {
+        let r = serve_human(&app_with_deprecated_option(), &["run"]).await;
+        assert!(!r.output.contains("deprecated"), "got: {}", r.output);
+    }
+}
+
+mod skills_list {
+    use super::*;
+
+    // F9: `skills list` lists skills with installed status and a summary line.
+    #[tokio::test]
+    async fn skills_list_shows_skills_and_summary() {
+        let r = serve_human(&create_app(), &["skills", "list"]).await;
+        assert!(r.exit_code.is_none());
+        // Fresh CLI: nothing installed, so the count should be "(0 installed)".
+        assert!(
+            r.output.contains("installed)"),
+            "expected summary line, got:\n{}",
+            r.output
+        );
+        // Each skill row carries a status icon.
+        assert!(
+            r.output.contains('\u{2717}') || r.output.contains('\u{2713}'),
+            "expected a status icon, got:\n{}",
+            r.output
+        );
+    }
+
+    // F9: `skills ls` is an alias for `skills list`.
+    #[tokio::test]
+    async fn skills_ls_alias_works() {
+        let r_list = serve_human(&create_app(), &["skills", "list"]).await;
+        let r_ls = serve_human(&create_app(), &["skills", "ls"]).await;
+        assert_eq!(r_list.output, r_ls.output);
+    }
+}
+
+mod schema_flag {
+    use super::*;
+
+    // F5: `--schema` builds a JSON Schema from FieldMeta for args and options,
+    // including a `required` array.
+    #[tokio::test]
+    async fn schema_includes_args_and_options() {
+        let r = serve(
+            &create_app(),
+            &["project", "delete", "--schema", "--json"],
+        )
+        .await;
+        let parsed = json(&r.output);
+        // args: required `id` of type string
+        assert_eq!(parsed["args"]["type"], "object");
+        assert_eq!(parsed["args"]["properties"]["id"]["type"], "string");
+        assert_eq!(parsed["args"]["required"][0], "id");
+        // options: optional boolean `force`
+        assert_eq!(parsed["options"]["properties"]["force"]["type"], "boolean");
+        assert!(parsed["options"].get("required").is_none());
+    }
+
+    // F5: array and enum field types map correctly.
+    #[tokio::test]
+    async fn schema_maps_array_and_enum_types() {
+        let r = serve(&create_app(), &["auth", "login", "--schema", "--json"]).await;
+        let parsed = json(&r.output);
+        // `scopes` is Array<String>
+        assert_eq!(parsed["options"]["properties"]["scopes"]["type"], "array");
+        assert_eq!(
+            parsed["options"]["properties"]["scopes"]["items"]["type"],
+            "string"
+        );
     }
 }

@@ -245,6 +245,7 @@ mod tests {
             options_fields: options,
             env_fields: vec![],
             aliases: std::collections::HashMap::new(),
+            command_aliases: Vec::new(),
             examples: vec![],
             hint: None,
             format: None,

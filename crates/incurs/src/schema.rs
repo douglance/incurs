@@ -75,6 +75,76 @@ pub trait IncurSchema: Sized {
     }
 }
 
+/// Builds a JSON Schema object from a slice of [`FieldMeta`], following the
+/// type mapping used by the `--schema` flag: String→string, Number/Count→number,
+/// Boolean→boolean, Array→array of inner, Enum→string with `enum` values, and
+/// Value→`{}` (any). Required fields are listed under `required`.
+pub fn to_json_schema(fields: &[FieldMeta]) -> Value {
+    let mut properties = serde_json::Map::new();
+    let mut required: Vec<Value> = Vec::new();
+
+    for field in fields {
+        let mut prop = serde_json::Map::new();
+        match &field.field_type {
+            FieldType::String => {
+                prop.insert("type".to_string(), Value::from("string"));
+            }
+            FieldType::Number | FieldType::Count => {
+                prop.insert("type".to_string(), Value::from("number"));
+            }
+            FieldType::Boolean => {
+                prop.insert("type".to_string(), Value::from("boolean"));
+            }
+            FieldType::Array(inner) => {
+                prop.insert("type".to_string(), Value::from("array"));
+                prop.insert("items".to_string(), to_json_schema_type(inner));
+            }
+            FieldType::Enum(values) => {
+                prop.insert("type".to_string(), Value::from("string"));
+                prop.insert(
+                    "enum".to_string(),
+                    Value::Array(values.iter().map(|v| Value::from(v.as_str())).collect()),
+                );
+            }
+            FieldType::Value => {}
+        }
+
+        if let Some(desc) = field.description {
+            prop.insert("description".to_string(), Value::from(desc));
+        }
+        if let Some(ref default) = field.default {
+            prop.insert("default".to_string(), default.clone());
+        }
+
+        properties.insert(field.cli_name.clone(), Value::Object(prop));
+        if field.required {
+            required.push(Value::from(field.cli_name.clone()));
+        }
+    }
+
+    let mut schema = serde_json::Map::new();
+    schema.insert("type".to_string(), Value::from("object"));
+    schema.insert("properties".to_string(), Value::Object(properties));
+    if !required.is_empty() {
+        schema.insert("required".to_string(), Value::Array(required));
+    }
+    Value::Object(schema)
+}
+
+/// Maps a [`FieldType`] to a JSON Schema type fragment (used for array items).
+fn to_json_schema_type(ft: &FieldType) -> Value {
+    match ft {
+        FieldType::String => serde_json::json!({ "type": "string" }),
+        FieldType::Number | FieldType::Count => serde_json::json!({ "type": "number" }),
+        FieldType::Boolean => serde_json::json!({ "type": "boolean" }),
+        FieldType::Array(inner) => {
+            serde_json::json!({ "type": "array", "items": to_json_schema_type(inner) })
+        }
+        FieldType::Enum(values) => serde_json::json!({ "type": "string", "enum": values }),
+        FieldType::Value => serde_json::json!({}),
+    }
+}
+
 /// Converts a Rust snake_case name to CLI kebab-case.
 pub fn to_kebab(name: &str) -> String {
     let mut result = String::with_capacity(name.len());

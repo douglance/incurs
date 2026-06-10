@@ -25,6 +25,16 @@ pub fn format(value: &Value, fmt: Format) -> String {
 // ---------------------------------------------------------------------------
 
 fn format_json(value: &Value) -> String {
+    // If the value is a top-level string that itself parses as a JSON object or
+    // array, re-parse it so the output isn't a double-encoded string.
+    if let Value::String(s) = value {
+        let trimmed = s.trim();
+        if (trimmed.starts_with('{') || trimmed.starts_with('['))
+            && let Ok(parsed) = serde_json::from_str::<Value>(s)
+        {
+            return serde_json::to_string_pretty(&parsed).unwrap_or_default();
+        }
+    }
     serde_json::to_string_pretty(value).unwrap_or_default()
 }
 
@@ -543,6 +553,32 @@ mod tests {
         let result = format(&val, Format::Json);
         assert!(result.contains("\"name\": \"alice\""));
         assert!(result.contains("\"age\": 30"));
+    }
+
+    // F6: a top-level string that is itself JSON should be re-parsed, not
+    // double-encoded.
+    #[test]
+    fn test_format_json_reparses_json_string() {
+        let val = json!("{\"a\": 1}");
+        let result = format(&val, Format::Json);
+        let parsed: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["a"], 1);
+        assert!(!result.starts_with('"'));
+    }
+
+    #[test]
+    fn test_format_json_plain_string_not_reparsed() {
+        let val = json!("hello");
+        let result = format(&val, Format::Json);
+        assert_eq!(result, "\"hello\"");
+    }
+
+    #[test]
+    fn test_format_json_invalid_jsonish_string_kept() {
+        // Looks like JSON but isn't valid — must remain an encoded string.
+        let val = json!("{not json}");
+        let result = format(&val, Format::Json);
+        assert_eq!(result, "\"{not json}\"");
     }
 
     #[test]

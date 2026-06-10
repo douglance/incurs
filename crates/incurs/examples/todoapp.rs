@@ -268,6 +268,7 @@ fn build_cli() -> Cli {
                 }],
                 env_fields: vec![],
                 aliases: HashMap::from([("priority".to_string(), 'p')]),
+                command_aliases: Vec::new(),
                 examples: vec![
                     Example {
                         command: "\"Buy groceries\"".to_string(),
@@ -327,6 +328,7 @@ fn build_cli() -> Cli {
                 ],
                 env_fields: vec![],
                 aliases: HashMap::from([("status".to_string(), 's'), ("limit".to_string(), 'n')]),
+                command_aliases: Vec::new(),
                 examples: vec![
                     Example {
                         command: "".to_string(),
@@ -369,6 +371,7 @@ fn build_cli() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![Example {
                     command: "1".to_string(),
                     description: Some("Get todo #1".to_string()),
@@ -401,6 +404,7 @@ fn build_cli() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![Example {
                     command: "1".to_string(),
                     description: Some("Complete todo #1".to_string()),
@@ -423,6 +427,7 @@ fn build_cli() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: None,
                 format: None,
@@ -442,6 +447,7 @@ fn build_cli() -> Cli {
                 options_fields: vec![],
                 env_fields: vec![],
                 aliases: HashMap::new(),
+                command_aliases: Vec::new(),
                 examples: vec![],
                 hint: Some("Streams 5 progress events with 300ms delays.".to_string()),
                 format: None,
