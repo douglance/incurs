@@ -1387,8 +1387,9 @@ describe('--llms', () => {
     cli.command('ping', { description: 'Health check', run: () => ({}) })
 
     const { output } = await serve(cli, ['auth', '--llms'])
-    expect(output).toContain('test auth auth login')
-    expect(output).toContain('test auth auth logout')
+    expect(output).toContain('test auth login')
+    expect(output).toContain('test auth logout')
+    expect(output).not.toContain('test auth auth') // no doubled namespace
     expect(output).not.toContain('ping')
   })
 
@@ -1422,6 +1423,18 @@ describe('--llms', () => {
     expect(output).toContain('| `--objective` | `string` |  | Narrow content |')
     expect(output).toContain('# my-cli auth')
     expect(output).not.toContain('# my-cli \n')
+  })
+
+  test('scoped json index keeps full command paths', async () => {
+    const cli = Cli.create('test')
+    const group = Cli.create('auth', { description: 'Authentication' })
+    group.command('login', { description: 'Log in', run: () => ({}) })
+    group.command('logout', { description: 'Log out', run: () => ({}) })
+    cli.command(group)
+
+    const { output } = await serve(cli, ['auth', '--llms', '--format', 'json'])
+    const manifest = JSON.parse(output)
+    expect(manifest.commands.map((c: any) => c.name).sort()).toEqual(['auth login', 'auth logout'])
   })
 })
 
