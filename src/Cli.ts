@@ -468,6 +468,8 @@ export declare namespace create {
           agents?: string[] | undefined
           /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
           command?: string | undefined
+          /** Instructions describing how to use the server and its features. */
+          instructions?: string | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -573,6 +575,7 @@ async function serveImpl(
       env: options.envSchema,
       vars: options.vars,
       version: options.version,
+      ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
     })
     return
   }
@@ -2199,6 +2202,7 @@ declare namespace serveImpl {
       | {
           agents?: string[] | undefined
           command?: string | undefined
+          instructions?: string | undefined
         }
       | undefined
     /** Banner config, called before root help. */
@@ -3238,6 +3242,15 @@ type CommandDefinition<
   format?: Formatter.Format | undefined
   /** Plain text hint displayed after examples and before global options. */
   hint?: string | undefined
+  /** MCP-specific metadata exposed when this command is served as a tool. */
+  mcp?:
+    | {
+        /** MCP tool annotations that describe tool behavior to clients. */
+        annotations?: Mcp.ToolAnnotations | undefined
+        /** Tool-specific instructions surfaced to MCP clients. */
+        instructions?: string | undefined
+      }
+    | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
   /**

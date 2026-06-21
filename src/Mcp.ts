@@ -14,11 +14,13 @@ export async function serve(
   options: serve.Options = {},
 ): Promise<void> {
   // Lazy: only runs when actually serving MCP, so plain command runs don't pay for the SDK import.
-  const { fromJsonSchema, McpServer, StdioServerTransport } = await import(
-    '@modelcontextprotocol/server'
-  )
+  const { fromJsonSchema, McpServer, StdioServerTransport } =
+    await import('@modelcontextprotocol/server')
 
-  const server = new McpServer({ name, version })
+  const server = new McpServer(
+    { name, version },
+    options.instructions ? { instructions: options.instructions } : undefined,
+  )
 
   for (const tool of collectTools(commands, [])) {
     const mergedShape: Record<string, any> = {
@@ -33,6 +35,8 @@ export async function serve(
         ...(tool.description ? { description: tool.description } : undefined),
         ...(hasInput ? { inputSchema: z.object(mergedShape) } : undefined),
         ...(tool.outputSchema ? { outputSchema: fromJsonSchema(tool.outputSchema) } : undefined),
+        ...(tool.annotations ? { annotations: tool.annotations } : undefined),
+        ...(tool.instructions ? { _meta: { instructions: tool.instructions } } : undefined),
       } as never,
       async (...callArgs: any[]) => {
         // registerTool passes (args, extra) when inputSchema is set, (extra) when not
@@ -72,6 +76,8 @@ export declare namespace serve {
     vars?: z.ZodObject<any> | undefined
     /** CLI version string. */
     version?: string | undefined
+    /** Instructions describing how to use the server and its features. */
+    instructions?: string | undefined
   }
 }
 
@@ -167,8 +173,24 @@ export type ToolEntry = {
   description?: string | undefined
   inputSchema: { type: 'object'; properties: Record<string, unknown>; required?: string[] }
   outputSchema?: Record<string, unknown> | undefined
+  annotations?: ToolAnnotations | undefined
+  instructions?: string | undefined
   command: any
   middlewares?: MiddlewareHandler[] | undefined
+}
+
+/** MCP tool annotations that describe tool behavior to clients. */
+export type ToolAnnotations = {
+  /** A human-readable title for the tool. */
+  title?: string | undefined
+  /** If true, the tool does not modify its environment. Default: false. */
+  readOnlyHint?: boolean | undefined
+  /** If true, the tool may perform destructive updates to its environment. Meaningful only when readOnlyHint is false. Default: true. */
+  destructiveHint?: boolean | undefined
+  /** If true, calling the tool repeatedly with the same arguments has no additional effect. Meaningful only when readOnlyHint is false. Default: false. */
+  idempotentHint?: boolean | undefined
+  /** If true, the tool may interact with an open world of external entities. Default: true. */
+  openWorldHint?: boolean | undefined
 }
 
 /** @internal Recursively collects leaf commands as tool entries. */
@@ -195,6 +217,8 @@ export function collectTools(
         ...(entry.output
           ? { outputSchema: Schema.toJsonSchema(entry.output) as Record<string, unknown> }
           : undefined),
+        ...(entry.mcp?.annotations ? { annotations: entry.mcp.annotations } : undefined),
+        ...(entry.mcp?.instructions ? { instructions: entry.mcp.instructions } : undefined),
         command: entry,
         ...(parentMiddlewares.length > 0 ? { middlewares: parentMiddlewares } : undefined),
       })
