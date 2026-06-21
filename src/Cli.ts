@@ -2,7 +2,6 @@ import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { z } from 'zod'
 
 import * as Completions from './Completions.js'
@@ -25,6 +24,7 @@ import { isRecord, suggest, toKebab } from './internal/helpers.js'
 import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
+import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
@@ -562,6 +562,9 @@ async function serveImpl(
     configDisabled,
     rest: filtered,
   } = builtinFlags
+
+  // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily — see internal/yaml.ts).
+  if (formatFlag === 'yaml') await Yaml.load()
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -1159,6 +1162,7 @@ async function serveImpl(
   // Resolve effective format: explicit --format/--json → command default → CLI default → toon
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
+  if (format === 'yaml') await Yaml.load()
 
   // Fall back to root fetch/command when no subcommand matches,
   // but only if the token doesn't look like a typo of a known command.
@@ -1715,7 +1719,7 @@ async function fetchImpl(
   if (req.method === 'GET' && isOpenapiRoute(segments)) {
     const spec = generatedOpenapi(name, commands, options)
     const yaml = segments[0] === 'openapi.yml' || segments[0] === 'openapi.yaml'
-    return new Response(yaml ? yamlStringify(spec) : JSON.stringify(spec), {
+    return new Response(yaml ? (await Yaml.load()).stringify(spec) : JSON.stringify(spec), {
       status: 200,
       headers: {
         'content-type': yaml ? 'application/yaml' : 'application/json',
@@ -1739,6 +1743,8 @@ async function fetchImpl(
     segments.length >= 3 &&
     req.method === 'GET'
   ) {
+    // Pre-load yaml for the sync call paths below (`Skill.split`, frontmatter parsing).
+    await Yaml.load()
     const groups = new Map<string, string>()
     const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
 
@@ -1747,7 +1753,7 @@ async function fetchImpl(
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
         const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
-        const meta = fmMatch ? (yamlParse(fmMatch[1]!) as Record<string, string>) : {}
+        const meta = fmMatch ? (Yaml.loadSync().parse(fmMatch[1]!) as Record<string, string>) : {}
         return {
           name: f.dir || name,
           description: meta.description ?? '',
@@ -3093,7 +3099,7 @@ export function parseSkillFrontmatter(content: string): {
 } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
   if (!match) return {}
-  const meta = yamlParse(match[1]!)
+  const meta = Yaml.loadSync().parse(match[1]!)
   if (!meta || typeof meta !== 'object') return {}
   return meta as { description?: string | undefined; name?: string | undefined }
 }
