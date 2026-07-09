@@ -1861,12 +1861,14 @@ function createMcpHttpHandler(
           },
           async (...callArgs: any[]) => {
             const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
+            const extra = hasInput ? callArgs[1] : callArgs[0]
             return Mcp.callTool(tool, params, {
               name,
               version,
               middlewares: mcpOptions?.middlewares,
               env: mcpOptions?.env,
               vars: mcpOptions?.vars,
+              request: extra?.http?.req,
             })
           },
         )
@@ -2020,7 +2022,7 @@ async function fetchImpl(
   if (segments.length === 0) {
     // Root path
     if (options.rootCommand)
-      return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
+      return executeCommand(name, options.rootCommand, [], inputOptions, req, start, options)
     return jsonResponse(
       {
         ok: false,
@@ -2067,7 +2069,7 @@ async function fetchImpl(
 
   const { command, path, rest } = resolved
   const groupMiddlewares = 'middlewares' in resolved ? resolved.middlewares : []
-  return executeCommand(path, command, rest, inputOptions, start, {
+  return executeCommand(path, command, rest, inputOptions, req, start, {
     ...options,
     groupMiddlewares,
   })
@@ -2079,6 +2081,7 @@ async function executeCommand(
   command: CommandDefinition<any, any, any>,
   rest: string[],
   inputOptions: Record<string, unknown>,
+  request: Request,
   start: number,
   options: fetchImpl.Options,
 ): Promise<Response> {
@@ -2133,6 +2136,7 @@ async function executeCommand(
     name: options.name ?? path,
     parseMode: 'split',
     path,
+    request,
     vars: options.vars,
     version: options.version,
   })
@@ -3739,6 +3743,8 @@ type CommandDefinition<
     name: string
     /** Return a success result with optional metadata (e.g. CTAs). */
     ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
+    /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+    request?: Request | undefined
     options: InferOutput<options>
     /** Variables set by middleware. */
     var: InferVars<vars>
