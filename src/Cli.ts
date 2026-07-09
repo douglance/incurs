@@ -28,6 +28,7 @@ import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
 import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
+import * as McpSource from './McpSource.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
 export type { MiddlewareHandler }
@@ -99,6 +100,15 @@ export type Cli<
         outputPolicy?: OutputPolicy | undefined
         /** Set to `false` to hide this command group from MCP clients. */
         mcp?: false | undefined
+      },
+    ): Cli<commands, vars, env, globals>
+    /** Mounts a remote MCP server as a command group. */
+    <const name extends string>(
+      name: name,
+      definition: {
+        description?: string | undefined
+        mcp: McpSource.Source
+        outputPolicy?: OutputPolicy | undefined
       },
     ): Cli<commands, vars, env, globals>
   }
@@ -272,6 +282,23 @@ export function create(
 
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
+        if (isMcpSourceDefinition(def)) {
+          pending.push(
+            (async () => {
+              const resolved = await McpSource.resolve(def.mcp)
+              const generated = McpSource.generateCommands(resolved)
+              const entry = {
+                _group: true,
+                description: def.description,
+                commands: generated as Map<string, CommandEntry>,
+                ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+              } as InternalGroup
+              assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
+              commands.set(nameOrCli, entry)
+            })(),
+          )
+          return cli
+        }
         if (def && 'fetch' in def && isFetchSource(def.fetch)) {
           const fetch = resolveFetch(def.fetch)
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
@@ -2931,6 +2958,17 @@ function isFetchSource(value: unknown): value is FetchSource {
 
   const source = value as { fetch?: unknown; url?: unknown }
   return typeof source.fetch === 'function' && source.url instanceof URL
+}
+
+function isMcpSourceDefinition(value: unknown): value is {
+  description?: string | undefined
+  mcp: McpSource.Source
+  outputPolicy?: OutputPolicy | undefined
+} {
+  if (typeof value !== 'object' || value === null || !('mcp' in value)) return false
+  const source = (value as { mcp?: unknown }).mcp
+  if (typeof source === 'string' || source instanceof URL) return true
+  return typeof source === 'object' && source !== null && 'url' in source
 }
 
 function resolveFetch(source: FetchSource): FetchHandler {
