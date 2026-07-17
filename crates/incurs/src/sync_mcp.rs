@@ -58,21 +58,20 @@ pub async fn register(
     let mut registered_agents: Vec<String> = Vec::new();
 
     // Register with Amp directly (writes to ~/.config/amp/settings.json)
-    if target_agents.is_empty() || target_agents.iter().any(|a| a == "amp") {
-        if register_amp(name, &command) {
-            registered_agents.push("Amp".to_string());
-        }
+    if (target_agents.is_empty() || target_agents.iter().any(|a| a == "amp"))
+        && register_amp(name, &command)
+    {
+        registered_agents.push("Amp".to_string());
     }
 
     // Register with Claude Code (writes to ~/.claude.json or project .claude.json)
-    if target_agents.is_empty()
+    if (target_agents.is_empty()
         || target_agents
             .iter()
-            .any(|a| a == "claude-code" || a == "claude")
+            .any(|a| a == "claude-code" || a == "claude"))
+        && register_claude_code(name, &command, options.global)
     {
-        if register_claude_code(name, &command, options.global) {
-            registered_agents.push("Claude Code".to_string());
-        }
+        registered_agents.push("Claude Code".to_string());
     }
 
     Ok(RegisterResult {
@@ -139,10 +138,10 @@ fn register_amp(name: &str, command: &str) -> bool {
         serde_json::Value::Object(servers),
     );
 
-    if let Some(dir) = config_path.parent() {
-        if !dir.exists() {
-            let _ = fs::create_dir_all(dir);
-        }
+    if let Some(dir) = config_path.parent()
+        && !dir.exists()
+    {
+        let _ = fs::create_dir_all(dir);
     }
 
     match serde_json::to_string_pretty(&serde_json::Value::Object(config)) {
@@ -204,10 +203,10 @@ fn register_claude_code(name: &str, command: &str, global: bool) -> bool {
     servers.insert(name.to_string(), serde_json::Value::Object(entry));
     config.insert("mcpServers".to_string(), serde_json::Value::Object(servers));
 
-    if let Some(dir) = config_path.parent() {
-        if !dir.exists() {
-            let _ = fs::create_dir_all(dir);
-        }
+    if let Some(dir) = config_path.parent()
+        && !dir.exists()
+    {
+        let _ = fs::create_dir_all(dir);
     }
 
     match serde_json::to_string_pretty(&serde_json::Value::Object(config)) {

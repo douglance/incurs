@@ -22,6 +22,7 @@ pub enum Shell {
 
 impl Shell {
     /// Parses a shell name from a string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Shell> {
         match s {
             "bash" => Some(Shell::Bash),
@@ -274,27 +275,26 @@ pub fn complete(
     // Check if previous token is a non-boolean option expecting a value
     if index > 0 {
         let prev = argv.get(index - 1).map(|s| s.as_str()).unwrap_or("");
-        if prev.starts_with('-') {
-            if let Some(leaf) = &scope_leaf {
-                if let Some(field_name) = resolve_option_name(prev, leaf) {
-                    // Check for enum values
-                    if let Some(values) = possible_values(&field_name, leaf.options_fields) {
-                        for v in values {
-                            if v.starts_with(current) {
-                                candidates.push(Candidate {
-                                    value: v,
-                                    description: None,
-                                    no_space: false,
-                                });
-                            }
-                        }
-                        return candidates;
-                    }
-                    // If non-boolean option expecting a value, return empty
-                    if !is_boolean_option(&field_name, leaf.options_fields) {
-                        return candidates;
+        if prev.starts_with('-')
+            && let Some(leaf) = &scope_leaf
+            && let Some(field_name) = resolve_option_name(prev, leaf)
+        {
+            // Check for enum values
+            if let Some(values) = possible_values(&field_name, leaf.options_fields) {
+                for v in values {
+                    if v.starts_with(current) {
+                        candidates.push(Candidate {
+                            value: v,
+                            description: None,
+                            no_space: false,
+                        });
                     }
                 }
+                return candidates;
+            }
+            // If non-boolean option expecting a value, return empty
+            if !is_boolean_option(&field_name, leaf.options_fields) {
+                return candidates;
             }
         }
     }
@@ -395,8 +395,7 @@ struct LeafInfo<'a> {
 
 /// Resolves a flag token (e.g. `--foo-bar` or `-f`) to its option field name.
 fn resolve_option_name(token: &str, leaf: &LeafInfo<'_>) -> Option<String> {
-    if token.starts_with("--") {
-        let raw = &token[2..];
+    if let Some(raw) = token.strip_prefix("--") {
         // Try kebab-to-snake lookup
         let snake = crate::schema::to_snake(raw);
         if leaf.options_fields.iter().any(|f| f.name == snake) {

@@ -327,18 +327,18 @@ impl Cli {
             self.assert_no_global_conflicts(root);
         }
         self.assert_no_group_global_conflicts(&cli.commands);
-        if let Some(root_cmd) = cli.root_command {
-            if cli.commands.is_empty() {
-                // Leaf CLI: mount the root command directly as a leaf.
-                self.commands.insert(cli.name, CommandEntry::Leaf(root_cmd));
-                return self;
-            }
-            // Has both root command and subcommands — mount as a group but
-            // insert the root command under a synthetic "" key so it can be
-            // resolved. For now, treat it the same as a regular group and
-            // the root command is lost. A full solution would extend
-            // CommandEntry::Group with an optional root_command field.
+        if let Some(root_cmd) = cli.root_command
+            && cli.commands.is_empty()
+        {
+            // Leaf CLI: mount the root command directly as a leaf.
+            self.commands.insert(cli.name, CommandEntry::Leaf(root_cmd));
+            return self;
         }
+        // Has both root command and subcommands — mount as a group but
+        // insert the root command under a synthetic "" key so it can be
+        // resolved. For now, treat it the same as a regular group and
+        // the root command is lost. A full solution would extend
+        // CommandEntry::Group with an optional root_command field.
         let entry = CommandEntry::Group {
             description: cli.description,
             commands: cli.commands,
@@ -1420,7 +1420,7 @@ impl Cli {
             .middleware
             .iter()
             .cloned()
-            .chain(collected_mw.into_iter())
+            .chain(collected_mw)
             .chain(command.middleware.iter().cloned())
             .collect();
 
@@ -1696,11 +1696,12 @@ impl Cli {
         };
 
         // --- Step 2: Handle --version ---
-        if builtin.version && !builtin.help {
-            if let Some(v) = &self.version {
-                wln!(v);
-                return Ok(None);
-            }
+        if builtin.version
+            && !builtin.help
+            && let Some(v) = &self.version
+        {
+            wln!(v);
+            return Ok(None);
         }
 
         // --- Step 2b: Handle --llms / --llms-full ---
@@ -2570,7 +2571,7 @@ impl Cli {
             .middleware
             .iter()
             .cloned()
-            .chain(collected_mw.into_iter())
+            .chain(collected_mw)
             .chain(command.middleware.iter().cloned())
             .collect();
 
@@ -3628,7 +3629,7 @@ fn build_llms_manifest(
                             value.insert(
                                 "examples".to_string(),
                                 serde_json::to_value(
-                                    &command
+                                    command
                                         .examples
                                         .iter()
                                         .map(|example| {
@@ -3756,6 +3757,7 @@ fn has_required_args(args_fields: &[FieldMeta]) -> bool {
 }
 
 /// Formats command help including subcommands.
+#[allow(clippy::too_many_arguments)]
 fn format_command_help(
     name: &str,
     command: &CommandDef,
@@ -4134,6 +4136,7 @@ fn completion_root_command(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn completion_output(
     cli_name: &str,
     aliases: &[String],

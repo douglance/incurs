@@ -438,17 +438,17 @@ fn discover_skills(root_dir: &Path) -> Vec<DiscoveredSkill> {
 
     // Root-level SKILL.md
     let root_skill = root_dir.join("SKILL.md");
-    if root_skill.exists() {
-        if let Ok(content) = fs::read_to_string(&root_skill) {
-            let name = extract_skill_name(&content).unwrap_or_else(|| "skill".to_string());
-            let name = sanitize_name(&name);
-            if !results.iter().any(|r| r.name == name) {
-                results.push(DiscoveredSkill {
-                    name,
-                    dir: root_dir.to_path_buf(),
-                    root: true,
-                });
-            }
+    if root_skill.exists()
+        && let Ok(content) = fs::read_to_string(&root_skill)
+    {
+        let name = extract_skill_name(&content).unwrap_or_else(|| "skill".to_string());
+        let name = sanitize_name(&name);
+        if !results.iter().any(|r| r.name == name) {
+            results.push(DiscoveredSkill {
+                name,
+                dir: root_dir.to_path_buf(),
+                root: true,
+            });
         }
     }
 
@@ -466,21 +466,21 @@ fn visit_skills(dir: &Path, results: &mut Vec<DiscoveredSkill>) {
             continue;
         }
         let skill_path = path.join("SKILL.md");
-        if skill_path.exists() {
-            if let Ok(content) = fs::read_to_string(&skill_path) {
-                let entry_name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("skill")
-                    .to_string();
-                let name = extract_skill_name(&content).unwrap_or(entry_name);
-                let name = sanitize_name(&name);
-                results.push(DiscoveredSkill {
-                    name,
-                    dir: path.clone(),
-                    root: false,
-                });
-            }
+        if skill_path.exists()
+            && let Ok(content) = fs::read_to_string(&skill_path)
+        {
+            let entry_name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("skill")
+                .to_string();
+            let name = extract_skill_name(&content).unwrap_or(entry_name);
+            let name = sanitize_name(&name);
+            results.push(DiscoveredSkill {
+                name,
+                dir: path.clone(),
+                root: false,
+            });
         }
         visit_skills(&path, results);
     }

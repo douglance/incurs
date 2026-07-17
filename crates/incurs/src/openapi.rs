@@ -1023,10 +1023,10 @@ fn compact_schema(schema: &Value) -> Value {
 fn resolve_refs(value: &Value, root: &Value) -> Value {
     match value {
         Value::Object(map) => {
-            if let Some(ref_str) = map.get("$ref").and_then(|v| v.as_str()) {
-                if let Some(resolved) = resolve_json_pointer(root, ref_str) {
-                    return resolve_refs(resolved, root);
-                }
+            if let Some(ref_str) = map.get("$ref").and_then(|v| v.as_str())
+                && let Some(resolved) = resolve_json_pointer(root, ref_str)
+            {
+                return resolve_refs(resolved, root);
             }
             let new_map: serde_json::Map<String, Value> = map
                 .iter()

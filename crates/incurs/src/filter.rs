@@ -49,23 +49,24 @@ pub fn apply(data: &Value, paths: &[FilterPath]) -> Value {
     }
 
     // Special case: single key selecting a scalar → return scalar directly.
-    if paths.len() == 1 && paths[0].len() == 1 {
-        if let Segment::Key(key) = &paths[0][0] {
-            if let Value::Array(arr) = data {
-                return Value::Array(arr.iter().map(|item| apply(item, paths)).collect());
-            }
-            if let Value::Object(obj) = data {
-                if let Some(val) = obj.get(key) {
-                    if is_scalar(val) {
-                        return val.clone();
-                    }
-                    let mut result = serde_json::Map::new();
-                    result.insert(key.clone(), val.clone());
-                    return Value::Object(result);
-                }
-            }
-            return Value::Null;
+    if paths.len() == 1
+        && paths[0].len() == 1
+        && let Segment::Key(key) = &paths[0][0]
+    {
+        if let Value::Array(arr) = data {
+            return Value::Array(arr.iter().map(|item| apply(item, paths)).collect());
         }
+        if let Value::Object(obj) = data
+            && let Some(val) = obj.get(key)
+        {
+            if is_scalar(val) {
+                return val.clone();
+            }
+            let mut result = serde_json::Map::new();
+            result.insert(key.clone(), val.clone());
+            return Value::Object(result);
+        }
+        return Value::Null;
     }
 
     if let Value::Array(arr) = data {
@@ -161,11 +162,7 @@ fn parse_token(token: &str) -> FilterPath {
 
             remaining = if close_bracket + 1 < remaining.len() {
                 let rest = &remaining[close_bracket + 1..];
-                if rest.starts_with('.') {
-                    &rest[1..]
-                } else {
-                    rest
-                }
+                rest.strip_prefix('.').unwrap_or(rest)
             } else {
                 ""
             };

@@ -160,33 +160,33 @@ fn sync_inner(
                 PathBuf::from(cwd).join(pattern).join("SKILL.md")
             };
 
-            if search_path.exists() {
-                if let Ok(content) = fs::read_to_string(&search_path) {
-                    let skill_name = if is_root {
-                        extract_skill_name(&content).unwrap_or_else(|| name.to_string())
-                    } else {
-                        search_path
-                            .parent()
-                            .and_then(|p| p.file_name())
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(pattern)
-                            .to_string()
-                    };
+            if search_path.exists()
+                && let Ok(content) = fs::read_to_string(&search_path)
+            {
+                let skill_name = if is_root {
+                    extract_skill_name(&content).unwrap_or_else(|| name.to_string())
+                } else {
+                    search_path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(pattern)
+                        .to_string()
+                };
 
-                    let dest = tmp_dir.join(&skill_name).join("SKILL.md");
-                    if let Some(parent) = dest.parent() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                    let _ = fs::write(&dest, &content);
+                let dest = tmp_dir.join(&skill_name).join("SKILL.md");
+                if let Some(parent) = dest.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = fs::write(&dest, &content);
 
-                    if !skills.iter().any(|s| s.name == skill_name) {
-                        let desc = extract_description(&content);
-                        skills.push(SyncedSkill {
-                            name: skill_name,
-                            description: desc,
-                            external: true,
-                        });
-                    }
+                if !skills.iter().any(|s| s.name == skill_name) {
+                    let desc = extract_description(&content);
+                    skills.push(SyncedSkill {
+                        name: skill_name,
+                        description: desc,
+                        external: true,
+                    });
                 }
             }
         }

@@ -204,8 +204,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
             })?;
             raw_options.insert(name, Value::Bool(false));
             i += 1;
-        } else if token.starts_with("--") {
-            let rest = &token[2..];
+        } else if let Some(rest) = token.strip_prefix("--") {
             if let Some(eq_idx) = rest.find('=') {
                 // --flag=value
                 let raw_name = &rest[..eq_idx];
@@ -343,7 +342,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
             let field = field.unwrap();
 
             // Only merge when argv didn't already set the value.
-            if !raw_options.contains_key(&normalised) {
+            if let std::collections::btree_map::Entry::Vacant(e) = raw_options.entry(normalised) {
                 // Validate that the default value is compatible with the field
                 // type. Reject obviously wrong types (e.g. string for number).
                 let valid = match &field.field_type {
@@ -363,17 +362,17 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
                         cause: None,
                     });
                 }
-                raw_options.insert(normalised, default_val.clone());
+                e.insert(default_val.clone());
             }
         }
     }
 
     // Merge field-level defaults for fields not yet set.
     for field in &options.options_fields {
-        if !raw_options.contains_key(field.name) {
-            if let Some(default_val) = &field.default {
-                raw_options.insert(field.name.to_string(), default_val.clone());
-            }
+        if !raw_options.contains_key(field.name)
+            && let Some(default_val) = &field.default
+        {
+            raw_options.insert(field.name.to_string(), default_val.clone());
         }
     }
 

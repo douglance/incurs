@@ -93,7 +93,7 @@ pub fn parse_argv(argv: &[String]) -> FetchInput {
     while i < argv.len() {
         let token = &argv[i];
 
-        if token.starts_with("--") {
+        if let Some(long) = token.strip_prefix("--") {
             if let Some(eq_idx) = token.find('=') {
                 // --key=value
                 let key = &token[2..eq_idx];
@@ -105,7 +105,7 @@ pub fn parse_argv(argv: &[String]) -> FetchInput {
                 }
                 i += 1;
             } else {
-                let key = &token[2..];
+                let key = long;
                 let value = argv.get(i + 1).map(|s| s.as_str()).unwrap_or("");
                 if is_reserved_flag(key) {
                     handle_reserved(key, value);

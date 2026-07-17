@@ -278,7 +278,7 @@ fn render_group(
     };
 
     let slug = slugify(title);
-    let fm = vec![
+    let fm = [
         "---".to_string(),
         format!("name: {}", slug),
         format!("description: {}", description),
@@ -478,28 +478,25 @@ fn schema_to_table(schema: &serde_json::Value, prefix: &str) -> Option<String> {
 
         // Expand nested objects
         if let Some(prop_obj) = prop.as_object() {
-            if prop_obj.get("type").and_then(|t| t.as_str()) == Some("object") {
-                if prop_obj.contains_key("properties") {
-                    if let Some(nested) = schema_to_table(prop, &name) {
-                        // Skip header + separator (first 2 lines)
-                        for line in nested.lines().skip(2) {
-                            rows.push(line.to_string());
-                        }
-                    }
+            if prop_obj.get("type").and_then(|t| t.as_str()) == Some("object")
+                && prop_obj.contains_key("properties")
+                && let Some(nested) = schema_to_table(prop, &name)
+            {
+                // Skip header + separator (first 2 lines)
+                for line in nested.lines().skip(2) {
+                    rows.push(line.to_string());
                 }
             }
             // Expand array item objects
-            if prop_obj.get("type").and_then(|t| t.as_str()) == Some("array") {
-                if let Some(items) = prop_obj.get("items") {
-                    if let Some(items_obj) = items.as_object() {
-                        if items_obj.get("type").and_then(|t| t.as_str()) == Some("object") {
-                            let array_prefix = format!("{}[]", name);
-                            if let Some(nested) = schema_to_table(items, &array_prefix) {
-                                for line in nested.lines().skip(2) {
-                                    rows.push(line.to_string());
-                                }
-                            }
-                        }
+            if prop_obj.get("type").and_then(|t| t.as_str()) == Some("array")
+                && let Some(items) = prop_obj.get("items")
+                && let Some(items_obj) = items.as_object()
+                && items_obj.get("type").and_then(|t| t.as_str()) == Some("object")
+            {
+                let array_prefix = format!("{}[]", name);
+                if let Some(nested) = schema_to_table(items, &array_prefix) {
+                    for line in nested.lines().skip(2) {
+                        rows.push(line.to_string());
                     }
                 }
             }
@@ -518,16 +515,15 @@ fn resolve_type_name(prop: Option<&serde_json::Value>) -> String {
         Some(p) => p,
         None => return "unknown".to_string(),
     };
-    if let Some(obj) = prop.as_object() {
-        if let Some(type_val) = obj.get("type") {
-            if let Some(t) = type_val.as_str() {
-                return if t == "integer" {
-                    "number".to_string()
-                } else {
-                    t.to_string()
-                };
-            }
-        }
+    if let Some(obj) = prop.as_object()
+        && let Some(type_val) = obj.get("type")
+        && let Some(t) = type_val.as_str()
+    {
+        return if t == "integer" {
+            "number".to_string()
+        } else {
+            t.to_string()
+        };
     }
     "unknown".to_string()
 }

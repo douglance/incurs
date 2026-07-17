@@ -347,7 +347,7 @@ fn ascii_table_from_array(items: &[Value]) -> String {
                 .map(|k| {
                     item.as_object()
                         .and_then(|m| m.get(k))
-                        .map(|v| value_to_cell(v))
+                        .map(value_to_cell)
                         .unwrap_or_default()
                 })
                 .collect()
@@ -439,7 +439,7 @@ fn value_to_cell(value: &Value) -> String {
         Value::Number(n) => n.to_string(),
         Value::String(s) => s.clone(),
         Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(|v| value_to_cell(v)).collect();
+            let items: Vec<String> = arr.iter().map(value_to_cell).collect();
             items.join(", ")
         }
         Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
@@ -519,7 +519,7 @@ fn csv_from_array(items: &[Value]) -> String {
                     let val = item
                         .as_object()
                         .and_then(|m| m.get(k))
-                        .map(|v| value_to_cell(v))
+                        .map(value_to_cell)
                         .unwrap_or_default();
                     csv_escape(&val)
                 })
