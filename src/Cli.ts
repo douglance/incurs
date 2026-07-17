@@ -1,8 +1,9 @@
 import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { PassThrough } from 'node:stream'
 import { estimateTokenCount, sliceByTokens } from 'tokenx'
-import type { z } from 'zod'
+import { z } from 'zod'
 
 import * as Completions from './Completions.js'
 import type { FieldError } from './Errors.js'
@@ -11,12 +12,23 @@ import * as Fetch from './Fetch.js'
 import * as Filter from './Filter.js'
 import * as Formatter from './Formatter.js'
 import * as Help from './Help.js'
-import { builtinCommands, type CommandMeta, type Shell, shells } from './internal/command.js'
+import {
+  builtinCommands,
+  type CommandMeta,
+  findBuiltin,
+  findBuiltinSubcommand,
+  type Shell,
+  shells,
+} from './internal/command.js'
 import * as Command from './internal/command.js'
-import { isRecord } from './internal/helpers.js'
+import { formatCtaBlock, type FormattedCta, type FormattedCtaBlock } from './internal/cta.js'
+import { isRecord, suggest, toKebab } from './internal/helpers.js'
+import * as Json from './internal/json.js'
 import { detectRunner } from './internal/pm.js'
 import type { OneOf } from './internal/types.js'
+import * as Yaml from './internal/yaml.js'
 import * as Mcp from './Mcp.js'
+import * as McpSource from './McpSource.js'
 import type { Context as MiddlewareContext, Handler as MiddlewareHandler } from './middleware.js'
 import * as Openapi from './Openapi.js'
 export type { MiddlewareHandler }
@@ -27,11 +39,14 @@ import * as Skill from './Skill.js'
 import * as SyncMcp from './SyncMcp.js'
 import * as SyncSkills from './SyncSkills.js'
 
+const destructiveCommandHint = 'Confirm with the user before executing this destructive command.'
+
 /** A CLI application instance. Also used as a command group when mounted on a parent CLI. */
 export type Cli<
   commands extends CommandsMap = {},
   vars extends z.ZodObject<any> | undefined = undefined,
   env extends z.ZodObject<any> | undefined = undefined,
+  globals extends z.ZodObject<any> | undefined = undefined,
 > = {
   /** Registers a root command or mounts a sub-CLI as a command group. */
   command: {
@@ -44,16 +59,22 @@ export type Cli<
       const output extends z.ZodType | undefined = undefined,
     >(
       name: name,
-      definition: CommandDefinition<args, cmdEnv, options, output, vars, env>,
+      definition: CommandDefinition<args, cmdEnv, options, output, vars, env, globals>,
     ): Cli<
       commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<options> } },
       vars,
-      env
+      env,
+      globals
     >
     /** Mounts a sub-CLI as a command group. */
     <const name extends string, const sub extends CommandsMap>(
-      cli: Cli<sub, any, any> & { name: name },
-    ): Cli<commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] }, vars, env>
+      cli: Cli<sub, any, any, any> & { name: name },
+    ): Cli<
+      commands & { [key in keyof sub & string as `${name} ${key}`]: sub[key] },
+      vars,
+      env,
+      globals
+    >
     /** Mounts a root CLI as a single command. */
     <
       const name extends string,
@@ -64,7 +85,8 @@ export type Cli<
     ): Cli<
       commands & { [key in name]: { args: InferOutput<args>; options: InferOutput<opts> } },
       vars,
-      env
+      env,
+      globals
     >
     /** Mounts a fetch handler as a command, optionally with OpenAPI spec for typed subcommands. */
     <const name extends string>(
@@ -72,11 +94,23 @@ export type Cli<
       definition: {
         basePath?: string | undefined
         description?: string | undefined
-        fetch: FetchHandler
-        openapi?: Openapi.OpenAPISpec | undefined
+        fetch: FetchSource
+        openapi?: Openapi.OpenAPISource | undefined
+        openapiConfig?: Openapi.Config | undefined
+        outputPolicy?: OutputPolicy | undefined
+        /** Set to `false` to hide this command group from MCP clients. */
+        mcp?: false | undefined
+      },
+    ): Cli<commands, vars, env, globals>
+    /** Mounts a remote MCP server as a command group. */
+    <const name extends string>(
+      name: name,
+      definition: {
+        description?: string | undefined
+        mcp: McpSource.Source
         outputPolicy?: OutputPolicy | undefined
       },
-    ): Cli<commands, vars, env>
+    ): Cli<commands, vars, env, globals>
   }
   /** A short description of the CLI. */
   description?: string | undefined
@@ -89,7 +123,7 @@ export type Cli<
   /** Parses argv, runs the matched command, and writes the output envelope to stdout. */
   serve(argv?: string[], options?: serve.Options): Promise<void>
   /** Registers middleware that runs around every command. */
-  use(handler: MiddlewareHandler<vars, env>): Cli<commands, vars, env>
+  use(handler: MiddlewareHandler<vars, env, globals>): Cli<commands, vars, env, globals>
   /** The vars schema, if declared. Use `typeof cli.vars` with `middleware<vars, env>()` for typed middleware. */
   vars: vars
 }
@@ -154,10 +188,16 @@ export function create<
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
+  const globals extends z.ZodObject<any> | undefined = undefined,
 >(
   name: string,
-  definition: create.Options<args, env, opts, output, vars> & { run: Function },
-): Cli<{ [key in typeof name]: { args: InferOutput<args>; options: InferOutput<opts> } }, vars, env>
+  definition: create.Options<args, env, opts, output, vars, globals> & { run: Function },
+): Cli<
+  { [key in typeof name]: { args: InferOutput<args>; options: InferOutput<opts> } },
+  vars,
+  env,
+  globals
+>
 /** Creates a router CLI that registers subcommands. */
 export function create<
   const args extends z.ZodObject<any> | undefined = undefined,
@@ -165,7 +205,11 @@ export function create<
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
->(name: string, definition?: create.Options<args, env, opts, output, vars>): Cli<{}, vars, env>
+  const globals extends z.ZodObject<any> | undefined = undefined,
+>(
+  name: string,
+  definition?: create.Options<args, env, opts, output, vars, globals>,
+): Cli<{}, vars, env, globals>
 /** Creates a CLI with a root handler from a single options object. Can still register subcommands. */
 export function create<
   const args extends z.ZodObject<any> | undefined = undefined,
@@ -173,14 +217,19 @@ export function create<
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
+  const globals extends z.ZodObject<any> | undefined = undefined,
 >(
-  definition: create.Options<args, env, opts, output, vars> & { name: string; run: Function },
+  definition: create.Options<args, env, opts, output, vars, globals> & {
+    name: string
+    run: Function
+  },
 ): Cli<
   {
     [key in (typeof definition)['name']]: { args: InferOutput<args>; options: InferOutput<opts> }
   },
   vars,
-  env
+  env,
+  globals
 >
 /** Creates a router CLI from a single options object (e.g. package.json). */
 export function create<
@@ -189,7 +238,10 @@ export function create<
   const opts extends z.ZodObject<any> | undefined = undefined,
   const output extends z.ZodType | undefined = undefined,
   const vars extends z.ZodObject<any> | undefined = undefined,
->(definition: create.Options<args, env, opts, output, vars> & { name: string }): Cli<{}, vars, env>
+  const globals extends z.ZodObject<any> | undefined = undefined,
+>(
+  definition: create.Options<args, env, opts, output, vars, globals> & { name: string },
+): Cli<{}, vars, env, globals>
 export function create(
   nameOrDefinition: string | (any & { name: string }),
   definition?: any,
@@ -197,12 +249,30 @@ export function create(
   const name = typeof nameOrDefinition === 'string' ? nameOrDefinition : nameOrDefinition.name
   const def = typeof nameOrDefinition === 'string' ? (definition ?? {}) : nameOrDefinition
   const rootDef = 'run' in def ? (def as CommandDefinition<any, any, any>) : undefined
-  const rootFetch = 'fetch' in def ? (def.fetch as FetchHandler) : undefined
+  const rootFetchSource =
+    'fetch' in def && def.fetch !== undefined ? (def.fetch as FetchSource) : undefined
+  const rootFetch = rootFetchSource === undefined ? undefined : resolveFetch(rootFetchSource)
+  const rootFetchBaseUrl = rootFetchSource === undefined ? undefined : fetchBaseUrl(rootFetchSource)
 
   const commands = new Map<string, CommandEntry>()
   const middlewares: MiddlewareHandler[] = []
   const pending: Promise<void>[] = []
-  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0')
+  const mcpHandler = createMcpHttpHandler(name, def.version ?? '0.0.0', {
+    stateless: def.mcp?.stateless,
+    tools: def.mcp?.tools,
+  })
+
+  if (def.openapi && rootFetch) {
+    pending.push(
+      (async () => {
+        const spec = await Openapi.resolve(def.openapi, { baseUrl: rootFetchBaseUrl })
+        const generated = await Openapi.generateCommands(spec, rootFetch, {
+          config: def.openapiConfig,
+        })
+        for (const [name, command] of generated) commands.set(name, command)
+      })(),
+    )
+  }
 
   const cli: Cli = {
     name,
@@ -212,20 +282,46 @@ export function create(
 
     command(nameOrCli: any, def?: any): any {
       if (typeof nameOrCli === 'string') {
-        if (def && 'fetch' in def && typeof def.fetch === 'function') {
+        if (isMcpSourceDefinition(def)) {
+          pending.push(
+            (async () => {
+              const resolved = await McpSource.resolve(def.mcp)
+              const generated = McpSource.generateCommands(resolved)
+              const entry = {
+                _group: true,
+                description: def.description,
+                commands: generated as Map<string, CommandEntry>,
+                ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+              } as InternalGroup
+              assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
+              commands.set(nameOrCli, entry)
+            })(),
+          )
+          return cli
+        }
+        if (def && 'fetch' in def && isFetchSource(def.fetch)) {
+          const fetch = resolveFetch(def.fetch)
           // OpenAPI + fetch → generate typed command group (async, resolved before serve)
           if (def.openapi) {
             pending.push(
-              Openapi.generateCommands(def.openapi, def.fetch, { basePath: def.basePath }).then(
-                (generated) => {
-                  commands.set(nameOrCli, {
-                    _group: true,
-                    description: def.description,
-                    commands: generated as Map<string, CommandEntry>,
-                    ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
-                  } as InternalGroup)
-                },
-              ),
+              (async () => {
+                const spec = await Openapi.resolve(def.openapi, {
+                  baseUrl: fetchBaseUrl(def.fetch),
+                })
+                const generated = await Openapi.generateCommands(spec, fetch, {
+                  basePath: def.basePath,
+                  config: def.openapiConfig,
+                })
+                const entry = {
+                  _group: true,
+                  description: def.description,
+                  commands: generated as Map<string, CommandEntry>,
+                  ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
+                  ...(def.mcp === false ? { mcp: false } : undefined),
+                } as InternalGroup
+                assertNoGlobalOptionConflicts(nameOrCli, entry, toGlobals.get(cli))
+                commands.set(nameOrCli, entry)
+              })(),
             )
             return cli
           }
@@ -233,37 +329,49 @@ export function create(
             _fetch: true,
             basePath: def.basePath,
             description: def.description,
-            fetch: def.fetch,
+            fetch,
             ...(def.outputPolicy ? { outputPolicy: def.outputPolicy } : undefined),
           } as InternalFetchGateway)
           return cli
         }
+        assertNoGlobalOptionConflicts(nameOrCli, def, toGlobals.get(cli))
         commands.set(nameOrCli, def)
+        if (def.aliases)
+          for (const a of def.aliases) commands.set(a, { _alias: true, target: nameOrCli })
         return cli
       }
       const mountedRootDef = toRootDefinition.get(nameOrCli)
       if (mountedRootDef) {
+        assertNoGlobalOptionConflicts(nameOrCli.name, mountedRootDef, toGlobals.get(cli))
         commands.set(nameOrCli.name, mountedRootDef)
+        const rootAliases = toRootAliases.get(nameOrCli)
+        if (rootAliases)
+          for (const a of rootAliases) commands.set(a, { _alias: true, target: nameOrCli.name })
         return cli
       }
       const sub = nameOrCli as Cli
       const subCommands = toCommands.get(sub)!
       const subOutputPolicy = toOutputPolicy.get(sub)
       const subMiddlewares = toMiddlewares.get(sub)
-      commands.set(sub.name, {
+      const entry = {
         _group: true,
         description: sub.description,
         commands: subCommands,
         ...(subOutputPolicy ? { outputPolicy: subOutputPolicy } : undefined),
         ...(subMiddlewares?.length ? { middlewares: subMiddlewares } : undefined),
-      })
+      } as InternalGroup
+      assertNoGlobalOptionConflicts(sub.name, entry, toGlobals.get(cli))
+      commands.set(sub.name, entry)
       return cli
     },
 
     async fetch(req: Request) {
       if (pending.length > 0) await Promise.all(pending)
+      const globalsDesc = toGlobals.get(cli)
       return fetchImpl(name, commands, req, {
+        description: def.description,
         envSchema: def.env,
+        globals: globalsDesc,
         mcpHandler,
         middlewares,
         name,
@@ -275,13 +383,16 @@ export function create(
 
     async serve(argv = process.argv.slice(2), serveOptions: serve.Options = {}) {
       if (pending.length > 0) await Promise.all(pending)
+      const globalsDesc = toGlobals.get(cli)
       return serveImpl(name, commands, argv, {
         ...serveOptions,
         aliases: def.aliases,
+        banner: def.banner,
         config: def.config,
         description: def.description,
         envSchema: def.env,
         format: def.format,
+        globals: globalsDesc,
         mcp: def.mcp,
         middlewares,
         outputPolicy: def.outputPolicy,
@@ -300,9 +411,48 @@ export function create(
   }
 
   if (rootDef) toRootDefinition.set(cli as unknown as Root, rootDef)
+  if (rootDef && def.aliases) toRootAliases.set(cli as unknown as Root, def.aliases)
   if (def.options) toRootOptions.set(cli, def.options)
   if (def.config !== undefined) toConfigEnabled.set(cli, true)
   if (def.outputPolicy) toOutputPolicy.set(cli, def.outputPolicy)
+  if (def.globals) {
+    toGlobals.set(cli, { schema: def.globals, alias: def.globalAlias as any })
+    const builtinNames = [
+      'verbose',
+      'format',
+      'json',
+      'llms',
+      'llmsFull',
+      'mcp',
+      'help',
+      'version',
+      'schema',
+      'filterOutput',
+      'tokenLimit',
+      'tokenOffset',
+      'tokenCount',
+      ...(def.config?.flag
+        ? [def.config.flag, `no${def.config.flag[0].toUpperCase()}${def.config.flag.slice(1)}`]
+        : []),
+    ]
+    const globalKeys = Object.keys(def.globals.shape)
+    for (const key of globalKeys) {
+      if (builtinNames.includes(key))
+        throw new Error(
+          `Global option '${key}' conflicts with a built-in flag. Choose a different name.`,
+        )
+    }
+    // Check globalAlias values against reserved short aliases
+    const reservedShorts = new Set(['h'])
+    if (def.globalAlias) {
+      for (const [name, short] of Object.entries(def.globalAlias as Record<string, string>)) {
+        if (reservedShorts.has(short))
+          throw new Error(
+            `Global alias '-${short}' for '${name}' conflicts with a built-in short flag. Choose a different alias.`,
+          )
+      }
+    }
+  }
   toMiddlewares.set(cli, middlewares)
   toCommands.set(cli, commands)
   return cli
@@ -316,6 +466,7 @@ export declare namespace create {
     options extends z.ZodObject<any> | undefined = undefined,
     output extends z.ZodType | undefined = undefined,
     vars extends z.ZodObject<any> | undefined = undefined,
+    globals extends z.ZodObject<any> | undefined = undefined,
   > = {
     /** Map of option names to single-char aliases. */
     alias?: options extends z.ZodObject<any>
@@ -323,6 +474,19 @@ export declare namespace create {
       : Record<string, string> | undefined
     /** Alternative binary names for this CLI (e.g. shorter aliases in package.json `bin`). Shell completions are registered for all names. */
     aliases?: string[] | undefined
+    /**
+     * Text to display above root help output (e.g. branding, live status). Only called when the CLI is invoked with no subcommand. Errors are silently swallowed.
+     *
+     * Pass a function for all consumers, or an object with `mode` to target `'human'`, `'agent'`, or `'all'` (default).
+     */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          /** @default 'all' */
+          mode?: 'all' | 'human' | 'agent' | undefined
+        }
+      | undefined
     /** Zod schema for positional arguments. */
     args?: args | undefined
     /** Enable config-file defaults for command options. */
@@ -345,14 +509,28 @@ export declare namespace create {
       | undefined
     /** A short description of what the CLI does. */
     description?: string | undefined
+    /** Marks the root command as destructive when generating agent skills. */
+    destructive?: boolean | undefined
     /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
     env?: env | undefined
     /** Usage examples for this command. */
     examples?: Example<args, options>[] | undefined
-    /** A fetch handler to use as the root command. All argv tokens are interpreted as path segments and curl-style flags. */
-    fetch?: FetchHandler | undefined
+    /** A fetch handler or hosted fetch source to use as the root command. All argv tokens are interpreted as path segments and curl-style flags. */
+    fetch?: FetchSource | undefined
+    /** OpenAPI spec source used to generate typed root commands for the root fetch handler. */
+    openapi?: Openapi.OpenAPISource | undefined
+    /** Configuration for generated OpenAPI commands. */
+    openapiConfig?: Openapi.Config | undefined
     /** Default output format. Overridden by `--format` or `--json`. */
     format?: Formatter.Format | undefined
+    /** Plain text hint displayed after examples and before global options. */
+    hint?: string | undefined
+    /** Map of global option names to single-char aliases. */
+    globalAlias?: globals extends z.ZodObject<any>
+      ? Partial<Record<keyof z.output<globals>, string>>
+      : Record<string, string> | undefined
+    /** Zod schema for global options available to all commands. Parsed before command resolution and passed to middleware and command handlers. */
+    globals?: globals | undefined
     /** Zod schema for named options/flags. */
     options?: options | undefined
     /** Zod schema for the return value. */
@@ -377,6 +555,8 @@ export declare namespace create {
           agent: boolean
           /** Positional arguments. */
           args: InferOutput<args>
+          /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
+          displayName: string
           /** Parsed environment variables. */
           env: InferOutput<env>
           /** Return an error result with optional CTAs. */
@@ -391,6 +571,8 @@ export declare namespace create {
           format: Formatter.Format
           /** Whether the user explicitly passed `--format` or `--json`. */
           formatExplicit: boolean
+          /** Parsed global options from the CLI-level globals schema. */
+          globals: InferOutput<globals>
           /** The CLI name. */
           name: string
           /** Return a success result with optional metadata (e.g. CTAs). */
@@ -403,13 +585,19 @@ export declare namespace create {
           | Promise<InferReturn<output>>
           | AsyncGenerator<InferReturn<output>, unknown, unknown>)
       | undefined
-    /** Options for the built-in `mcp add` command. */
+    /** Options for MCP integration. */
     mcp?:
       | {
           /** Target specific agents by default (e.g. `['claude-code', 'cursor']`). */
           agents?: string[] | undefined
           /** Override the command agents will run to start the MCP server. Auto-detected if omitted. */
           command?: string | undefined
+          /** Instructions describing how to use the server and its features. */
+          instructions?: string | undefined
+          /** Disable HTTP MCP session management. Defaults to `true`. */
+          stateless?: boolean | undefined
+          /** Controls how command tools are exposed to MCP clients. */
+          tools?: Mcp.ToolFilter | undefined
         }
       | undefined
     /** Options for the built-in `skills add` command. */
@@ -452,12 +640,28 @@ async function serveImpl(
 ) {
   const stdout = options.stdout ?? ((s: string) => process.stdout.write(s))
   const exit = options.exit ?? ((code: number) => process.exit(code))
-  const human = process.stdout.isTTY === true
+  const tty = process.stdout.isTTY === true
+  let human = tty
   const configEnabled = options.config !== undefined
   const configFlag = options.config?.flag
+  const displayName = resolveDisplayName(name, options.aliases)
 
   function writeln(s: string) {
     stdout(s.endsWith('\n') ? s : `${s}\n`)
+  }
+
+  async function writeBanner() {
+    if (!options.banner || help) return
+    const banner =
+      typeof options.banner === 'function'
+        ? { render: options.banner, mode: 'all' as const }
+        : options.banner
+    const mode = banner.mode ?? 'all'
+    if (mode !== 'all' && mode !== (human ? 'human' : 'agent')) return
+    try {
+      const text = await banner.render()
+      if (text) writeln(text)
+    } catch {}
   }
 
   let builtinFlags: ReturnType<typeof extractBuiltinFlags>
@@ -472,7 +676,7 @@ async function serveImpl(
   }
 
   const {
-    verbose,
+    fullOutput,
     format: formatFlag,
     formatExplicit,
     filterOutput,
@@ -487,8 +691,35 @@ async function serveImpl(
     schema,
     configPath,
     configDisabled,
-    rest: filtered,
+    rest,
   } = builtinFlags
+  human = tty && !formatExplicit
+
+  let globals: Record<string, unknown> = {}
+  let filtered = rest
+
+  function parseGlobalOptions(validate: boolean) {
+    if (!options.globals) return true
+    try {
+      const result = Parser.parseGlobals(rest, options.globals.schema, options.globals.alias, {
+        validate,
+      })
+      if (validate) globals = result.parsed
+      filtered = result.rest
+      return true
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (human) writeln(formatHumanError({ code: 'UNKNOWN', message }))
+      else writeln(Formatter.format({ code: 'UNKNOWN', message }, 'toon'))
+      exit(1)
+      return false
+    }
+  }
+
+  if (!parseGlobalOptions(false)) return
+
+  // Pre-load yaml for the sync formatting paths below (yaml is loaded lazily -- see internal/yaml.ts).
+  if (formatFlag === 'yaml') await Yaml.load()
 
   // --mcp: start as MCP stdio server
   if (mcpFlag) {
@@ -497,6 +728,8 @@ async function serveImpl(
       env: options.envSchema,
       vars: options.vars,
       version: options.version,
+      ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+      ...(options.mcp?.tools ? { tools: options.mcp.tools } : undefined),
     })
     return
   }
@@ -513,7 +746,15 @@ async function serveImpl(
       stdout(names.map((n) => Completions.register(completeShell, n)).join('\n'))
     } else {
       const index = Number(process.env._COMPLETE_INDEX ?? words.length - 1)
-      const candidates = Completions.complete(commands, options.rootCommand, words, index)
+      const candidates = Completions.complete(
+        commands,
+        options.rootCommand,
+        words,
+        index,
+        options.globals
+          ? { schema: options.globals.schema, alias: options.globals.alias }
+          : undefined,
+      )
       // Add built-in commands (completions, mcp, skills) to completions
       const current = words[index] ?? ''
       const nonFlags = words.slice(0, index).filter((w) => !w.startsWith('-'))
@@ -527,12 +768,13 @@ async function serveImpl(
             })
         }
       } else if (nonFlags.length === 2) {
-        const parent = nonFlags[nonFlags.length - 1]
-        const builtin = builtinCommands.find((b) => b.name === parent && b.subcommands)
+        const parent = nonFlags[nonFlags.length - 1]!
+        const builtin = findBuiltin(parent)
         if (builtin?.subcommands)
           for (const sub of builtin.subcommands)
-            if (sub.name.startsWith(current))
-              candidates.push({ value: sub.name, description: sub.description })
+            for (const value of [sub.name, ...(sub.aliases ?? [])])
+              if (value.startsWith(current) && !candidates.some((c) => c.value === value))
+                candidates.push({ value, description: sub.description })
       }
       const out = Completions.format(completeShell, candidates)
       if (out) stdout(out)
@@ -541,21 +783,24 @@ async function serveImpl(
   }
 
   // Skills staleness check (skip for built-in commands)
+  let skillsCta: FormattedCtaBlock | undefined
   if (!llms && !llmsFull && !schema && !help && !version) {
-    const isSkillsAdd =
-      filtered[0] === 'skills' || (filtered[0] === name && filtered[1] === 'skills')
-    const isMcpAdd = filtered[0] === 'mcp' || (filtered[0] === name && filtered[1] === 'mcp')
+    const isSkillsAdd = builtinIdx(filtered, name, 'skills') !== -1
+    const isMcpAdd = builtinIdx(filtered, name, 'mcp') !== -1
     if (!isSkillsAdd && !isMcpAdd) {
       const stored = SyncSkills.readHash(name)
-      if (stored) {
+      if (stored && SyncSkills.hasInstalledSkills(name, { cwd: options.sync?.cwd })) {
         const groups = new Map<string, string>()
-        const entries = collectSkillCommands(commands, [], groups)
+        const entries = collectSkillCommands(commands, [], groups, options.rootCommand)
         if (Skill.hash(entries) !== stored) {
-          const runner = detectRunner()
-          const spec = SyncMcp.detectPackageSpecifier(name)
-          process.stderr.write(
-            `⚠ Skills are out of date. Run '${runner} ${spec} skills add' to update.\n\n`,
-          )
+          const command =
+            process.env.npm_config_user_agent || process.env.npm_execpath
+              ? `${detectRunner()} ${SyncMcp.detectPackageSpecifier(name)} skills add`
+              : `${displayName} skills add`
+          skillsCta = {
+            description: 'Skills are out of date:',
+            commands: [{ command, description: 'sync outdated skills' }],
+          }
         }
       }
     }
@@ -567,8 +812,9 @@ async function serveImpl(
     const prefix: string[] = []
     let scopedDescription: string | undefined = options.description
     for (const token of filtered) {
-      const entry = scopedCommands.get(token)
-      if (!entry) break
+      const rawEntry = scopedCommands.get(token)
+      if (!rawEntry) break
+      const entry = resolveAlias(scopedCommands, rawEntry)
       if (isGroup(entry)) {
         scopedCommands = entry.commands
         scopedDescription = entry.description
@@ -580,43 +826,51 @@ async function serveImpl(
       }
     }
 
+    const scopedRoot = prefix.length === 0 ? options.rootCommand : undefined
+    // Markdown skill output renders scopedName separately. Passing prefix again
+    // to those collect helpers would double the group segment in command names
+    // (e.g. "cli auth auth login" instead of "cli auth login").
+    const collectPrefix = prefix.length > 0 ? ([] as string[]) : prefix
+
     if (llmsFull) {
       if (!formatExplicit || formatFlag === 'md') {
         const groups = new Map<string, string>()
-        const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+        const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
         const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
         writeln(Skill.generate(scopedName, cmds, groups))
         return
       }
-      writeln(Formatter.format(buildManifest(scopedCommands, prefix), formatFlag))
+      writeln(
+        Formatter.format(
+          buildManifest(scopedCommands, prefix, options.globals?.schema),
+          formatFlag,
+        ),
+      )
       return
     }
 
     if (!formatExplicit || formatFlag === 'md') {
       const groups = new Map<string, string>()
-      const cmds = collectSkillCommands(scopedCommands, prefix, groups)
+      const cmds = collectSkillCommands(scopedCommands, collectPrefix, groups, scopedRoot)
       const scopedName = prefix.length > 0 ? `${name} ${prefix.join(' ')}` : name
       writeln(Skill.index(scopedName, cmds, scopedDescription))
       return
     }
-    writeln(Formatter.format(buildIndexManifest(scopedCommands, prefix), formatFlag))
+    writeln(
+      Formatter.format(
+        buildIndexManifest(scopedCommands, prefix, options.globals?.schema),
+        formatFlag,
+      ),
+    )
     return
   }
 
   // completions <shell>: print shell hook script to stdout
-  const completionsIdx = (() => {
-    // e.g. `completions bash`
-    if (filtered[0] === 'completions') return 0
-    // e.g. `my-cli completions bash`
-    if (filtered[0] === name && filtered[1] === 'completions') return 1
-    // not a completions invocation
-    return -1
-  })()
-  // TODO: refactor built-in command handlers (completions, skills, mcp) into a generic dispatch loop on `builtinCommands`
-  if (completionsIdx !== -1 && filtered[completionsIdx] === 'completions') {
+  const completionsIdx = builtinIdx(filtered, name, 'completions')
+  if (completionsIdx !== -1) {
     const shell = filtered[completionsIdx + 1]
     if (help || !shell) {
-      const b = builtinCommands.find((c) => c.name === 'completions')!
+      const b = findBuiltin('completions')!
       writeln(
         Help.formatCommand(`${name} completions`, {
           args: b.args,
@@ -643,17 +897,89 @@ async function serveImpl(
   }
 
   // skills add: generate skill files and install via `<pm>x skills add` (only when sync is configured)
-  const skillsIdx =
-    filtered[0] === 'skills' ? 0 : filtered[0] === name && filtered[1] === 'skills' ? 1 : -1
-  if (skillsIdx !== -1 && filtered[skillsIdx] === 'skills') {
-    if (filtered[skillsIdx + 1] !== 'add') {
-      const b = builtinCommands.find((c) => c.name === 'skills')!
-      writeln(formatBuiltinHelp(name, b))
+  const skillsIdx = builtinIdx(filtered, name, 'skills')
+  if (skillsIdx !== -1) {
+    const builtin = findBuiltin('skills')!
+    const skillsSub = filtered[skillsIdx + 1]
+    const sub = skillsSub ? findBuiltinSubcommand(builtin, skillsSub) : undefined
+    if (skillsSub && !sub) {
+      const candidates =
+        builtin.subcommands?.flatMap((sub) => [sub.name, ...(sub.aliases ?? [])]) ?? []
+      const suggestion = suggest(skillsSub, candidates)
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      const message = `'${skillsSub}' is not a command for '${name} skills'.${didYouMean}`
+      const ctaCommands: FormattedCta[] = []
+      if (suggestion) {
+        const corrected = argv.map((t) => (t === skillsSub ? suggestion : t))
+        ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
+      }
+      ctaCommands.push({
+        command: `${name} skills --help`,
+        description: 'see all available commands',
+      })
+      const cta: FormattedCtaBlock = {
+        description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
+        commands: ctaCommands,
+      }
+      if (human) {
+        writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+        writeln(formatHumanCta(cta))
+      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+      exit(1)
+      return
+    }
+    if (!skillsSub) {
+      writeln(formatBuiltinHelp(name, builtin))
+      return
+    }
+    if (sub?.name === 'list') {
+      if (help) {
+        writeln(formatBuiltinSubcommandHelp(name, builtin, 'list'))
+        return
+      }
+      try {
+        const result = await SyncSkills.list(name, commands, {
+          cwd: options.sync?.cwd,
+          depth: options.sync?.depth ?? 1,
+          description: options.description,
+          include: options.sync?.include,
+          rootCommand: options.rootCommand,
+        })
+        if (result.length === 0) {
+          writeln('No skills found.')
+          return
+        }
+        const lines: string[] = []
+        const maxLen = Math.max(...result.map((s) => s.name.length))
+        for (const s of result) {
+          const icon = s.installed ? '✓' : '✗'
+          const padding = s.description
+            ? `${' '.repeat(maxLen - s.name.length)}  ${s.description}`
+            : ''
+          lines.push(`  ${icon} ${s.name}${padding}`)
+        }
+        const installedCount = result.filter((s) => s.installed).length
+        lines.push('')
+        lines.push(
+          `${result.length} skill${result.length === 1 ? '' : 's'} (${installedCount} installed)`,
+        )
+        writeln(lines.join('\n'))
+      } catch (err) {
+        writeln(
+          Formatter.format(
+            {
+              code: 'LIST_SKILLS_FAILED',
+              message: err instanceof Error ? err.message : String(err),
+            },
+            formatExplicit ? formatFlag : 'toon',
+          ),
+        )
+        exit(1)
+      }
       return
     }
     if (help) {
-      const b = builtinCommands.find((c) => c.name === 'skills')!
-      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
+      writeln(formatBuiltinSubcommandHelp(name, builtin, 'add'))
       return
     }
     const rest = filtered.slice(skillsIdx + 2)
@@ -674,11 +1000,11 @@ async function serveImpl(
         description: options.description,
         global,
         include: options.sync?.include,
+        rootCommand: options.rootCommand,
       })
       stdout('\r\x1b[K')
       const lines: string[] = []
-      const skillLabel = (s: (typeof result.skills)[number]) =>
-        s.external || s.name === name ? s.name : `${name}-${s.name}`
+      const skillLabel = (s: (typeof result.skills)[number]) => s.name
       const maxLen = Math.max(...result.skills.map((s) => skillLabel(s).length))
       for (const s of result.skills) {
         const label = skillLabel(s)
@@ -698,9 +1024,9 @@ async function serveImpl(
       lines.push('')
       lines.push(`Run \`${name} --help\` to see the full command reference.`)
       writeln(lines.join('\n'))
-      if (verbose || formatExplicit) {
+      if (fullOutput || formatExplicit) {
         const output: Record<string, unknown> = { skills: result.paths }
-        if (verbose && result.agents.length > 0) output.agents = result.agents
+        if (fullOutput && result.agents.length > 0) output.agents = result.agents
         writeln(Formatter.format(output, formatExplicit ? formatFlag : 'toon'))
       }
     } catch (err) {
@@ -715,17 +1041,47 @@ async function serveImpl(
     return
   }
 
-  // mcp add: register CLI as MCP server via `npx add-mcp`
-  const mcpIdx = filtered[0] === 'mcp' ? 0 : filtered[0] === name && filtered[1] === 'mcp' ? 1 : -1
-  if (mcpIdx !== -1 && filtered[mcpIdx] === 'mcp') {
-    if (filtered[mcpIdx + 1] !== 'add') {
-      const b = builtinCommands.find((c) => c.name === 'mcp')!
-      writeln(formatBuiltinHelp(name, b))
+  // mcp add/doctor: register or smoke-test CLI MCP server integration.
+  const mcpIdx = builtinIdx(filtered, name, 'mcp')
+  if (mcpIdx !== -1) {
+    const builtin = findBuiltin('mcp')!
+    const mcpSub = filtered[mcpIdx + 1]
+    const sub = mcpSub ? findBuiltinSubcommand(builtin, mcpSub) : undefined
+    if (mcpSub && !sub) {
+      const candidates =
+        builtin.subcommands?.flatMap((sub) => [sub.name, ...(sub.aliases ?? [])]) ?? []
+      const suggestion = suggest(mcpSub, candidates)
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      const message = `'${mcpSub}' is not a command for '${name} mcp'.${didYouMean}`
+      const ctaCommands: FormattedCta[] = []
+      if (suggestion) {
+        const corrected = argv.map((t) => (t === mcpSub ? suggestion : t))
+        ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
+      }
+      ctaCommands.push({ command: `${name} mcp --help`, description: 'see all available commands' })
+      const cta: FormattedCtaBlock = {
+        description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
+        commands: ctaCommands,
+      }
+      if (human) {
+        writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
+        writeln(formatHumanCta(cta))
+      } else writeln(Formatter.format({ code: 'COMMAND_NOT_FOUND', message, cta }, 'toon'))
+      exit(1)
+      return
+    }
+    if (!mcpSub) {
+      writeln(formatBuiltinHelp(name, builtin))
       return
     }
     if (help) {
-      const b = builtinCommands.find((c) => c.name === 'mcp')!
-      writeln(formatBuiltinSubcommandHelp(name, b, 'add'))
+      writeln(formatBuiltinSubcommandHelp(name, builtin, sub!.name))
+      return
+    }
+    if (sub!.name === 'doctor') {
+      const result = await runMcpDoctor(name, commands, options)
+      writeln(Formatter.format(result, formatExplicit ? formatFlag : 'toon'))
+      if (!result.ok) exit(1)
       return
     }
     const rest = filtered.slice(mcpIdx + 2)
@@ -759,7 +1115,7 @@ async function serveImpl(
         for (const s of suggestions) lines.push(`  "${s}"`)
       }
       writeln(lines.join('\n'))
-      if (verbose || formatExplicit)
+      if (fullOutput || formatExplicit)
         writeln(
           Formatter.format(
             { name, command: result.command, agents: result.agents },
@@ -793,12 +1149,14 @@ async function serveImpl(
     ) {
       // Root command with args but none provided (human mode) — show help
       const cmd = options.rootCommand
+      await writeBanner()
       writeln(
         Help.formatCommand(name, {
           alias: cmd.alias as Record<string, string> | undefined,
           aliases: options.aliases,
           configFlag,
           description: cmd.description ?? options.description,
+          globals: options.globals,
           version: options.version,
           args: cmd.args,
           env: cmd.env,
@@ -816,11 +1174,13 @@ async function serveImpl(
     if (options.rootCommand || options.rootFetch) {
       // Root command/fetch with no args — treat as root invocation
     } else {
+      await writeBanner()
       writeln(
         Help.formatRoot(name, {
           aliases: options.aliases,
           configFlag,
           description: options.description,
+          globals: options.globals,
           version: options.version,
           commands: collectHelpCommands(commands),
           root: true,
@@ -849,7 +1209,18 @@ async function serveImpl(
   // --help on a fetch gateway → show fetch-specific help
   if (help && 'fetchGateway' in resolved) {
     const commandName = resolved.path === name ? name : `${name} ${resolved.path}`
-    writeln(formatFetchHelp(commandName, resolved.fetchGateway.description))
+    if (resolved.path === name && commands.size > 0)
+      writeln(
+        Help.formatRoot(name, {
+          aliases: options.aliases,
+          configFlag,
+          description: options.description,
+          version: options.version,
+          commands: collectHelpCommands(commands),
+          root: true,
+        }),
+      )
+    else writeln(formatFetchHelp(commandName, resolved.fetchGateway.description))
     return
   }
 
@@ -870,6 +1241,7 @@ async function serveImpl(
             aliases: options.aliases,
             configFlag,
             description: cmd.description ?? options.description,
+            globals: options.globals,
             version: options.version,
             args: cmd.args,
             env: cmd.env,
@@ -888,6 +1260,7 @@ async function serveImpl(
             aliases: isRoot ? options.aliases : undefined,
             configFlag,
             description: helpDesc,
+            globals: options.globals,
             version: isRoot ? options.version : undefined,
             commands: collectHelpCommands(helpCmds),
             root: isRoot,
@@ -905,9 +1278,10 @@ async function serveImpl(
       writeln(
         Help.formatCommand(commandName, {
           alias: cmd.alias as Record<string, string> | undefined,
-          aliases: isRootCmd ? options.aliases : undefined,
+          aliases: isRootCmd ? options.aliases : cmd.aliases,
           configFlag,
           description: cmd.description,
+          globals: options.globals,
           version: isRootCmd ? options.version : undefined,
           args: cmd.args,
           env: cmd.env,
@@ -931,6 +1305,7 @@ async function serveImpl(
         Help.formatRoot(`${name} ${resolved.path}`, {
           configFlag,
           description: resolved.description,
+          globals: options.globals,
           commands: collectHelpCommands(resolved.commands),
         }),
       )
@@ -938,7 +1313,9 @@ async function serveImpl(
     }
     if ('error' in resolved) {
       const parent = resolved.path ? `${name} ${resolved.path}` : name
-      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.`)
+      const suggestion = suggest(resolved.error, resolved.commands.keys())
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+      writeln(`Error: '${resolved.error}' is not a command for '${parent}'.${didYouMean}`)
       exit(1)
       return
     }
@@ -954,6 +1331,7 @@ async function serveImpl(
     if (cmd.env) result.env = Schema.toJsonSchema(cmd.env)
     if (cmd.options) result.options = Schema.toJsonSchema(cmd.options)
     if (cmd.output) result.output = Schema.toJsonSchema(cmd.output)
+    if (options.globals?.schema) result.globals = Schema.toJsonSchema(options.globals.schema)
     writeln(Formatter.format(result, format))
     return
   }
@@ -963,6 +1341,7 @@ async function serveImpl(
       Help.formatRoot(`${name} ${resolved.path}`, {
         configFlag,
         description: resolved.description,
+        globals: options.globals,
         commands: collectHelpCommands(resolved.commands),
       }),
     )
@@ -974,10 +1353,20 @@ async function serveImpl(
   // Resolve effective format: explicit --format/--json → command default → CLI default → toon
   const resolvedFormat = 'command' in resolved && (resolved as any).command.format
   const format = formatExplicit ? formatFlag : resolvedFormat || options.format || 'toon'
+  if (format === 'yaml') await Yaml.load()
 
-  // Fall back to root fetch when no subcommand matches
+  // Fall back to root fetch/command when no subcommand matches,
+  // but only if the token doesn't look like a typo of a known command.
+  const rootFallbackBlocked =
+    'error' in resolved &&
+    !resolved.path &&
+    (() => {
+      const candidates = [...resolved.commands.keys()]
+      for (const b of builtinCommands) candidates.push(b.name)
+      return suggest(resolved.error, candidates) !== undefined
+    })()
   const effective =
-    'error' in resolved && options.rootFetch && !resolved.path
+    'error' in resolved && options.rootFetch && !resolved.path && !rootFallbackBlocked
       ? {
           fetchGateway: {
             _fetch: true as const,
@@ -988,7 +1377,7 @@ async function serveImpl(
           path: name,
           rest: filtered,
         }
-      : 'error' in resolved && options.rootCommand && !resolved.path
+      : 'error' in resolved && options.rootCommand && !resolved.path && !rootFallbackBlocked
         ? { command: options.rootCommand, path: name, rest: filtered }
         : resolved
 
@@ -1022,13 +1411,28 @@ async function serveImpl(
   function write(output: Output) {
     if (filterPaths && output.ok && output.data != null)
       output = { ...output, data: Filter.apply(output.data, filterPaths) }
+    if (skillsCta) {
+      const existing = output.meta.cta
+      output = {
+        ...output,
+        meta: {
+          ...output.meta,
+          cta: existing
+            ? {
+                description: existing.description,
+                commands: [...existing.commands, ...skillsCta.commands],
+              }
+            : skillsCta,
+        },
+      }
+    }
     if (tokenCount) {
       const base = output.ok ? output.data : output.error
       const formatted = base != null ? Formatter.format(base, format) : ''
       return writeln(String(estimateTokenCount(formatted)))
     }
     const cta = output.meta.cta
-    if (human && !verbose) {
+    if (human && !fullOutput) {
       if (output.ok && output.data != null && renderOutput) {
         const t = truncate(Formatter.format(output.data, format))
         writeln(t.text)
@@ -1036,7 +1440,7 @@ async function serveImpl(
       if (cta) writeln(formatHumanCta(cta))
       return
     }
-    if (verbose) {
+    if (fullOutput) {
       if (tokenLimit != null || tokenOffset != null) {
         // Truncate data separately so meta (including nextOffset) is always visible
         const dataFormatted =
@@ -1072,14 +1476,27 @@ async function serveImpl(
   if ('error' in effective) {
     const helpCmd = effective.path ? `${name} ${effective.path} --help` : `${name} --help`
     const parent = effective.path ? `${name} ${effective.path}` : name
-    const message = `'${effective.error}' is not a command for '${parent}'.`
-    const cta: FormattedCtaBlock = {
-      description: 'See available commands:',
-      commands: [{ command: helpCmd }],
+    const candidates = 'commands' in effective ? [...effective.commands.keys()] : []
+    if (!effective.path) for (const b of builtinCommands) candidates.push(b.name)
+    const suggestion = suggest(effective.error, candidates)
+    const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
+    const message = `'${effective.error}' is not a command for '${parent}'.${didYouMean}`
+    const ctaCommands: FormattedCta[] = []
+    if (suggestion) {
+      const corrected = argv.map((t) => (t === effective.error ? suggestion : t))
+      ctaCommands.push({ command: `${name} ${corrected.join(' ')}` })
     }
-    if (human && !verbose) {
+    ctaCommands.push({ command: helpCmd, description: 'see all available commands' })
+    const cta: FormattedCtaBlock = {
+      description: ctaCommands.length === 1 ? 'Suggested command:' : 'Suggested commands:',
+      commands: ctaCommands,
+    }
+    if (human && !fullOutput) {
       writeln(formatHumanError({ code: 'COMMAND_NOT_FOUND', message }))
-      writeln(formatHumanCta(cta))
+      const mergedCta = skillsCta
+        ? { ...cta, commands: [...cta.commands, ...skillsCta.commands] }
+        : cta
+      writeln(formatHumanCta(mergedCta))
       exit(1)
       return
     }
@@ -1098,6 +1515,7 @@ async function serveImpl(
 
   // Fetch gateway execution path
   if ('fetchGateway' in effective) {
+    if (!parseGlobalOptions(true)) return
     const { fetchGateway, path, rest: fetchRest } = effective
     const fetchMiddleware = [
       ...(options.middlewares ?? []),
@@ -1121,7 +1539,7 @@ async function serveImpl(
           formatExplicit,
           human,
           renderOutput,
-          verbose,
+          fullOutput,
           truncate,
           write,
           writeln,
@@ -1178,10 +1596,12 @@ async function serveImpl(
         const mwCtx: MiddlewareContext = {
           agent: !human,
           command: path,
+          displayName,
           env: cliEnv,
           error: errorFn,
           format,
           formatExplicit,
+          globals,
           name,
           set(key: string, value: unknown) {
             varsMap[key] = value
@@ -1192,7 +1612,7 @@ async function serveImpl(
         const handleMwSentinel = (result: unknown) => {
           if (!isSentinel(result) || result[sentinel] !== 'error') return
           const err = result as ErrorResult
-          const cta = formatCtaBlock(name, err.cta)
+          const cta = formatCtaBlock(displayName, err.cta)
           write({
             ok: false,
             error: {
@@ -1232,7 +1652,9 @@ async function serveImpl(
     return
   }
 
-  const { command, path, rest } = effective
+  const { command, path, rest: commandRest } = effective
+
+  if (!parseGlobalOptions(true)) return
 
   // Collect middleware: root CLI + groups traversed + per-command
   const allMiddleware = [
@@ -1245,7 +1667,7 @@ async function serveImpl(
 
   if (human)
     emitDeprecationWarnings(
-      rest,
+      commandRest,
       command.options,
       command.alias as Record<string, string> | undefined,
     )
@@ -1275,12 +1697,14 @@ async function serveImpl(
 
   const result = await Command.execute(command, {
     agent: !human,
-    argv: rest,
+    argv: commandRest,
     defaults,
+    displayName,
     env: options.envSchema,
     envSource: options.env,
     format,
     formatExplicit,
+    globals,
     inputOptions: {},
     middlewares: allMiddleware,
     name,
@@ -1294,14 +1718,14 @@ async function serveImpl(
   // Streaming path — async generator
   if ('stream' in result) {
     await handleStreaming(result.stream, {
-      name,
+      name: displayName,
       path,
       start,
       format,
       formatExplicit,
       human,
       renderOutput,
-      verbose,
+      fullOutput,
       truncate,
       write,
       writeln,
@@ -1311,7 +1735,7 @@ async function serveImpl(
   }
 
   if (result.ok) {
-    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
+    const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
     write({
       ok: true,
       data: result.data,
@@ -1322,12 +1746,12 @@ async function serveImpl(
       },
     })
   } else {
-    const cta = formatCtaBlock(name, result.cta as CtaBlock | undefined)
+    const cta = formatCtaBlock(displayName, result.cta as CtaBlock | undefined)
 
     if (human && !formatExplicit && result.error.fieldErrors) {
       writeln(
         formatHumanValidationError(
-          name,
+          displayName,
           path,
           command,
           new ValidationError({
@@ -1365,8 +1789,12 @@ async function serveImpl(
 /** @internal Options for fetchImpl. */
 declare namespace fetchImpl {
   type Options = {
+    /** CLI description. */
+    description?: string | undefined
     /** CLI-level env schema. */
     envSchema?: z.ZodObject<any> | undefined
+    /** Global options schema and alias map. */
+    globals?: GlobalsDescriptor | undefined
     /** Group-level middleware collected during command resolution. */
     groupMiddlewares?: MiddlewareHandler[] | undefined
     mcpHandler?:
@@ -1391,7 +1819,11 @@ declare namespace fetchImpl {
 }
 
 /** @internal Creates a lazy MCP HTTP handler scoped to a CLI instance. */
-function createMcpHttpHandler(name: string, version: string) {
+function createMcpHttpHandler(
+  name: string,
+  version: string,
+  options: createMcpHttpHandler.Options = {},
+) {
   let transport: any
 
   return async (
@@ -1403,47 +1835,72 @@ function createMcpHttpHandler(name: string, version: string) {
       vars?: z.ZodObject<any> | undefined
     },
   ): Promise<Response> => {
+    const stateless = options.stateless ?? true
+    if (stateless && req.method !== 'POST')
+      return new Response(null, { status: 405, headers: { Allow: 'POST' } })
+
     if (!transport) {
-      const { McpServer } = await import('@modelcontextprotocol/sdk/server/mcp.js')
-      const { WebStandardStreamableHTTPServerTransport } =
-        await import('@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js')
+      const { fromJsonSchema, McpServer, WebStandardStreamableHTTPServerTransport } =
+        await import('@modelcontextprotocol/server')
 
       const server = new McpServer({ name, version })
-
-      for (const tool of Mcp.collectTools(commands, [])) {
-        const mergedShape: Record<string, any> = {
-          ...tool.command.args?.shape,
-          ...tool.command.options?.shape,
-        }
-        const hasInput = Object.keys(mergedShape).length > 0
-
-        server.registerTool(
-          tool.name,
-          {
-            ...(tool.description ? { description: tool.description } : undefined),
-            ...(hasInput ? { inputSchema: mergedShape } : undefined),
-          },
-          async (...callArgs: any[]) => {
-            const params = hasInput ? (callArgs[0] as Record<string, unknown>) : {}
-            return Mcp.callTool(tool, params, {
-              name,
-              version,
-              middlewares: mcpOptions?.middlewares,
-              env: mcpOptions?.env,
-              vars: mcpOptions?.vars,
-            })
-          },
-        )
-      }
-
-      transport = new WebStandardStreamableHTTPServerTransport({
-        sessionIdGenerator: () => crypto.randomUUID(),
-        enableJsonResponse: true,
+      Mcp.registerTools(server, commands, {
+        env: mcpOptions?.env,
+        fromJsonSchema,
+        middlewares: mcpOptions?.middlewares,
+        name,
+        request: (extra) => extra?.http?.req,
+        sendNotification: (notification) => server.server.notification(notification),
+        tools: options.tools,
+        vars: mcpOptions?.vars,
+        version,
       })
+
+      const transportOptions = stateless
+        ? { enableJsonResponse: true }
+        : {
+            sessionIdGenerator: () => crypto.randomUUID(),
+            enableJsonResponse: true,
+          }
+      transport = new WebStandardStreamableHTTPServerTransport(transportOptions)
       await server.connect(transport)
     }
     return transport.handleRequest(req)
   }
+}
+
+declare namespace createMcpHttpHandler {
+  type Options = {
+    /** Disable HTTP MCP session management. Defaults to `true`. */
+    stateless?: boolean | undefined
+    /** Filters which command tools are exposed to MCP clients. */
+    tools?: Mcp.ToolFilter | undefined
+  }
+}
+
+function isOpenapiRoute(segments: string[]) {
+  if (segments.length === 1)
+    return (
+      segments[0] === 'openapi.json' ||
+      segments[0] === 'openapi.yml' ||
+      segments[0] === 'openapi.yaml'
+    )
+  return segments[0] === '.well-known' && segments[1] === 'openapi.json' && segments.length === 2
+}
+
+function generatedOpenapi(
+  name: string,
+  commands: Map<string, CommandEntry>,
+  options: fetchImpl.Options,
+) {
+  const openapiCli = { name, description: options.description } as Cli
+  toCommands.set(openapiCli, commands)
+  if (options.rootCommand) toRootDefinition.set(openapiCli as unknown as Root, options.rootCommand)
+  return Openapi.fromCli(openapiCli, {
+    title: name,
+    ...(options.version ? { version: options.version } : undefined),
+    ...(options.description ? { description: options.description } : undefined),
+  })
 }
 
 /** @internal Handles an HTTP request by resolving a command and returning a JSON Response. */
@@ -1457,6 +1914,19 @@ async function fetchImpl(
 
   const url = new URL(req.url)
   const segments = url.pathname.split('/').filter(Boolean)
+
+  // OpenAPI discovery: route /openapi.json, /openapi.yml, /openapi.yaml, and /.well-known/openapi.json
+  if (req.method === 'GET' && isOpenapiRoute(segments)) {
+    const spec = generatedOpenapi(name, commands, options)
+    const yaml = segments[0] === 'openapi.yml' || segments[0] === 'openapi.yaml'
+    return new Response(yaml ? (await Yaml.load()).stringify(spec) : JSON.stringify(spec), {
+      status: 200,
+      headers: {
+        'content-type': yaml ? 'application/yaml' : 'application/json',
+        'cache-control': 'public, max-age=300',
+      },
+    })
+  }
 
   // MCP over HTTP: route /mcp to the MCP transport
   if (segments[0] === 'mcp' && segments.length === 1 && options.mcpHandler)
@@ -1473,17 +1943,20 @@ async function fetchImpl(
     segments.length >= 3 &&
     req.method === 'GET'
   ) {
+    // Pre-load yaml for the sync call paths below (`Skill.split`, frontmatter parsing).
+    await Yaml.load()
     const groups = new Map<string, string>()
-    const cmds = collectSkillCommands(commands, [], groups)
+    const cmds = collectSkillCommands(commands, [], groups, options.rootCommand)
 
     // GET /.well-known/skills/index.json
     if (segments[2] === 'index.json' && segments.length === 3) {
       const files = Skill.split(name, cmds, 1, groups)
       const skills = files.map((f) => {
-        const descMatch = f.content.match(/^description:\s*(.+)$/m)
+        const fmMatch = f.content.match(/^---\n([\s\S]*?)\n---/)
+        const meta = fmMatch ? (Yaml.loadSync().parse(fmMatch[1]!) as Record<string, string>) : {}
         return {
           name: f.dir || name,
-          description: descMatch?.[1] ?? '',
+          description: meta.description ?? '',
           files: ['SKILL.md'],
         }
       })
@@ -1521,7 +1994,7 @@ async function fetchImpl(
   }
 
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1531,7 +2004,7 @@ async function fetchImpl(
   if (segments.length === 0) {
     // Root path
     if (options.rootCommand)
-      return executeCommand(name, options.rootCommand, [], inputOptions, start, options)
+      return executeCommand(name, options.rootCommand, [], inputOptions, req, start, options)
     return jsonResponse(
       {
         ok: false,
@@ -1544,18 +2017,22 @@ async function fetchImpl(
 
   const resolved = resolveCommand(commands, segments)
 
-  if ('error' in resolved)
+  if ('error' in resolved) {
+    const parent = resolved.path ? `${name} ${resolved.path}` : name
+    const suggestion = suggest(resolved.error, resolved.commands.keys())
+    const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : ''
     return jsonResponse(
       {
         ok: false,
         error: {
           code: 'COMMAND_NOT_FOUND',
-          message: `'${resolved.error}' is not a command for '${resolved.path ? `${name} ${resolved.path}` : name}'.`,
+          message: `'${resolved.error}' is not a command for '${parent}'.${didYouMean}`,
         },
         meta: { command: resolved.error, duration: `${Math.round(performance.now() - start)}ms` },
       },
       404,
     )
+  }
 
   if ('help' in resolved)
     return jsonResponse(
@@ -1574,7 +2051,7 @@ async function fetchImpl(
 
   const { command, path, rest } = resolved
   const groupMiddlewares = 'middlewares' in resolved ? resolved.middlewares : []
-  return executeCommand(path, command, rest, inputOptions, start, {
+  return executeCommand(path, command, rest, inputOptions, req, start, {
     ...options,
     groupMiddlewares,
   })
@@ -1586,11 +2063,12 @@ async function executeCommand(
   command: CommandDefinition<any, any, any>,
   rest: string[],
   inputOptions: Record<string, unknown>,
+  request: Request,
   start: number,
   options: fetchImpl.Options,
 ): Promise<Response> {
   function jsonResponse(body: unknown, status: number) {
-    return new Response(JSON.stringify(body), {
+    return new Response(Json.stringify(body), {
       status,
       headers: { 'content-type': 'application/json' },
     })
@@ -1602,17 +2080,45 @@ async function executeCommand(
     ...((command.middleware as MiddlewareHandler[] | undefined) ?? []),
   ]
 
+  let globals: Record<string, unknown> = {}
+  let commandInputOptions = inputOptions
+  if (options.globals) {
+    const globalKeys = new Set(Object.keys(options.globals.schema.shape))
+    const rawGlobals: Record<string, unknown> = {}
+    commandInputOptions = {}
+    for (const [key, value] of Object.entries(inputOptions)) {
+      if (globalKeys.has(key)) rawGlobals[key] = value
+      else commandInputOptions[key] = value
+    }
+    try {
+      globals = options.globals.schema.parse(rawGlobals)
+    } catch (error: any) {
+      const issues: any[] = error?.issues ?? error?.error?.issues ?? []
+      const message = issues.map((i: any) => i.message).join('; ') || 'Validation failed'
+      return jsonResponse(
+        {
+          ok: false,
+          error: { code: 'VALIDATION_ERROR', message },
+          meta: { command: path, duration: `${Math.round(performance.now() - start)}ms` },
+        },
+        400,
+      )
+    }
+  }
+
   const result = await Command.execute(command, {
     agent: true,
     argv: rest,
     env: options.envSchema,
     format: 'json',
     formatExplicit: true,
-    inputOptions,
+    globals,
+    inputOptions: commandInputOptions,
     middlewares: allMiddleware,
     name: options.name ?? path,
     parseMode: 'split',
     path,
+    request,
     vars: options.vars,
     version: options.version,
   })
@@ -1621,39 +2127,78 @@ async function executeCommand(
 
   // Streaming path — async generator → NDJSON response
   if ('stream' in result) {
+    const iterator = result.stream
+    const encoder = new TextEncoder()
+    const meta = (cta?: FormattedCtaBlock | undefined) => ({
+      command: path,
+      duration: `${Math.round(performance.now() - start)}ms`,
+      ...(cta ? { cta } : undefined),
+    })
+    const errorRecord = (err: ErrorResult) => ({
+      type: 'error',
+      ok: false,
+      error: {
+        code: err.code,
+        message: err.message,
+        ...(err.retryable !== undefined ? { retryable: err.retryable } : undefined),
+      },
+      meta: meta(formatCtaBlock(options.name ?? path, err.cta)),
+    })
     const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder()
+      async cancel() {
+        await iterator.return(undefined)
+      },
+      async pull(controller) {
         try {
-          for await (const value of result.stream) {
+          const { value, done } = await iterator.next()
+          if (done) {
+            if (isSentinel(value) && value[sentinel] === 'error') {
+              controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
+              controller.close()
+              return
+            }
+            const cta =
+              isSentinel(value) && value[sentinel] === 'ok'
+                ? formatCtaBlock(options.name ?? path, value.cta)
+                : undefined
             controller.enqueue(
-              encoder.encode(JSON.stringify({ type: 'chunk', data: value }) + '\n'),
+              encoder.encode(
+                Json.stringify({
+                  type: 'done',
+                  ok: true,
+                  meta: meta(cta),
+                }) + '\n',
+              ),
             )
+            controller.close()
+            return
           }
-          controller.enqueue(
-            encoder.encode(
-              JSON.stringify({
-                type: 'done',
-                ok: true,
-                meta: { command: path },
-              }) + '\n',
-            ),
-          )
+
+          if (isSentinel(value) && value[sentinel] === 'error') {
+            controller.enqueue(encoder.encode(Json.stringify(errorRecord(value)) + '\n'))
+            await iterator.return(undefined)
+            controller.close()
+            return
+          }
+
+          controller.enqueue(encoder.encode(Json.stringify({ type: 'chunk', data: value }) + '\n'))
         } catch (error) {
           controller.enqueue(
             encoder.encode(
-              JSON.stringify({
+              Json.stringify({
                 type: 'error',
                 ok: false,
                 error: {
-                  code: 'UNKNOWN',
+                  code: error instanceof IncurError ? error.code : 'UNKNOWN',
                   message: error instanceof Error ? error.message : String(error),
+                  ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
                 },
+                meta: meta(),
               }) + '\n',
             ),
           )
+          controller.close()
         }
-        controller.close()
       },
     })
     return new Response(stream, {
@@ -1673,6 +2218,7 @@ async function executeCommand(
           ...(result.error.retryable !== undefined
             ? { retryable: result.error.retryable }
             : undefined),
+          ...(result.error.fieldErrors ? { fieldErrors: result.error.fieldErrors } : undefined),
         },
         meta: {
           command: path,
@@ -1709,7 +2255,16 @@ function formatHumanValidationError(
   configFlag?: string,
 ): string {
   const lines: string[] = []
-  for (const fe of error.fieldErrors) lines.push(`Error: missing required argument <${fe.path}>`)
+  for (const fe of error.fieldErrors) {
+    const line = (() => {
+      const target = formatValidationTarget(command, fe.path)
+      if (fe.missing) return `Error: missing required ${target.kind} ${target.label}`
+      if (target.kind === 'environment variable')
+        return `Error: invalid value for environment variable ${target.label}: ${fe.message}`
+      return `Error: invalid value for ${target.label}: ${fe.message}`
+    })()
+    lines.push(line)
+  }
   lines.push('See below for usage.')
   lines.push('')
   lines.push(
@@ -1727,6 +2282,21 @@ function formatHumanValidationError(
     }),
   )
   return lines.join('\n')
+}
+
+/** @internal Formats a field path as an option flag, env name, or positional placeholder. */
+function formatValidationTarget(command: CommandDefinition<any, any, any>, path: string) {
+  const [head, ...tail] = path.split('.')
+  if (!head) return { kind: 'argument', label: 'input' } as const
+  if (command.options?.shape[head]) {
+    const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
+    return { kind: 'option', label: `--${toKebab(head)}${suffix}` } as const
+  }
+  if (command.env?.shape[head]) {
+    const suffix = tail.length > 0 ? `.${tail.join('.')}` : ''
+    return { kind: 'environment variable', label: `${head}${suffix}` } as const
+  }
+  return { kind: 'argument', label: `<${path}>` } as const
 }
 
 /** @internal Resolves a command from the tree by walking tokens until a leaf is found. */
@@ -1754,12 +2324,12 @@ function resolveCommand(
       description?: string | undefined
       commands: Map<string, CommandEntry>
     }
-  | { error: string; path: string } {
+  | { error: string; path: string; commands: Map<string, CommandEntry>; rest: string[] } {
   const [first, ...rest] = tokens
 
-  if (!first || !commands.has(first)) return { error: first ?? '(none)', path: '' }
+  if (!first || !commands.has(first)) return { error: first ?? '(none)', path: '', commands, rest }
 
-  let entry = commands.get(first)!
+  let entry = resolveAlias(commands, commands.get(first)!)
   const path = [first]
   let remaining = rest
   let inheritedOutputPolicy: OutputPolicy | undefined
@@ -1789,10 +2359,16 @@ function resolveCommand(
         commands: entry.commands,
       }
 
-    const child = entry.commands.get(next)
-    if (!child) {
-      return { error: next, path: path.join(' ') }
+    const rawChild = entry.commands.get(next)
+    if (!rawChild) {
+      return {
+        error: next,
+        path: path.join(' '),
+        commands: entry.commands,
+        rest: remaining.slice(1),
+      }
     }
+    let child = resolveAlias(entry.commands, rawChild)
 
     path.push(next)
     remaining = remaining.slice(1)
@@ -1844,6 +2420,8 @@ declare namespace serveImpl {
     envSchema?: z.ZodObject<any> | undefined
     /** CLI-level default output format. */
     format?: Formatter.Format | undefined
+    /** Global options schema and alias map. */
+    globals?: GlobalsDescriptor | undefined
     /** Middleware handlers registered on the root CLI. */
     middlewares?: MiddlewareHandler[] | undefined
     /** CLI-level default output policy. */
@@ -1852,6 +2430,17 @@ declare namespace serveImpl {
       | {
           agents?: string[] | undefined
           command?: string | undefined
+          instructions?: string | undefined
+          stateless?: boolean | undefined
+          tools?: Mcp.ToolFilter | undefined
+        }
+      | undefined
+    /** Banner config, called before root help. */
+    banner?:
+      | (() => string | undefined | Promise<string | undefined>)
+      | {
+          render: () => string | undefined | Promise<string | undefined>
+          mode?: 'all' | 'human' | 'agent' | undefined
         }
       | undefined
     /** Root command handler, invoked when no subcommand matches. */
@@ -1872,9 +2461,11 @@ declare namespace serveImpl {
   }
 }
 
-/** @internal Extracts built-in flags (--verbose, --format, --json, --llms, --help, --version) from argv. */
+/** @internal Extracts built-in flags (--full-output, --format, --json, --llms, --help, --version) from argv. */
+const validFormats = new Set(['toon', 'json', 'yaml', 'md', 'jsonl'] as const)
+
 function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Options = {}) {
-  let verbose = false
+  let fullOutput = false
   let llms = false
   let llmsFull = false
   let mcp = false
@@ -1897,7 +2488,7 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
 
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i]!
-    if (token === '--verbose') verbose = true
+    if (token === '--full-output') fullOutput = true
     else if (token === '--llms') llms = true
     else if (token === '--llms-full') llmsFull = true
     else if (token === '--mcp') mcp = true
@@ -1908,6 +2499,10 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       format = 'json'
       formatExplicit = true
     } else if (token === '--format' && argv[i + 1]) {
+      if (!validFormats.has(argv[i + 1]! as any))
+        throw new ParseError({
+          message: `Invalid format: "${argv[i + 1]}". Expected one of: ${[...validFormats].join(', ')}`,
+        })
       format = argv[i + 1] as Formatter.Format
       formatExplicit = true
       i++
@@ -1931,17 +2526,23 @@ function extractBuiltinFlags(argv: string[], options: extractBuiltinFlags.Option
       filterOutput = argv[i + 1]!
       i++
     } else if (token === '--token-limit' && argv[i + 1]) {
-      tokenLimit = Number(argv[i + 1])
+      const n = Number(argv[i + 1])
+      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+        throw new ParseError({ message: `Invalid value for --token-limit: "${argv[i + 1]}"` })
+      tokenLimit = n
       i++
     } else if (token === '--token-offset' && argv[i + 1]) {
-      tokenOffset = Number(argv[i + 1])
+      const n = Number(argv[i + 1])
+      if (!Number.isFinite(n) || argv[i + 1]!.trim() === '')
+        throw new ParseError({ message: `Invalid value for --token-offset: "${argv[i + 1]}"` })
+      tokenOffset = n
       i++
     } else if (token === '--token-count') tokenCount = true
     else rest.push(token)
   }
 
   return {
-    verbose,
+    fullOutput,
     format,
     formatExplicit,
     configPath,
@@ -2105,14 +2706,26 @@ function collectHelpCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     result.push({ name, description: entry.description })
   }
   return result.sort((a, b) => a.name.localeCompare(b.name))
 }
 
+/** @internal Finds the index of a builtin command token in the filtered argv. Returns -1 if not found. */
+function builtinIdx(filtered: string[], cliName: string, builtin: string): number {
+  // e.g. `skills add` or `skill add`
+  if (findBuiltin(filtered[0]!)?.name === builtin) return 0
+  // e.g. `my-cli skills add`
+  if (filtered[0] === cliName && findBuiltin(filtered[1]!)?.name === builtin) return 1
+  // not a match
+  return -1
+}
+
 /** @internal Formats group-level help for a built-in command (e.g. `cli skills`). */
 function formatBuiltinHelp(cli: string, builtin: (typeof builtinCommands)[number]): string {
   return Help.formatRoot(`${cli} ${builtin.name}`, {
+    aliases: builtin.aliases,
     description: builtin.description,
     commands: builtin.subcommands?.map((s) => ({ name: s.name, description: s.description })),
   })
@@ -2124,13 +2737,157 @@ function formatBuiltinSubcommandHelp(
   builtin: (typeof builtinCommands)[number],
   subName: string,
 ): string {
-  const sub = builtin.subcommands?.find((s) => s.name === subName)
+  const sub = findBuiltinSubcommand(builtin, subName)
   return Help.formatCommand(`${cli} ${builtin.name} ${subName}`, {
     alias: sub?.alias,
+    aliases: sub?.aliases,
     description: sub?.description,
     hideGlobalOptions: true,
     options: sub?.options,
   })
+}
+
+type McpDoctorResult = {
+  ok: boolean
+  toolCount: number
+  tools: { name: string; description?: string | undefined }[]
+  warnings: string[]
+  errors: { code: string; message: string }[]
+}
+
+async function runMcpDoctor(
+  name: string,
+  commands: Map<string, CommandEntry>,
+  options: serveImpl.Options,
+): Promise<McpDoctorResult> {
+  const warnings: string[] = []
+  const errors: McpDoctorResult['errors'] = []
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const chunks: string[] = []
+  output.on('data', (chunk) => chunks.push(chunk.toString()))
+
+  let serveError: unknown
+  const done = Mcp.serve(name, options.version ?? '0.0.0', commands, {
+    input,
+    output,
+    middlewares: options.middlewares,
+    env: options.envSchema,
+    vars: options.vars,
+    version: options.version,
+    ...(options.mcp?.instructions ? { instructions: options.mcp.instructions } : undefined),
+    tools: { ...options.mcp?.tools, discovery: 'direct' },
+  }).catch((error) => {
+    serveError = error
+  })
+  let serveFinished = false
+  void done.finally(() => {
+    serveFinished = true
+  })
+
+  input.write(
+    `${Json.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'incur-doctor', version: '1.0.0' },
+      },
+    })}\n`,
+  )
+  input.write(`${Json.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`)
+  await waitForMcpDoctorResponses(chunks, () => serveFinished)
+  input.end()
+  await done
+
+  if (serveError)
+    return {
+      ok: false,
+      toolCount: 0,
+      tools: [],
+      warnings,
+      errors: [{ code: 'MCP_SERVER_FAILED', message: errorMessage(serveError) }],
+    }
+
+  let responses: Record<string, unknown>[]
+  try {
+    responses = parseMcpDoctorResponses(chunks)
+  } catch (error) {
+    return {
+      ok: false,
+      toolCount: 0,
+      tools: [],
+      warnings,
+      errors: [{ code: 'MCP_RESPONSE_PARSE_FAILED', message: errorMessage(error) }],
+    }
+  }
+
+  const initialize = responses.find((response) => response.id === 1)
+  if (!initialize)
+    errors.push({ code: 'MCP_INITIALIZE_MISSING', message: 'Missing initialize response.' })
+  else if (initialize.error)
+    errors.push({ code: 'MCP_INITIALIZE_FAILED', message: mcpErrorMessage(initialize.error) })
+
+  const toolsList = responses.find((response) => response.id === 2)
+  let tools: McpDoctorResult['tools'] = []
+  if (!toolsList)
+    errors.push({ code: 'MCP_TOOLS_LIST_MISSING', message: 'Missing tools/list response.' })
+  else if (toolsList.error)
+    errors.push({ code: 'MCP_TOOLS_LIST_FAILED', message: mcpErrorMessage(toolsList.error) })
+  else if (!isRecord(toolsList.result) || !Array.isArray(toolsList.result.tools))
+    errors.push({
+      code: 'MCP_TOOLS_LIST_INVALID',
+      message: 'tools/list did not return a tools array.',
+    })
+  else
+    tools = toolsList.result.tools
+      .filter(isRecord)
+      .map((tool) => ({
+        name: typeof tool.name === 'string' ? tool.name : '',
+        ...(typeof tool.description === 'string' ? { description: tool.description } : undefined),
+      }))
+      .filter((tool) => tool.name)
+
+  if (errors.length === 0 && tools.length === 0) warnings.push('No MCP tools exposed.')
+
+  return {
+    ok: errors.length === 0,
+    toolCount: tools.length,
+    tools,
+    warnings,
+    errors,
+  }
+}
+
+async function waitForMcpDoctorResponses(chunks: string[], finished: () => boolean) {
+  const started = Date.now()
+  while (!finished() && (chunks.join('').match(/\n/g)?.length ?? 0) < 2) {
+    if (Date.now() - started >= 1_000) return
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+}
+
+function parseMcpDoctorResponses(chunks: string[]): Record<string, unknown>[] {
+  const responses: Record<string, unknown>[] = []
+  for (const line of chunks.join('').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parsed = JSON.parse(trimmed)
+    if (!isRecord(parsed)) throw new Error('Expected JSON-RPC response object.')
+    responses.push(parsed)
+  }
+  return responses
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function mcpErrorMessage(error: unknown): string {
+  if (isRecord(error) && typeof error.message === 'string') return error.message
+  return Json.stringify(error)
 }
 
 /** @internal Formats help text for a fetch gateway command. */
@@ -2159,18 +2916,26 @@ export type CommandsMap = Record<
 >
 
 /** @internal Entry stored in a command map — either a leaf definition, a group, or a fetch gateway. */
-type CommandEntry = CommandDefinition<any, any, any> | InternalGroup | InternalFetchGateway
+type CommandEntry =
+  | CommandDefinition<any, any, any>
+  | InternalGroup
+  | InternalFetchGateway
+  | InternalAlias
 
 /** Controls when output data is displayed. `'all'` displays to both humans and agents. `'agent-only'` suppresses data output in human/TTY mode. */
 export type OutputPolicy = 'agent-only' | 'all'
 
 /** A standard Fetch API handler. */
-type FetchHandler = (req: Request) => Response | Promise<Response>
+export type FetchHandler = Fetch.Handler
+
+/** Fetch handler or hosted source used by fetch-backed commands. */
+export type FetchSource = Fetch.Source
 
 /** @internal A command group's internal storage. */
 type InternalGroup = {
   _group: true
   description?: string | undefined
+  mcp?: false | undefined
   middlewares?: MiddlewareHandler[] | undefined
   outputPolicy?: OutputPolicy | undefined
   commands: Map<string, CommandEntry>
@@ -2185,6 +2950,34 @@ type InternalFetchGateway = {
   outputPolicy?: OutputPolicy | undefined
 }
 
+function isFetchSource(value: unknown): value is FetchSource {
+  if (typeof value === 'function') return true
+  if (typeof value !== 'object' || value === null) return false
+
+  const source = value as { fetch?: unknown; url?: unknown }
+  return typeof source.fetch === 'function' && source.url instanceof URL
+}
+
+function isMcpSourceDefinition(value: unknown): value is {
+  description?: string | undefined
+  mcp: McpSource.Source
+  outputPolicy?: OutputPolicy | undefined
+} {
+  if (typeof value !== 'object' || value === null || !('mcp' in value)) return false
+  const source = (value as { mcp?: unknown }).mcp
+  if (typeof source === 'string' || source instanceof URL) return true
+  return typeof source === 'object' && source !== null && 'url' in source
+}
+
+function resolveFetch(source: FetchSource): FetchHandler {
+  if (typeof source === 'function') return source
+  return source.fetch
+}
+
+function fetchBaseUrl(source: FetchSource) {
+  return typeof source === 'function' ? undefined : source.url
+}
+
 /** @internal Type guard for command groups. */
 function isGroup(entry: CommandEntry): entry is InternalGroup {
   return '_group' in entry
@@ -2193,6 +2986,62 @@ function isGroup(entry: CommandEntry): entry is InternalGroup {
 /** @internal Type guard for fetch gateways. */
 function isFetchGateway(entry: CommandEntry): entry is InternalFetchGateway {
   return '_fetch' in entry
+}
+
+/** @internal An alias entry that points to another command by name. */
+type InternalAlias = {
+  _alias: true
+  /** The canonical command name this alias resolves to. */
+  target: string
+}
+
+/** @internal Type guard for alias entries. */
+function isAlias(entry: CommandEntry): entry is InternalAlias {
+  return '_alias' in entry
+}
+
+/** @internal Follows an alias entry to its canonical target. Returns the entry unchanged if not an alias. */
+function resolveAlias(
+  commands: Map<string, CommandEntry>,
+  entry: CommandEntry,
+): Exclude<CommandEntry, InternalAlias> {
+  if (isAlias(entry)) return commands.get(entry.target)! as Exclude<CommandEntry, InternalAlias>
+  return entry
+}
+
+/** @internal Validates command options against CLI-level global options. */
+function assertNoGlobalOptionConflicts(
+  path: string,
+  entry: CommandEntry,
+  globals: GlobalsDescriptor | undefined,
+) {
+  if (!globals || isFetchGateway(entry) || isAlias(entry)) return
+  if (isGroup(entry)) {
+    for (const [name, child] of entry.commands)
+      assertNoGlobalOptionConflicts(`${path} ${name}`, child, globals)
+    return
+  }
+
+  if (entry.options) {
+    const globalKeys = Object.keys(globals.schema.shape)
+    const optionKeys = Object.keys(entry.options.shape)
+    for (const key of optionKeys) {
+      if (globalKeys.includes(key))
+        throw new Error(
+          `Command '${path}' option '${key}' conflicts with a global option. Choose a different name.`,
+        )
+    }
+  }
+
+  if (globals.alias && entry.alias) {
+    const globalAliasValues = new Set(Object.values(globals.alias))
+    for (const [name, short] of Object.entries(entry.alias)) {
+      if (short && globalAliasValues.has(short))
+        throw new Error(
+          `Command '${path}' alias '-${short}' for '${name}' conflicts with a global alias. Choose a different alias.`,
+        )
+    }
+  }
 }
 
 /** @internal Maps CLI instances to their command maps. */
@@ -2212,6 +3061,18 @@ export const toConfigEnabled = new WeakMap<Cli, boolean>()
 
 /** @internal Maps CLI instances to their output policy. */
 const toOutputPolicy = new WeakMap<Cli, OutputPolicy>()
+
+/** Descriptor for a CLI's custom global options schema and aliases. */
+export type GlobalsDescriptor = {
+  schema: z.ZodObject<any>
+  alias?: Record<string, string> | undefined
+}
+
+/** @internal Maps CLI instances to their globals schema and alias map. */
+const toGlobals = new WeakMap<Cli, GlobalsDescriptor>()
+
+/** @internal Maps root CLI instances to their command aliases. */
+const toRootAliases = new WeakMap<Root, string[]>()
 
 /** @internal Sentinel symbol for `ok()` and `error()` return values. */
 const sentinel = Symbol.for('incur.sentinel')
@@ -2237,7 +3098,7 @@ type ErrorResult = {
 type CtaBlock<commands extends CommandsMap = Commands> = {
   /** Commands to suggest. */
   commands: Cta<commands>[]
-  /** Human-readable label. Defaults to `"Suggested commands:"`. */
+  /** Human-readable label. Defaults to `"Suggested command:"` or `"Suggested commands:"` based on count. */
   description?: string | undefined
 }
 
@@ -2287,7 +3148,7 @@ async function handleStreaming(
     formatExplicit: boolean
     human: boolean
     renderOutput: boolean
-    verbose: boolean
+    fullOutput: boolean
     truncate: (s: string) => { text: string; truncated: boolean; nextOffset?: number | undefined }
     write: (output: Output) => void
     writeln: (s: string) => void
@@ -2331,7 +3192,7 @@ async function handleStreaming(
             return
           }
         }
-        if (useJsonl) ctx.writeln(JSON.stringify({ type: 'chunk', data: value }))
+        if (useJsonl) ctx.writeln(Json.stringify({ type: 'chunk', data: value }))
         else if (ctx.renderOutput)
           ctx.writeln(ctx.truncate(Formatter.format(value, ctx.format)).text)
       }
@@ -2383,6 +3244,7 @@ async function handleStreaming(
             error: {
               code: error instanceof IncurError ? error.code : 'UNKNOWN',
               message: error instanceof Error ? error.message : String(error),
+              ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
             },
           }),
         )
@@ -2466,6 +3328,7 @@ async function handleStreaming(
         error: {
           code: error instanceof IncurError ? error.code : 'UNKNOWN',
           message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof IncurError ? { retryable: error.retryable } : undefined),
         },
         meta: {
           command: ctx.path,
@@ -2477,34 +3340,16 @@ async function handleStreaming(
   }
 }
 
-/** @internal Formats a CTA block into the output envelope shape. */
-function formatCtaBlock(name: string, block: CtaBlock | undefined): FormattedCtaBlock | undefined {
-  if (!block || block.commands.length === 0) return undefined
-  return {
-    description: block.description ?? 'Suggested commands:',
-    commands: block.commands.map((c) => formatCta(name, c)),
-  }
-}
-
-/** @internal Formats a CTA by prefixing the CLI name. Handles string and object forms. */
-function formatCta(name: string, cta: Cta): FormattedCta {
-  if (typeof cta === 'string') return { command: `${name} ${cta}` }
-  const prefix = cta.command === name || cta.command.startsWith(`${name} `) ? '' : `${name} `
-  let cmd = `${prefix}${cta.command}`
-  if (cta.args)
-    for (const [key, value] of Object.entries(cta.args))
-      cmd += value === true ? ` <${key}>` : ` ${value}`
-  if (cta.options)
-    for (const [key, value] of Object.entries(cta.options))
-      cmd += value === true ? ` --${key} <${key}>` : ` --${key} ${value}`
-  return { command: cmd, ...(cta.description ? { description: cta.description } : undefined) }
-}
-
 /** @internal Builds the `--llms` index manifest (name + description only) from the command tree. */
-function buildIndexManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
+function buildIndexManifest(
+  commands: Map<string, CommandEntry>,
+  prefix: string[] = [],
+  globalsSchema?: z.ZodObject<any>,
+) {
   return {
     version: 'incur.v1',
     commands: collectIndexCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+    ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
   }
 }
 
@@ -2515,6 +3360,7 @@ function collectIndexCommands(
 ): { name: string; description?: string | undefined }[] {
   const result: { name: string; description?: string | undefined }[] = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isGroup(entry)) {
       result.push(...collectIndexCommands(entry.commands, path))
@@ -2530,10 +3376,15 @@ function collectIndexCommands(
 }
 
 /** @internal Builds the `--llms` manifest from the command tree. */
-function buildManifest(commands: Map<string, CommandEntry>, prefix: string[] = []) {
+function buildManifest(
+  commands: Map<string, CommandEntry>,
+  prefix: string[] = [],
+  globalsSchema?: z.ZodObject<any>,
+) {
   return {
     version: 'incur.v1',
     commands: collectCommands(commands, prefix).sort((a, b) => a.name.localeCompare(b.name)),
+    ...(globalsSchema ? { globals: Schema.toJsonSchema(globalsSchema) } : undefined),
   }
 }
 
@@ -2549,6 +3400,7 @@ function collectCommands(
 }[] {
   const result: ReturnType<typeof collectCommands> = []
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
       const cmd: (typeof result)[number] = { name: path.join(' ') }
@@ -2585,13 +3437,28 @@ function collectCommands(
 }
 
 /** @internal Recursively collects leaf commands as `Skill.CommandInfo` for `--llms --format md`. */
-function collectSkillCommands(
+export function collectSkillCommands(
   commands: Map<string, CommandEntry>,
   prefix: string[],
   groups: Map<string, string>,
+  rootCommand?: SkillCommandSource | undefined,
 ): Skill.CommandInfo[] {
   const result: Skill.CommandInfo[] = []
+  if (rootCommand) {
+    const cmd: Skill.CommandInfo = {}
+    if (rootCommand.description) cmd.description = rootCommand.description
+    if (rootCommand.args) cmd.args = rootCommand.args
+    if (rootCommand.env) cmd.env = rootCommand.env
+    if (rootCommand.hint) cmd.hint = rootCommand.hint
+    if (isDestructive(rootCommand)) cmd.hint = appendDestructiveHint(cmd.hint)
+    if (rootCommand.options) cmd.options = rootCommand.options
+    if (rootCommand.output) cmd.output = rootCommand.output
+    const examples = formatExamples(rootCommand.examples)
+    if (examples) cmd.examples = examples
+    result.push(cmd)
+  }
   for (const [name, entry] of commands) {
+    if (isAlias(entry)) continue
     const path = [...prefix, name]
     if (isFetchGateway(entry)) {
       const cmd: Skill.CommandInfo = { name: path.join(' ') }
@@ -2607,6 +3474,7 @@ function collectSkillCommands(
       if (entry.args) cmd.args = entry.args
       if (entry.env) cmd.env = entry.env
       if (entry.hint) cmd.hint = entry.hint
+      if (isDestructive(entry)) cmd.hint = appendDestructiveHint(cmd.hint)
       if (entry.options) cmd.options = entry.options
       if (entry.output) cmd.output = entry.output
       const examples = formatExamples(entry.examples)
@@ -2620,7 +3488,33 @@ function collectSkillCommands(
       result.push(cmd)
     }
   }
-  return result.sort((a, b) => a.name.localeCompare(b.name))
+  return result.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? ''))
+}
+
+type SkillCommandSource = Pick<
+  CommandDefinition<any, any, any, any, any, any>,
+  | 'args'
+  | 'description'
+  | 'destructive'
+  | 'env'
+  | 'examples'
+  | 'hint'
+  | 'mcp'
+  | 'options'
+  | 'output'
+>
+
+function isDestructive(command: SkillCommandSource): boolean {
+  return (
+    command.destructive === true ||
+    (command.mcp !== false && command.mcp?.annotations?.destructiveHint === true)
+  )
+}
+
+function appendDestructiveHint(hint: string | undefined): string {
+  if (!hint) return destructiveCommandHint
+  if (hint.includes(destructiveCommandHint)) return hint
+  return `${hint} ${destructiveCommandHint}`
 }
 
 /** @internal Formats examples into `{ command, description }` objects. `command` is the args/options suffix only. */
@@ -2637,6 +3531,18 @@ export function formatExamples(
     if (ex.description) result.description = ex.description
     return result
   })
+}
+
+/** @internal Parses YAML frontmatter from generated skill Markdown. */
+export function parseSkillFrontmatter(content: string): {
+  description?: string | undefined
+  name?: string | undefined
+} {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (!match) return {}
+  const meta = Yaml.loadSync().parse(match[1]!)
+  if (!meta || typeof meta !== 'object') return {}
+  return meta as { description?: string | undefined; name?: string | undefined }
 }
 
 /** @internal Builds separate args, env, and options JSON Schemas. */
@@ -2760,17 +3666,37 @@ type CommandDefinition<
   output extends z.ZodType | undefined = undefined,
   vars extends z.ZodObject<any> | undefined = undefined,
   cliEnv extends z.ZodObject<any> | undefined = undefined,
+  globals extends z.ZodObject<any> | undefined = undefined,
 > = CommandMeta<options> & {
+  /** Alternative names for this command (e.g. `['extensions', 'ext']` for an `extension` command). */
+  aliases?: string[] | undefined
   /** Zod schema for positional arguments. */
   args?: args | undefined
   /** Zod schema for environment variables. Keys are the variable names (e.g. `NPM_TOKEN`). */
   env?: env | undefined
+  /** Marks this command as destructive when generating agent skills. */
+  destructive?: boolean | undefined
   /** Usage examples for this command. */
   examples?: Example<args, options>[] | undefined
   /** Default output format. Overridden by `--format` or `--json`. */
   format?: Formatter.Format | undefined
   /** Plain text hint displayed after examples and before global options. */
   hint?: string | undefined
+  /** MCP-specific metadata exposed when this command is served as a tool. */
+  mcp?:
+    /** Set to `false` to hide this command from MCP clients. */
+    | false
+    | {
+        /** Override the command name exposed to MCP clients. */
+        name?: string | undefined
+        /** Override the command description exposed to MCP clients. */
+        description?: string | undefined
+        /** MCP tool annotations that describe tool behavior to clients. */
+        annotations?: Mcp.ToolAnnotations | undefined
+        /** Tool-specific instructions surfaced to MCP clients. */
+        instructions?: string | undefined
+      }
+    | undefined
   /** Zod schema for the command's return value. */
   output?: output | undefined
   /**
@@ -2783,7 +3709,7 @@ type CommandDefinition<
    */
   outputPolicy?: OutputPolicy | undefined
   /** Middleware that runs only for this command, after root and group middleware. */
-  middleware?: MiddlewareHandler<vars, cliEnv>[] | undefined
+  middleware?: MiddlewareHandler<vars, cliEnv, globals>[] | undefined
   /** Alternative usage patterns shown in help output. */
   usage?: Usage<args, options>[] | undefined
   /** The command handler. Return a value for single-return, or use `async *run` to stream chunks. */
@@ -2792,6 +3718,8 @@ type CommandDefinition<
     agent: boolean
     /** Positional arguments. */
     args: InferOutput<args>
+    /** The binary name the user invoked (e.g. an alias). Falls back to `name` when not resolvable. */
+    displayName: string
     /** Parsed environment variables. */
     env: InferOutput<env>
     /** Return an error result with optional CTAs. */
@@ -2806,10 +3734,14 @@ type CommandDefinition<
     format: Formatter.Format
     /** Whether the user explicitly passed `--format` or `--json`. */
     formatExplicit: boolean
+    /** Parsed global options from the CLI-level globals schema. */
+    globals: InferOutput<globals>
     /** The CLI name. */
     name: string
     /** Return a success result with optional metadata (e.g. CTAs). */
     ok: (data: InferReturn<output>, meta?: { cta?: CtaBlock | undefined }) => never
+    /** The inbound HTTP request when invoked via HTTP or HTTP MCP; undefined for CLI/stdio invocations. */
+    request?: Request | undefined
     options: InferOutput<options>
     /** Variables set by middleware. */
     var: InferVars<vars>
@@ -2819,22 +3751,6 @@ type CommandDefinition<
     | InferReturn<output>
     | Promise<InferReturn<output>>
     | AsyncGenerator<InferReturn<output>, unknown, unknown>
-}
-
-/** @internal A formatted CTA block as it appears in the output envelope. */
-type FormattedCtaBlock = {
-  /** Formatted command suggestions. */
-  commands: FormattedCta[]
-  /** Human-readable label for the CTA block. */
-  description: string
-}
-
-/** @internal A formatted CTA as it appears in the output envelope. */
-type FormattedCta = {
-  /** The full command string with args and options folded in. */
-  command: string
-  /** A short description of what the command does. */
-  description?: string | undefined
 }
 
 /** @internal Scans argv for deprecated flags and writes warnings to stderr. */
@@ -2868,4 +3784,14 @@ function emitDeprecationWarnings(
           process.stderr.write(`Warning: --${deprecatedShorts.get(ch)} is deprecated\n`)
     }
   }
+}
+
+/** @internal Resolves the display name from `process.argv[1]` basename. Returns the basename if it matches `name` or one of the `aliases`, otherwise falls back to `name`. */
+function resolveDisplayName(name: string, aliases?: string[]): string {
+  const bin = process.argv[1]
+  if (!bin) return name
+  const basename = path.basename(bin)
+  if (basename === name) return name
+  if (aliases?.includes(basename)) return basename
+  return name
 }

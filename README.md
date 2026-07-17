@@ -6,26 +6,26 @@ Build CLIs that work for both humans and agents. Same commands serve via CLI, HT
 
 ## Status
 
-Ported from incur v0.3.6 (TypeScript). 245 tests, 10/10 parity with the TS implementation on JSON output.
+The vendored TypeScript reference is synced to incur v0.4.17. The Rust port includes selected upstream feature deltas through v0.4.8; the feature table below is the source of truth for current Rust support.
 
-| Feature | Status |
-|---------|--------|
-| CLI parsing (args, options, flags) | Done |
-| Three transports (CLI, HTTP, MCP) | CLI done, HTTP/MCP stubbed |
-| Help (`--help`, `--version`) | Done |
-| Output formats (`--json`, `--format`, `--full-output`) | Done |
-| Output filtering (`--filter-output`) | Done |
-| Streaming (async generators) | Done |
-| Middleware (onion-style) | Done |
-| Shell completions (bash/zsh/fish/nushell) | Done |
-| Agent discovery (21 agents) | Done |
-| Skill file generation (`--llms`, `skills add`) | Done |
-| MCP registration (`mcp add`) | Done |
-| TOON output format | Done (via `toon-format` crate) |
-| Token counting/limiting | Done (via `tiktoken-rs`) |
-| Config file loading | Done |
-| OpenAPI import | Stubbed |
-| Derive macros (`IncurArgs`, `IncurOptions`, `IncurEnv`) | Done |
+| Feature                                                 | Status                         |
+| ------------------------------------------------------- | ------------------------------ |
+| CLI parsing (args, options, flags)                      | Done                           |
+| Three transports (CLI, HTTP, MCP)                       | CLI done, HTTP/MCP stubbed     |
+| Help (`--help`, `--version`)                            | Done                           |
+| Output formats (`--json`, `--format`, `--full-output`)  | Done                           |
+| Output filtering (`--filter-output`)                    | Done                           |
+| Streaming (async generators)                            | Done                           |
+| Middleware (onion-style)                                | Done                           |
+| Shell completions (bash/zsh/fish/nushell)               | Done                           |
+| Agent discovery (21 agents)                             | Done                           |
+| Skill file generation (`--llms`, `skills add`)          | Done                           |
+| MCP registration (`mcp add`)                            | Done                           |
+| TOON output format                                      | Done (via `toon-format` crate) |
+| Token counting/limiting                                 | Done (via `tiktoken-rs`)       |
+| Config file loading                                     | Done                           |
+| OpenAPI import                                          | Stubbed                        |
+| Derive macros (`IncurArgs`, `IncurOptions`, `IncurEnv`) | Done                           |
 
 ## Quick Start
 
@@ -146,12 +146,14 @@ crates/
 
 ## Keeping in Sync with Upstream
 
-This port tracks the TypeScript [wevm/incur](https://github.com/wevm/incur) as its spec. The sync mechanism is test parity:
+This repository vendors TypeScript [wevm/incur](https://github.com/wevm/incur) v0.4.17 as its reference implementation. Rust support is ported incrementally from that reference:
 
 1. TS tests define correct behavior
 2. Rust integration tests (`tests/e2e.rs`, `tests/parser_test.rs`) port those tests
-3. `tests/compare.sh` diffs JSON output between TS and Rust todoapp examples
+3. `tests/compare.sh` diffs shared JSON behavior between the TS and Rust todoapp examples
 4. When upstream changes, port the new tests first (they fail), then update the Rust code
+
+The comparison suite covers shared behavior only; it does not imply complete Rust parity with every TypeScript feature.
 
 ```bash
 # Run all Rust tests

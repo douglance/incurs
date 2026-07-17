@@ -1,11 +1,21 @@
 import { z } from 'zod'
 
+import type { GlobalsDescriptor } from './Cli.js'
 import { builtinCommands } from './internal/command.js'
 import { toKebab } from './internal/helpers.js'
+import { defaultEnvSource } from './Parser.js'
 
 /** Formats help text for a router CLI or command group. */
 export function formatRoot(name: string, options: formatRoot.Options = {}): string {
-  const { aliases, configFlag, description, version, commands = [], root = false } = options
+  const {
+    aliases,
+    configFlag,
+    description,
+    globals,
+    version,
+    commands = [],
+    root = false,
+  } = options
   const lines: string[] = []
 
   // Header
@@ -30,7 +40,7 @@ export function formatRoot(name: string, options: formatRoot.Options = {}): stri
     }
   }
 
-  lines.push(...globalOptionsLines(root, configFlag))
+  lines.push(...globalOptionsLines(root, configFlag, globals))
 
   return lines.join('\n')
 }
@@ -45,6 +55,8 @@ export declare namespace formatRoot {
     commands?: { name: string; description?: string | undefined }[] | undefined
     /** A short description of the CLI or group. */
     description?: string | undefined
+    /** Custom global options schema and alias map. */
+    globals?: GlobalsDescriptor | undefined
     /** Show root-level built-in commands and flags. */
     root?: boolean | undefined
     /** CLI version string. */
@@ -55,7 +67,7 @@ export declare namespace formatRoot {
 export declare namespace formatCommand {
   type Options = {
     /** Map of option names to single-char aliases. */
-    alias?: Record<string, string> | undefined
+    alias?: Partial<Record<string, string>> | undefined
     /** Alternative binary names for this CLI. */
     aliases?: string[] | undefined
     /** Zod schema for positional arguments. */
@@ -70,6 +82,8 @@ export declare namespace formatCommand {
     env?: z.ZodObject<any> | undefined
     /** Override environment variable source for "set:" display. Defaults to `process.env`. */
     envSource?: Record<string, string | undefined> | undefined
+    /** Custom global options schema and alias map. */
+    globals?: GlobalsDescriptor | undefined
     /** Formatted usage examples. */
     examples?: { command: string; description?: string }[] | undefined
     /** Plain text hint displayed after examples and before global options. */
@@ -101,6 +115,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     aliases,
     configFlag,
     description,
+    globals,
     version,
     args,
     env,
@@ -205,7 +220,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
     }
   }
 
-  if (!options.hideGlobalOptions) lines.push(...globalOptionsLines(root, configFlag))
+  if (!options.hideGlobalOptions) lines.push(...globalOptionsLines(root, configFlag, globals))
 
   // Environment Variables
   if (env) {
@@ -217,7 +232,7 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
       for (const entry of entries) {
         const padding = ' '.repeat(maxLen - entry.name.length)
         const parts: string[] = [entry.description]
-        const source = envSource ?? process.env
+        const source = envSource ?? defaultEnvSource()
         if (entry.name in source) parts.push(`set: ${redact(source[entry.name]!)}`)
         if (entry.defaultValue !== undefined) parts.push(`default: ${entry.defaultValue}`)
         const desc = parts.length > 1 ? `${parts[0]} (${parts.slice(1).join(', ')})` : parts[0]
@@ -229,13 +244,13 @@ export function formatCommand(name: string, options: formatCommand.Options = {})
   return lines.join('\n')
 }
 
-/** Builds the synopsis string with `<required>` and `[optional]` placeholders. */
+/** Builds the synopsis string with `<required>`, `[optional]`, and `<variadic...>` placeholders. */
 function buildSynopsis(name: string, args?: z.ZodObject<any>): string {
   if (!args) return name
   const parts = [name]
   for (const [key, schema] of Object.entries(args.shape)) {
     const type = resolveTypeName(schema)
-    const label = type.includes('|') ? type : key
+    const label = (type.includes('|') ? type : key) + (type === 'array' ? '...' : '')
     parts.push((schema as z.ZodType)._zod.optout === 'optional' ? `[${label}]` : `<${label}>`)
   }
   return parts.join(' ')
@@ -260,7 +275,10 @@ function envEntries(schema: z.ZodObject<any>) {
 }
 
 /** Extracts option entries from a Zod object schema. */
-function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> | undefined) {
+function optionEntries(
+  schema: z.ZodObject<any>,
+  alias?: Partial<Record<string, string>> | undefined,
+) {
   const entries: {
     flag: string
     description: string
@@ -271,8 +289,10 @@ function optionEntries(schema: z.ZodObject<any>, alias?: Record<string, string> 
     const type = resolveTypeName(field)
     const short = alias?.[key]
     const kebab = toKebab(key)
-    const flag = short ? `--${kebab}, -${short} <${type}>` : `--${kebab} <${type}>`
-    const defaultValue = extractDefault(field)
+    const valueHint = type === 'boolean' ? '' : ` <${type}>`
+    const flag = short ? `--${kebab}, -${short}${valueHint}` : `--${kebab}${valueHint}`
+    let defaultValue = extractDefault(field)
+    if (type === 'boolean' && defaultValue === false) defaultValue = undefined
     const deprecated = extractDeprecated(field)
     entries.push({ flag, description: (field as any).description ?? '', defaultValue, deprecated })
   }
@@ -334,7 +354,11 @@ function extractDeprecated(schema: unknown): boolean | undefined {
 }
 
 /** Renders the built-in commands and global options block. Root-only items are hidden for subcommands. */
-function globalOptionsLines(root = false, configFlag?: string): string[] {
+function globalOptionsLines(
+  root = false,
+  configFlag?: string,
+  globals?: GlobalsDescriptor,
+): string[] {
   const lines: string[] = []
 
   if (root) {
@@ -353,6 +377,26 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
       'Integrations:',
       ...builtins.map((b) => `  ${b.name}${' '.repeat(maxCmd - b.name.length)}  ${b.desc}`),
     )
+  }
+
+  if (globals) {
+    const entries = optionEntries(globals.schema, globals.alias)
+    if (entries.length > 0) {
+      const maxLen = Math.max(...entries.map((e) => e.flag.length))
+      lines.push(
+        '',
+        'Custom Global Options:',
+        ...entries.map((entry) => {
+          const padding = ' '.repeat(maxLen - entry.flag.length)
+          const prefix = entry.deprecated ? '[deprecated] ' : ''
+          const desc =
+            entry.defaultValue !== undefined
+              ? `${prefix}${entry.description} (default: ${entry.defaultValue})`
+              : `${prefix}${entry.description}`
+          return `  ${entry.flag}${padding}  ${desc}`
+        }),
+      )
+    }
   }
 
   const flags = [
@@ -374,7 +418,7 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
     { flag: '--token-count', desc: 'Print token count of output (instead of output)' },
     { flag: '--token-limit <n>', desc: 'Limit output to n tokens' },
     { flag: '--token-offset <n>', desc: 'Skip first n tokens of output' },
-    { flag: '--verbose', desc: 'Show full output envelope' },
+    { flag: '--full-output', desc: 'Show full output envelope' },
     ...(root ? [{ flag: '--version', desc: 'Show version' }] : []),
   ].sort((a, b) => a.flag.localeCompare(b.flag))
   const maxLen = Math.max(...flags.map((f) => f.flag.length))
@@ -387,7 +431,7 @@ function globalOptionsLines(root = false, configFlag?: string): string[] {
   return lines
 }
 
-/** Redacts a value, showing only the last 4 characters. */
+/** Redacts a value, showing only the last 4 characters for long values. */
 function redact(value: string): string {
   if (value.length <= 4) return '****'
   return `****${value.slice(-4)}`

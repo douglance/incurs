@@ -1,5 +1,252 @@
 # incur
 
+## 0.4.17
+
+### Patch Changes
+
+- 5b9647a: Delivered CTA suggestions in MCP tool result and error text, keeping `_meta.cta` for structured consumers.
+- eacc238: Added variadic positional arguments: a final `z.array(...)` args key collects all remaining positionals.
+
+  ```ts
+  Cli.create("my-cli").command("lint", {
+    args: z.object({ paths: z.array(z.string()).describe("Files to lint") }),
+    run: (c) => ({ count: c.args.paths.length }),
+  });
+  ```
+
+## 0.4.16
+
+### Patch Changes
+
+- 8da2cfc: Fixed parsed global options missing from command handler contexts.
+
+## 0.4.15
+
+### Patch Changes
+
+- e6f51cd: Changed MCP servers to expose progressive tool discovery by default.
+
+## 0.4.14
+
+### Patch Changes
+
+- 539d0ac: Added `compact` and `security` OpenAPI config options for trimming generated command schemas and skipping credential option injection.
+- 4c0fc4b: Included OpenAPI operation descriptions in MCP tool descriptions by concatenating summary and description; CLI help keeps the short summary.
+
+## 0.4.13
+
+### Patch Changes
+
+- 20a6f42: Added MCP tool filtering via `mcp: false` on commands and root-level `mcp.tools` include/exclude patterns.
+- 3fecb7c: Added remote MCP servers as command sources via `cli.command(name, { mcp })`.
+- 11b7406: Added `context.request` for HTTP and MCP invocations and `openapiConfig.forwardHeaders` for propagating caller headers to upstream APIs.
+
+## 0.4.12
+
+### Patch Changes
+
+- c37c5f7: Respect explicit output formats when stdout is a TTY so `--format` and `--json` output remains machine-readable.
+
+## 0.4.11
+
+### Patch Changes
+
+- 4de8518: Fixed `--mcp` stdio transport loading against `@modelcontextprotocol/server` prereleases that export it from `./stdio`.
+
+## 0.4.10
+
+### Patch Changes
+
+- a94480c: Added `mcp doctor` command that smoke-tests MCP initialization and tool listing without calling tools.
+- f069769: Added MCP tool name and description metadata overrides for commands, including duplicate exposed-name validation.
+- 309d566: Added support for non-object MCP output schemas by omitting them from tool registration while preserving JSON text output.
+
+## 0.4.9
+
+### Patch Changes
+
+- 0720a24: Added custom global options support via `globals` and `globalAlias` on `Cli.create()`.
+- 7e94269: Added destructive command hints to generated skill files.
+- a14e41d: Fixed BigInt serialization across JSON, JSONL, MCP, and fetch output paths.
+- cb05897: Fixed MCP registration command detection for global, local, and source-launched CLIs.
+- 15c9068: Defaulted MCP-over-HTTP to stateless transport behavior and returned `405` for unsupported stateless methods.
+- 1c52be9: Lazy-loaded YAML and MCP SDK imports outside plain command runs.
+- dc0faff: Added typed MCP command metadata for `instructions` and `annotations`.
+- 1cbe459: Fixed HTTP and MCP command input validation to return standard validation field errors for object-shaped inputs.
+- 43c1551: Added `banner` option to `Cli.create` for displaying custom content above root help output with sync/async functions, error swallowing, and `mode` targeting.
+- a0f469f: Fixed streaming command terminal records so HTTP NDJSON responses preserved returned `c.ok()` CTA metadata, represented returned or yielded `c.error()` values as terminal errors, included terminal duration metadata, unwound generators on response cancellation, and preserved `IncurError.retryable` metadata in streaming machine-format errors.
+- 9a43129: Surfaced `c.ok(..., { cta })` metadata on MCP tool responses under `_meta.cta`.
+- a0f469f: Fixed generated and synced skills to use the same command projection as CLI skill output, avoided duplicate skills for command aliases, preserved output schemas and examples consistently, and included the fetch gateway skill hint for fetch-based commands.
+- bffbdf4: Typed the root command `hint` option on `Cli.create`.
+
+## 0.4.8
+
+### Patch Changes
+
+- 935e6f7: Generated OpenAPI commands accepted header parameters and header security schemes as CLI options.
+
+## 0.4.7
+
+### Patch Changes
+
+- 01b5c91: Added `openapiConfig.mode` for choosing operation id or namespace command generation.
+- bfc05ac: Added hosted OpenAPI command generation from `Fetch.fromRequest` sources.
+
+## 0.4.6
+
+### Patch Changes
+
+- ed18ddc: Added support for automatic OpenAPI v3.2.0 schema generation
+
+## 0.4.5
+
+### Patch Changes
+
+- 85e98bc: Fixed `--json` to emit parsed JSON objects and arrays instead of double-encoding top-level JSON strings.
+- 3124fe7: Clarified TTY validation output for missing options and environment variables.
+
+## 0.4.4
+
+### Patch Changes
+
+- 9875d59: Fixed skill frontmatter generation and parsing so descriptions containing YAML-sensitive text like `key: value` were quoted and read correctly.
+
+## 0.4.3
+
+### Patch Changes
+
+- 01c675f: Added `ls` alias for `skills list`.
+
+## 0.4.2
+
+### Patch Changes
+
+- a6c584d: Fixed stale skills warnings to only appear when synced skill files were still installed on disk, and updated `skills list` to reflect actual install state instead of stale metadata.
+
+## 0.4.1
+
+### Minor Changes
+
+- 1e58e47: **Breaking:** Renamed the global full-envelope flag from `--verbose` to `--full-output`, allowing `--verbose` to be used as a normal command option.
+
+## 0.3.25
+
+### Patch Changes
+
+- abfa8c7: Fixed Root CLIs created with `Cli.create` and `aliases` not registering those aliases as command aliases when mounted via `cli.command()`.
+
+## 0.3.24
+
+### Patch Changes
+
+- 250e65f: Added command-level `aliases` option for subcommands (e.g. `aliases: ['extensions', 'ext']` on an `extension` command).
+- 26d7bf8: Fixed root fetch/command fallback bypassing "Did you mean?" suggestions when the input is a typo of a known command.
+
+## 0.3.23
+
+### Patch Changes
+
+- 572c172: Replaced `@readme/openapi-parser` with a vendored `dereference` implementation, removing a heavy dependency tree.
+
+## 0.3.22
+
+### Patch Changes
+
+- bfc3337: Replaced `@modelcontextprotocol/sdk` with `@modelcontextprotocol/server` (v2), reducing dependency count by 74 packages.
+
+## 0.3.21
+
+### Patch Changes
+
+- d091bf7: Fixed stale `skills add` CTA commands to use the invoked CLI name when running installed binaries directly, instead of falling back to `npx`.
+
+## 0.3.20
+
+### Patch Changes
+
+- ede37be: Fixed help output for boolean options so flags no longer showed `<boolean>` placeholders or redundant `(default: false)` text, including aliased flags.
+- 96dfee4: Exported shell completion environment variables in bash and zsh hooks.
+
+## 0.3.19
+
+### Patch Changes
+
+- 5c76b51: Fixed `skills add` to list synced skills in alphabetical order.
+
+## 0.3.18
+
+### Patch Changes
+
+- a65c865: Used command description as fallback in skill frontmatter for root commands and single-command groups.
+
+## 0.3.17
+
+### Patch Changes
+
+- dad62c9: Fixed `skills list` not including root command skill.
+
+## 0.3.16
+
+### Patch Changes
+
+- de70444: Added `engines` field requiring Node.js >=22.
+- 3462433: Fixed `z.bigint()`, `z.coerce.bigint()`, `z.date()`, and `z.coerce.date()` schemas failing during skill sync by representing them as `{ type: "string" }` in JSON Schema output.
+
+## 0.3.15
+
+### Patch Changes
+
+- abd80e7: Fixed missing value errors for flags in `Fetch.parseArgv`, short secret leaking in `redact()`, silent `jsonl` fallthrough in `Formatter.format`, invalid `--format`/`--token-limit`/`--token-offset` values, lost descriptions when coercing OpenAPI param schemas, and hardcoded `process.env` in `Help.ts` for Deno compatibility.
+- 7dd398b: Added `skills list` subcommand that shows all skills a CLI defines with install status.
+
+## 0.3.14
+
+### Patch Changes
+
+- 71a787a: Fixed root commands defined on `Cli.create()` not being included in skill generation (`--llms`, `skills add`, `.well-known/skills/`).
+
+## 0.3.13
+
+### Patch Changes
+
+- 0e0549f: Added `displayName` to the root `Cli.create(..., { run })` context type.
+
+## 0.3.12
+
+### Patch Changes
+
+- b8370ac: Added `displayName` to the run and middleware context. Resolves the actual binary name from `process.argv[1]` so user-facing messages reflect the alias used to invoke the CLI.
+
+## 0.3.11
+
+### Patch Changes
+
+- 7833e33: Updated command suggestion ranking to use tiered scoring (prefix → contains → fuzzy) so match type outranks raw edit distance.
+
+## 0.3.10
+
+### Patch Changes
+
+- d1404b8: Fixed optional properties being typed as required in typegen output.
+
+## 0.3.9
+
+### Patch Changes
+
+- 8ee1af4: Fixed skill display names to use canonical slug from SKILL.md frontmatter instead of reconstructing from CLI name and subcommand.
+
+## 0.3.8
+
+### Patch Changes
+
+- 69a48ce: Tweaked "Did you mean" output.
+
+## 0.3.7
+
+### Patch Changes
+
+- 2f8194b: Added "Did you mean?" suggestions for mistyped commands using Levenshtein distance. Includes builtin commands (`mcp`, `skills`, `completions`) in suggestion candidates. Suggestion CTA preserves original args/flags. Moved skills staleness warning from stderr into the CTA system.
+
 ## 0.3.6
 
 ### Patch Changes

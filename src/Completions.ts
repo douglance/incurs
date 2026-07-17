@@ -1,6 +1,8 @@
 import type { z } from 'zod'
 
+import type { GlobalsDescriptor } from './Cli.js'
 import type { Shell } from './internal/command.js'
+import { toKebab } from './internal/helpers.js'
 
 /** A completion candidate with an optional description. */
 export type Candidate = {
@@ -12,14 +14,16 @@ export type Candidate = {
   value: string
 }
 
-/** @internal Entry stored in a command map — either a leaf definition or a group. */
+/** @internal Entry stored in a command map — either a leaf definition, a group, or an alias. */
 type CommandEntry = {
+  _alias?: true | undefined
   _group?: true | undefined
   alias?: Record<string, string | undefined> | undefined
   args?: z.ZodObject<any> | undefined
   commands?: Map<string, CommandEntry> | undefined
   description?: string | undefined
   options?: z.ZodObject<any> | undefined
+  target?: string | undefined
 }
 
 /**
@@ -39,6 +43,7 @@ export function register(shell: Shell, name: string): string {
   }
 }
 
+
 /**
  * Computes completion candidates for the given argv words and cursor index.
  * Walks the command tree to resolve the active command, then suggests
@@ -49,6 +54,7 @@ export function complete(
   rootCommand: CommandEntry | undefined,
   argv: string[],
   index: number,
+  globals?: GlobalsDescriptor | undefined,
 ): Candidate[] {
   const current = argv[index] ?? ''
 
@@ -61,7 +67,10 @@ export function complete(
   for (let i = 0; i < index; i++) {
     const token = argv[i]!
     if (token.startsWith('-')) continue
-    const entry = scope.commands.get(token)
+    let entry = scope.commands.get(token)
+    if (!entry) continue
+    // Follow alias to canonical entry
+    if (entry._alias && entry.target) entry = scope.commands.get(entry.target)
     if (!entry) continue
     if (entry._group && entry.commands) {
       scope = { commands: entry.commands }
@@ -79,7 +88,7 @@ export function complete(
     if (leaf?.options) {
       const shape = leaf.options.shape as Record<string, any>
       for (const key of Object.keys(shape)) {
-        const kebab = key.replace(/[A-Z]/g, (c: string) => `-${c.toLowerCase()}`)
+        const kebab = toKebab(key)
         const flag = `--${kebab}`
         if (flag.startsWith(current))
           candidates.push({ value: flag, description: descriptionOf(shape[key]) })
@@ -94,6 +103,25 @@ export function complete(
           }
         }
     }
+    // Global options
+    if (globals) {
+      const globalShape = globals.schema.shape as Record<string, any>
+      for (const key of Object.keys(globalShape)) {
+        const kebab = toKebab(key)
+        const flag = `--${kebab}`
+        if (flag.startsWith(current) && !candidates.some((c) => c.value === flag))
+          candidates.push({ value: flag, description: descriptionOf(globalShape[key]) })
+      }
+      // Global short aliases
+      if (globals.alias)
+        for (const [name, short] of Object.entries(globals.alias)) {
+          const flag = `-${short}`
+          if (flag.startsWith(current) && !candidates.some((c) => c.value === flag)) {
+            const desc = descriptionOf(globalShape[name])
+            candidates.push({ value: flag, description: desc })
+          }
+        }
+    }
     return candidates
   }
 
@@ -101,21 +129,38 @@ export function complete(
   if (index > 0) {
     const prev = argv[index - 1]!
     const leaf = scope.leaf
-    if (leaf?.options && prev.startsWith('-')) {
-      const name = resolveOptionName(prev, leaf)
-      if (name) {
-        const values = possibleValues(name, leaf.options)
-        if (values) {
-          for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
-          return candidates
+    if (prev.startsWith('-')) {
+      // Try command-specific options first
+      if (leaf?.options) {
+        const name = resolveOptionName(prev, leaf)
+        if (name) {
+          const values = possibleValues(name, leaf.options)
+          if (values) {
+            for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
+            return candidates
+          }
+          if (!isBooleanOption(name, leaf.options)) return candidates
         }
-        if (!isBooleanOption(name, leaf.options)) return candidates
+      }
+      // Try global options
+      if (globals) {
+        const globalEntry: CommandEntry = { options: globals.schema, alias: globals.alias }
+        const name = resolveOptionName(prev, globalEntry)
+        if (name) {
+          const values = possibleValues(name, globals.schema)
+          if (values) {
+            for (const v of values) if (v.startsWith(current)) candidates.push({ value: v })
+            return candidates
+          }
+          if (!isBooleanOption(name, globals.schema)) return candidates
+        }
       }
     }
   }
 
   // Suggest subcommands (groups get noSpace so user can keep typing subcommand)
   for (const [name, entry] of scope.commands) {
+    if (entry._alias) continue
     if (name.startsWith(current))
       candidates.push({
         value: name,
@@ -232,25 +277,25 @@ function bashRegister(name: string): string {
     local _COMPLETE_INDEX=\${COMP_CWORD}
     local _completions
     _completions=( $(
-        COMPLETE="bash"
-        _COMPLETE_INDEX="\$_COMPLETE_INDEX"
+        export COMPLETE="bash"
+        export _COMPLETE_INDEX="$_COMPLETE_INDEX"
         "${name}" -- "\${COMP_WORDS[@]}"
     ) )
-    if [[ \$? != 0 ]]; then
+    if [[ $? != 0 ]]; then
         unset COMPREPLY
         return
     fi
     local _nospace=false
     COMPREPLY=()
     for _c in "\${_completions[@]}"; do
-        if [[ "\$_c" == *$'\\001' ]]; then
+        if [[ "$_c" == *$'\\001' ]]; then
             _nospace=true
             COMPREPLY+=("\${_c%$'\\001'}")
         else
-            COMPREPLY+=("\$_c")
+            COMPREPLY+=("$_c")
         fi
     done
-    if [[ \$_nospace == true ]]; then
+    if [[ $_nospace == true ]]; then
         compopt -o nospace
     fi
 }
@@ -262,11 +307,11 @@ function zshRegister(name: string): string {
   return `#compdef ${name}
 _incur_complete_${id}() {
     local completions=("\${(@f)$(
-        _COMPLETE_INDEX=$(( CURRENT - 1 ))
-        COMPLETE="zsh"
+        export _COMPLETE_INDEX=$(( CURRENT - 1 ))
+        export COMPLETE="zsh"
         "${name}" -- "\${words[@]}" 2>/dev/null
     )}")
-    if [[ -n \$completions ]]; then
+    if [[ -n $completions ]]; then
         _describe 'values' completions -S ''
     fi
 }
