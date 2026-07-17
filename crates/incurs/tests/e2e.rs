@@ -529,20 +529,37 @@ struct StreamOkHandler;
 impl CommandHandler for StreamOkHandler {
     async fn run(&self, _ctx: CommandContext) -> CommandResult {
         let stream = async_stream::stream! {
-            yield serde_json::json!({"n": 1});
-            yield serde_json::json!({"n": 2});
+            yield incurs::output::StreamRecord::Chunk(serde_json::json!({"n": 1}));
+            yield incurs::output::StreamRecord::Chunk(serde_json::json!({"n": 2}));
+            yield incurs::output::StreamRecord::Ok {
+                cta: Some(CtaBlock {
+                    commands: vec![CtaEntry::Simple("next".to_string())],
+                    description: None,
+                }),
+            };
         };
-        // Note: In the TS version, the generator returns ok() with a CTA.
-        // In Rust, streaming with CTA isn't supported the same way via this trait.
-        // For now we just return the stream.
-        CommandResult::Stream(Box::pin(stream))
+        CommandResult::RecordStream(Box::pin(stream))
     }
 }
 
-// NOTE: StreamErrorHandler and StreamThrowHandler from the TS tests are not
-// ported because CommandResult::Stream doesn't support mid-stream errors.
-// That would require encoding errors as stream items, which is a different
-// pattern than the TS async generator approach.
+struct StreamErrorHandler;
+
+#[async_trait::async_trait]
+impl CommandHandler for StreamErrorHandler {
+    async fn run(&self, _ctx: CommandContext) -> CommandResult {
+        let stream = async_stream::stream! {
+            yield incurs::output::StreamRecord::Chunk(serde_json::json!({"step": 1}));
+            yield incurs::output::StreamRecord::Error {
+                code: "STREAM_ERR".to_string(),
+                message: "mid-stream failure".to_string(),
+                retryable: true,
+                exit_code: Some(77),
+                cta: None,
+            };
+        };
+        CommandResult::RecordStream(Box::pin(stream))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // App builder
@@ -1188,6 +1205,25 @@ fn create_app() -> Cli {
                 output_schema: None,
             },
         )
+        .command(
+            "stream-error",
+            CommandDef {
+                name: "stream-error".to_string(),
+                description: Some("Stream with terminal error".to_string()),
+                args_fields: vec![],
+                options_fields: vec![],
+                env_fields: vec![],
+                aliases: HashMap::new(),
+                command_aliases: Vec::new(),
+                examples: vec![],
+                hint: None,
+                format: None,
+                output_policy: None,
+                handler: Box::new(StreamErrorHandler),
+                middleware: vec![],
+                output_schema: None,
+            },
+        )
         .group(auth)
         .group(project)
         .group(config)
@@ -1487,7 +1523,11 @@ mod output_formats {
 
     #[tokio::test]
     async fn verbose_full_envelope() {
-        let r = serve(&create_app(), &["ping", "--full-output", "--format", "json"]).await;
+        let r = serve(
+            &create_app(),
+            &["ping", "--full-output", "--format", "json"],
+        )
+        .await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["data"]["pong"], true);
@@ -1608,7 +1648,10 @@ mod output_formats {
         let r = serve(&cli, &["ping", "--verbose"]).await;
         let parsed = json(&r.output);
         assert_eq!(parsed["verbose"], true);
-        assert!(parsed.get("meta").is_none(), "should not be a full envelope");
+        assert!(
+            parsed.get("meta").is_none(),
+            "should not be a full envelope"
+        );
     }
 }
 
@@ -1649,7 +1692,11 @@ mod command_aliases {
     // F2: a full-output envelope reports the canonical command name, not the alias.
     #[tokio::test]
     async fn alias_full_output_uses_canonical_name() {
-        let r = serve(&app_with_alias(), &["l", "--full-output", "--format", "json"]).await;
+        let r = serve(
+            &app_with_alias(),
+            &["l", "--full-output", "--format", "json"],
+        )
+        .await;
         let parsed = json(&r.output);
         assert_eq!(parsed["meta"]["command"], "list");
     }
@@ -1679,7 +1726,11 @@ mod undefined_output {
 
     #[tokio::test]
     async fn void_command_verbose_shows_envelope() {
-        let r = serve(&create_app(), &["noop", "--full-output", "--format", "json"]).await;
+        let r = serve(
+            &create_app(),
+            &["noop", "--full-output", "--format", "json"],
+        )
+        .await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         assert_eq!(parsed["meta"]["command"], "noop");
@@ -1816,7 +1867,11 @@ mod cta {
 
     #[tokio::test]
     async fn plain_return_omits_cta() {
-        let r = serve(&create_app(), &["ping", "--full-output", "--format", "json"]).await;
+        let r = serve(
+            &create_app(),
+            &["ping", "--full-output", "--format", "json"],
+        )
+        .await;
         let parsed = json(&r.output);
         assert!(parsed["meta"]["cta"].is_null());
     }
@@ -1850,7 +1905,11 @@ mod streaming {
 
     #[tokio::test]
     async fn format_json_verbose_buffers_with_envelope() {
-        let r = serve(&create_app(), &["stream", "--full-output", "--format", "json"]).await;
+        let r = serve(
+            &create_app(),
+            &["stream", "--full-output", "--format", "json"],
+        )
+        .await;
         let parsed = json(&r.output);
         assert_eq!(parsed["ok"], true);
         let data = parsed["data"].as_array().unwrap();
@@ -1896,6 +1955,37 @@ mod streaming {
         assert_eq!(lines[1]["type"], "chunk");
         assert_eq!(lines[1]["data"], "world");
         assert_eq!(lines[2]["type"], "done");
+    }
+
+    #[tokio::test]
+    async fn terminal_success_preserves_cta() {
+        let r = serve(&create_app(), &["stream-ok", "--format", "jsonl"]).await;
+        let lines = r
+            .output
+            .trim()
+            .lines()
+            .map(|line| json(line))
+            .collect::<Vec<_>>();
+        assert_eq!(lines[2]["type"], "done");
+        assert_eq!(
+            lines[2]["meta"]["cta"]["commands"][0]["command"],
+            "app next"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_error_stops_stream_and_sets_exit_code() {
+        let r = serve(&create_app(), &["stream-error", "--format", "jsonl"]).await;
+        let lines = r
+            .output
+            .trim()
+            .lines()
+            .map(|line| json(line))
+            .collect::<Vec<_>>();
+        assert_eq!(r.exit_code, Some(77));
+        assert_eq!(lines[1]["type"], "error");
+        assert_eq!(lines[1]["error"]["code"], "STREAM_ERR");
+        assert_eq!(lines[1]["error"]["retryable"], true);
     }
 }
 
@@ -2282,7 +2372,14 @@ mod token_pagination {
     async fn full_output_sets_next_offset() {
         let r = serve(
             &app_with_long_output(),
-            &["big", "--token-limit", "10", "--full-output", "--format", "json"],
+            &[
+                "big",
+                "--token-limit",
+                "10",
+                "--full-output",
+                "--format",
+                "json",
+            ],
         )
         .await;
         let parsed = json(&r.output);
@@ -2413,11 +2510,7 @@ mod schema_flag {
     // including a `required` array.
     #[tokio::test]
     async fn schema_includes_args_and_options() {
-        let r = serve(
-            &create_app(),
-            &["project", "delete", "--schema", "--json"],
-        )
-        .await;
+        let r = serve(&create_app(), &["project", "delete", "--schema", "--json"]).await;
         let parsed = json(&r.output);
         // args: required `id` of type string
         assert_eq!(parsed["args"]["type"], "object");

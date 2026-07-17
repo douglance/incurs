@@ -12,7 +12,9 @@
 //! Ported from `src/Cli.ts`.
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::io::IsTerminal;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -26,6 +28,22 @@ use crate::middleware::MiddlewareFn;
 use crate::output::*;
 use crate::schema::FieldMeta;
 use crate::skill;
+
+/// Controls which consumers see a root help banner.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BannerMode {
+    /// Show the banner to human and agent consumers.
+    #[default]
+    All,
+    /// Show the banner only when stdout is a terminal.
+    Human,
+    /// Show the banner only to non-terminal agent consumers.
+    Agent,
+}
+
+/// Async banner renderer used above root help output.
+pub type BannerFn =
+    Arc<dyn Fn(bool) -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 
 /// Entry in the command tree.
 ///
@@ -102,6 +120,8 @@ pub struct Cli {
     pub version: Option<String>,
     /// Alternative binary names for this CLI.
     pub aliases: Vec<String>,
+    /// Optional content rendered above root help.
+    banner: Option<(BannerMode, BannerFn)>,
     /// The command tree.
     pub(crate) commands: BTreeMap<String, CommandEntry>,
     /// Root-level middleware that runs around every command.
@@ -110,6 +130,10 @@ pub struct Cli {
     root_command: Option<Arc<CommandDef>>,
     /// CLI-level environment variable fields.
     pub(crate) env_fields: Vec<FieldMeta>,
+    /// CLI-level global option fields.
+    pub(crate) globals_fields: Vec<FieldMeta>,
+    /// CLI-level global option aliases.
+    pub(crate) global_aliases: HashMap<String, char>,
     /// Middleware variable fields.
     pub(crate) vars_fields: Vec<FieldMeta>,
     /// Config file options.
@@ -118,6 +142,8 @@ pub struct Cli {
     output_policy: Option<OutputPolicy>,
     /// Default output format.
     format: Option<Format>,
+    /// MCP server instructions, discovery, and filtering options.
+    pub(crate) mcp_options: crate::mcp::McpServeOptions,
 }
 
 impl Cli {
@@ -128,14 +154,18 @@ impl Cli {
             description: None,
             version: None,
             aliases: Vec::new(),
+            banner: None,
             commands: BTreeMap::new(),
             middleware: Vec::new(),
             root_command: None,
             env_fields: Vec::new(),
+            globals_fields: Vec::new(),
+            global_aliases: HashMap::new(),
             vars_fields: Vec::new(),
             config: None,
             output_policy: None,
             format: None,
+            mcp_options: crate::mcp::McpServeOptions::default(),
         }
     }
 
@@ -157,6 +187,24 @@ impl Cli {
         self
     }
 
+    /// Configures an async root help banner renderer.
+    pub fn banner(mut self, mode: BannerMode, banner: BannerFn) -> Self {
+        self.banner = Some((mode, banner));
+        self
+    }
+
+    /// Configures static content above root help output.
+    pub fn banner_text(self, mode: BannerMode, banner: impl Into<String>) -> Self {
+        let banner = banner.into();
+        self.banner(
+            mode,
+            Arc::new(move |_| {
+                let banner = banner.clone();
+                Box::pin(async move { Some(banner) })
+            }),
+        )
+    }
+
     /// Sets the default output format.
     pub fn format(mut self, format: Format) -> Self {
         self.format = Some(format);
@@ -169,6 +217,12 @@ impl Cli {
         self
     }
 
+    /// Configures MCP server instructions, discovery, and tool filtering.
+    pub fn mcp(mut self, options: crate::mcp::McpServeOptions) -> Self {
+        self.mcp_options = options;
+        self
+    }
+
     /// Sets the root command handler (for CLIs that have a default action).
     pub fn root(mut self, def: CommandDef) -> Self {
         self.root_command = Some(Arc::new(def));
@@ -178,6 +232,69 @@ impl Cli {
     /// Sets the CLI-level environment variable fields.
     pub fn env_fields(mut self, fields: Vec<FieldMeta>) -> Self {
         self.env_fields = fields;
+        self
+    }
+
+    /// Sets CLI-level global option fields and extracts their aliases.
+    pub fn globals_fields(mut self, fields: Vec<FieldMeta>) -> Self {
+        const BUILTIN_FLAGS: &[&str] = &[
+            "config-schema",
+            "csv",
+            "filter-output",
+            "format",
+            "full-output",
+            "help",
+            "json",
+            "llms",
+            "llms-full",
+            "mcp",
+            "schema",
+            "table",
+            "token-count",
+            "token-limit",
+            "token-offset",
+            "version",
+        ];
+        for field in &fields {
+            assert!(
+                !BUILTIN_FLAGS.contains(&field.cli_name.as_str()),
+                "Global option --{} conflicts with a built-in flag",
+                field.cli_name
+            );
+            if let Some(alias) = field.alias {
+                assert!(
+                    alias != 'h',
+                    "Global alias -{alias} conflicts with a built-in short flag"
+                );
+                self.global_aliases.insert(field.name.to_string(), alias);
+            }
+        }
+        self.globals_fields = fields;
+        if let Some(root) = &self.root_command {
+            self.assert_no_global_conflicts(root);
+        }
+        self.assert_no_group_global_conflicts(&self.commands);
+        self
+    }
+
+    /// Sets CLI-level global options from a type that implements `IncurSchema`.
+    pub fn globals<T: crate::schema::IncurSchema>(self) -> Self {
+        self.globals_fields(T::fields())
+    }
+
+    /// Adds or overrides aliases for CLI-level global options.
+    pub fn global_aliases(mut self, aliases: HashMap<String, char>) -> Self {
+        for alias in aliases.values() {
+            assert!(
+                *alias != 'h',
+                "Global alias -{alias} conflicts with a built-in short flag"
+            );
+        }
+        self.global_aliases.extend(aliases);
+        if let Some(root) = &self.root_command {
+            self.assert_no_global_conflicts(root);
+        }
+        self.assert_no_group_global_conflicts(&self.commands);
         self
     }
 
@@ -195,6 +312,7 @@ impl Cli {
 
     /// Registers a command.
     pub fn command(mut self, name: impl Into<String>, def: CommandDef) -> Self {
+        self.assert_no_global_conflicts(&def);
         self.commands
             .insert(name.into(), CommandEntry::Leaf(Arc::new(def)));
         self
@@ -205,6 +323,10 @@ impl Cli {
     /// If the sub-CLI has a root command and no subcommands, it is mounted
     /// as a leaf command (a "leaf CLI"). Otherwise it is mounted as a group.
     pub fn group(mut self, cli: Cli) -> Self {
+        if let Some(root) = &cli.root_command {
+            self.assert_no_global_conflicts(root);
+        }
+        self.assert_no_group_global_conflicts(&cli.commands);
         if let Some(root_cmd) = cli.root_command {
             if cli.commands.is_empty() {
                 // Leaf CLI: mount the root command directly as a leaf.
@@ -225,6 +347,37 @@ impl Cli {
         };
         self.commands.insert(cli.name, entry);
         self
+    }
+
+    fn assert_no_global_conflicts(&self, command: &CommandDef) {
+        for field in &command.options_fields {
+            assert!(
+                !self
+                    .globals_fields
+                    .iter()
+                    .any(|global| global.name == field.name),
+                "Command option --{} conflicts with a global option",
+                field.cli_name
+            );
+            if let Some(alias) = command.aliases.get(field.name) {
+                assert!(
+                    !self.global_aliases.values().any(|global| global == alias),
+                    "Command alias -{alias} conflicts with a global alias"
+                );
+            }
+        }
+    }
+
+    fn assert_no_group_global_conflicts(&self, commands: &BTreeMap<String, CommandEntry>) {
+        for entry in commands.values() {
+            match entry {
+                CommandEntry::Leaf(command) => self.assert_no_global_conflicts(command),
+                CommandEntry::Group { commands, .. } => {
+                    self.assert_no_group_global_conflicts(commands)
+                }
+                CommandEntry::FetchGateway { .. } => {}
+            }
+        }
     }
 
     /// Registers a fetch gateway command.
@@ -250,6 +403,73 @@ impl Cli {
         self
     }
 
+    /// Mounts tools from a remote MCP-over-HTTP server as a command group.
+    #[cfg(all(feature = "mcp", feature = "http"))]
+    pub async fn remote_mcp(
+        mut self,
+        name: impl Into<String>,
+        uri: impl Into<String>,
+        description: Option<String>,
+    ) -> Result<Self, crate::errors::Error> {
+        let commands = crate::mcp::remote_commands(uri).await?;
+        let commands = commands
+            .into_iter()
+            .map(|(name, command)| (name, CommandEntry::Leaf(Arc::new(command))))
+            .collect();
+        self.commands.insert(
+            name.into(),
+            CommandEntry::Group {
+                description,
+                commands,
+                middleware: Vec::new(),
+                output_policy: None,
+            },
+        );
+        Ok(self)
+    }
+
+    /// Generates and mounts a command group from an OpenAPI document.
+    #[cfg(feature = "openapi")]
+    pub async fn openapi_group(
+        mut self,
+        name: impl Into<String>,
+        spec: &Value,
+        fetch: crate::openapi::FetchFn,
+        options: crate::openapi::GenerateOptions,
+        description: Option<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let commands = crate::openapi::generate_commands(spec, fetch, &options).await?;
+        let mut entries = BTreeMap::new();
+        for (path, command) in commands {
+            insert_generated_command(&mut entries, &path, command);
+        }
+        self.commands.insert(
+            name.into(),
+            CommandEntry::Group {
+                description,
+                commands: entries,
+                middleware: Vec::new(),
+                output_policy: None,
+            },
+        );
+        Ok(self)
+    }
+
+    /// Loads an OpenAPI document source and mounts its generated commands.
+    #[cfg(feature = "openapi")]
+    pub async fn openapi_source_group(
+        self,
+        name: impl Into<String>,
+        source: crate::openapi::OpenApiSource,
+        fetch: crate::openapi::FetchFn,
+        options: crate::openapi::GenerateOptions,
+        description: Option<String>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let spec = crate::openapi::load_source(source).await?;
+        self.openapi_group(name, &spec, fetch, options, description)
+            .await
+    }
+
     /// Registers middleware that runs around every command.
     pub fn use_middleware(mut self, handler: MiddlewareFn) -> Self {
         self.middleware.push(handler);
@@ -258,8 +478,18 @@ impl Cli {
 
     /// Parses process argv, runs the matched command, writes output to stdout.
     pub async fn serve(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let argv: Vec<String> = std::env::args().skip(1).collect();
-        self.serve_with(argv).await
+        let mut process = std::env::args();
+        let display_name = process
+            .next()
+            .and_then(|path| {
+                std::path::Path::new(&path)
+                    .file_name()?
+                    .to_str()
+                    .map(ToString::to_string)
+            })
+            .unwrap_or_else(|| self.name.clone());
+        self.serve_with_display_name(process.collect(), display_name)
+            .await
     }
 
     /// Serves with explicit argv (useful for testing).
@@ -272,6 +502,7 @@ impl Cli {
     /// 4. Load config file defaults
     /// 5. Execute the command with middleware
     /// 6. Format and write output to stdout
+    ///
     /// Computes the "Skills are out of date" CTA: when installed skills exist
     /// for this CLI and the stored hash differs from the live command tree.
     /// Ported from `Cli.ts` `skillsCta`.
@@ -280,7 +511,10 @@ impl Cli {
         if !crate::sync_skills::has_installed_skills(&self.name, None) {
             return None;
         }
-        let live = skill::hash(&collect_command_info(&self.commands, &[]));
+        let live = skill::hash(&collect_all_command_info(
+            self.root_command.as_ref(),
+            &self.commands,
+        ));
         if live == stored {
             return None;
         }
@@ -293,12 +527,29 @@ impl Cli {
         })
     }
 
+    async fn render_banner(&self, human: bool) -> Option<String> {
+        let (mode, banner) = self.banner.as_ref()?;
+        if matches!(mode, BannerMode::Human) && !human || matches!(mode, BannerMode::Agent) && human
+        {
+            return None;
+        }
+        banner(human).await
+    }
+
     pub async fn serve_with(&self, argv: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+        self.serve_with_display_name(argv, self.name.clone()).await
+    }
+
+    async fn serve_with_display_name(
+        &self,
+        argv: Vec<String>,
+        display_name: String,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let human = std::io::stdout().is_terminal();
         let config_flag = self.config.as_ref().map(|c| c.flag.as_str());
 
         // --- Step 1: Extract built-in flags ---
-        let builtin = match extract_builtin_flags(&argv, config_flag) {
+        let mut builtin = match extract_builtin_flags(&argv, config_flag) {
             Ok(b) => b,
             Err(e) => {
                 let msg = e.to_string();
@@ -307,6 +558,29 @@ impl Cli {
                 } else {
                     writeln_stdout(&format!(
                         "{{\"ok\":false,\"error\":{{\"code\":\"UNKNOWN\",\"message\":\"{}\"}}}}",
+                        msg.replace('"', "\\\"")
+                    ));
+                }
+                std::process::exit(1);
+            }
+        };
+
+        let globals = match crate::parser::parse_globals(
+            &builtin.rest,
+            &self.globals_fields,
+            &self.global_aliases,
+        ) {
+            Ok(parsed) => {
+                builtin.rest = parsed.rest;
+                Value::Object(parsed.parsed.into_iter().collect())
+            }
+            Err(error) => {
+                let msg = error.to_string();
+                if human {
+                    writeln_stdout(&format_human_error("VALIDATION_ERROR", &msg));
+                } else {
+                    writeln_stdout(&format!(
+                        "{{\"ok\":false,\"error\":{{\"code\":\"VALIDATION_ERROR\",\"message\":\"{}\"}}}}",
                         msg.replace('"', "\\\"")
                     ));
                 }
@@ -325,8 +599,16 @@ impl Cli {
 
         // --- Step 2b: Handle --llms / --llms-full ---
         if builtin.llms || builtin.llms_full {
-            let commands_info = collect_command_info(&self.commands, &[]);
-            if builtin.llms_full {
+            let commands_info =
+                collect_all_command_info(self.root_command.as_ref(), &self.commands);
+            if builtin.format_explicit && builtin.format != Format::Markdown {
+                let manifest = if builtin.llms_full {
+                    build_llms_manifest(&self.commands, &self.globals_fields, true)
+                } else {
+                    build_llms_manifest(&self.commands, &self.globals_fields, false)
+                };
+                writeln_stdout(&format_value(&manifest, builtin.format));
+            } else if builtin.llms_full {
                 let groups = collect_group_descriptions(&self.commands, &[]);
                 let output = skill::generate(&self.name, &commands_info, &groups);
                 writeln_stdout(&output);
@@ -348,7 +630,7 @@ impl Cli {
                     &self.commands,
                     &self.middleware,
                     &self.env_fields,
-                    &Default::default(),
+                    &self.mcp_options,
                 )
                 .await?;
                 return Ok(());
@@ -365,6 +647,8 @@ impl Cli {
             &self.aliases,
             &self.commands,
             self.root_command.as_ref(),
+            &self.globals_fields,
+            &self.global_aliases,
             &argv,
             std::env::var("COMPLETE").ok().as_deref(),
             std::env::var("_COMPLETE_INDEX").ok().as_deref(),
@@ -393,6 +677,8 @@ impl Cli {
                         description: Some(builtin_def.description.to_string()),
                         env_fields: Vec::new(),
                         examples: Vec::new(),
+                        global_aliases: HashMap::new(),
+                        globals_fields: Vec::new(),
                         hint: builtin_def.hint.clone(),
                         hide_global_options: true,
                         options_fields: Vec::new(),
@@ -455,7 +741,7 @@ impl Cli {
                 }
                 let skills = crate::sync_skills::list(
                     &self.name,
-                    &collect_command_info(&self.commands, &[]),
+                    &collect_all_command_info(self.root_command.as_ref(), &self.commands),
                     1,
                     self.description.as_deref(),
                 );
@@ -515,7 +801,7 @@ impl Cli {
 
             let result = crate::sync_skills::sync(
                 &self.name,
-                &collect_command_info(&self.commands, &[]),
+                &collect_all_command_info(self.root_command.as_ref(), &self.commands),
                 &crate::sync_skills::SyncOptions {
                     cwd: None,
                     depth: Some(depth),
@@ -598,7 +884,17 @@ impl Cli {
                 .find(|item| item.name == "mcp")
                 .expect("mcp builtin must exist");
 
-            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+            let mcp_sub_token = builtin.rest.get(index + 1).map(|token| token.as_str());
+            let mcp_sub = mcp_sub_token.map(|token| {
+                builtin_def
+                    .subcommands
+                    .iter()
+                    .find(|sub| sub.name == token || sub.aliases.contains(&token))
+                    .map(|sub| sub.name)
+                    .unwrap_or(token)
+            });
+
+            if mcp_sub.is_none() {
                 writeln_stdout(&format_builtin_help(&self.name, builtin_def));
                 return Ok(());
             }
@@ -607,8 +903,21 @@ impl Cli {
                 writeln_stdout(&format_builtin_subcommand_help(
                     &self.name,
                     builtin_def,
-                    "add",
+                    mcp_sub.expect("checked above"),
                 ));
+                return Ok(());
+            }
+
+            if mcp_sub == Some("doctor") {
+                writeln_stdout(&format_value(
+                    &mcp_doctor_result(&self.commands, &self.mcp_options.tools),
+                    builtin.format,
+                ));
+                return Ok(());
+            }
+
+            if mcp_sub != Some("add") {
+                writeln_stdout(&format_builtin_help(&self.name, builtin_def));
                 return Ok(());
             }
 
@@ -701,6 +1010,9 @@ impl Cli {
                 // Root command exists — if human and has required args with
                 // none provided, show help.
                 if human && has_required_args(&root_cmd.args_fields) {
+                    if let Some(banner) = self.render_banner(human).await {
+                        writeln_stdout(&banner);
+                    }
                     writeln_stdout(&format_command_help(
                         &self.name,
                         root_cmd,
@@ -708,6 +1020,8 @@ impl Cli {
                         &self.aliases,
                         config_flag,
                         self.version.as_deref(),
+                        &self.globals_fields,
+                        &self.global_aliases,
                         true,
                     ));
                     return Ok(());
@@ -715,6 +1029,9 @@ impl Cli {
                 // Otherwise fall through to execute the root command
             } else if !builtin.help {
                 // No root command, no args — show root help
+                if let Some(banner) = self.render_banner(human).await {
+                    writeln_stdout(&banner);
+                }
                 writeln_stdout(&help::format_root(
                     &self.name,
                     &FormatRootOptions {
@@ -726,6 +1043,8 @@ impl Cli {
                         config_flag: config_flag.map(|s| s.to_string()),
                         commands: collect_help_commands(&self.commands),
                         description: self.description.clone(),
+                        global_aliases: self.global_aliases.clone(),
+                        globals_fields: self.globals_fields.clone(),
                         root: true,
                         version: self.version.clone(),
                     },
@@ -770,6 +1089,9 @@ impl Cli {
                     } else {
                         format!("{} {path}", self.name)
                     };
+                    if is_root && let Some(banner) = self.render_banner(human).await {
+                        writeln_stdout(&banner);
+                    }
                     writeln_stdout(&help::format_command(
                         &command_name,
                         &FormatCommandOptions {
@@ -786,6 +1108,8 @@ impl Cli {
                             description: command.description.clone(),
                             env_fields: command.env_fields.clone(),
                             examples: command.examples.clone(),
+                            global_aliases: self.global_aliases.clone(),
+                            globals_fields: self.globals_fields.clone(),
                             hint: command.hint.clone(),
                             hide_global_options: false,
                             options_fields: command.options_fields.clone(),
@@ -812,6 +1136,9 @@ impl Cli {
                         && let Some(root_cmd) = &self.root_command
                         && !commands.is_empty()
                     {
+                        if let Some(banner) = self.render_banner(human).await {
+                            writeln_stdout(&banner);
+                        }
                         writeln_stdout(&format_command_help(
                             &self.name,
                             root_cmd,
@@ -819,9 +1146,14 @@ impl Cli {
                             &self.aliases,
                             config_flag,
                             self.version.as_deref(),
+                            &self.globals_fields,
+                            &self.global_aliases,
                             true,
                         ));
                     } else {
+                        if is_root && let Some(banner) = self.render_banner(human).await {
+                            writeln_stdout(&banner);
+                        }
                         writeln_stdout(&help::format_root(
                             &help_name,
                             &FormatRootOptions {
@@ -833,6 +1165,8 @@ impl Cli {
                                 config_flag: config_flag.map(|s| s.to_string()),
                                 commands: collect_help_commands(commands),
                                 description: description.clone(),
+                                global_aliases: self.global_aliases.clone(),
+                                globals_fields: self.globals_fields.clone(),
                                 root: is_root,
                                 version: if is_root { self.version.clone() } else { None },
                             },
@@ -858,6 +1192,8 @@ impl Cli {
                             config_flag: config_flag.map(|s| s.to_string()),
                             commands: collect_help_commands(&self.commands),
                             description: self.description.clone(),
+                            global_aliases: self.global_aliases.clone(),
+                            globals_fields: self.globals_fields.clone(),
                             root: path.is_empty(),
                             version: None,
                         },
@@ -871,7 +1207,7 @@ impl Cli {
         if builtin.schema {
             match &resolved {
                 ResolvedCommand::Leaf { command, .. } => {
-                    let schema = build_command_schema(command);
+                    let schema = build_command_schema(command, &self.globals_fields);
                     let fmt = if builtin.format_explicit {
                         builtin.format
                     } else {
@@ -906,7 +1242,13 @@ impl Cli {
             let render_output =
                 !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
 
-            let mut fetch_input = fetch::parse_argv(rest);
+            let mut fetch_input = match fetch::parse_argv_checked(rest) {
+                Ok(input) => input,
+                Err(error) => {
+                    writeln_stdout(&format_human_error("VALIDATION_ERROR", &error.to_string()));
+                    std::process::exit(1);
+                }
+            };
 
             // Prepend base_path to the request path if configured.
             if let Some(bp) = base_path {
@@ -964,6 +1306,8 @@ impl Cli {
                         config_flag: config_flag.map(|s| s.to_string()),
                         commands: collect_help_commands(commands),
                         description: description.clone(),
+                        global_aliases: self.global_aliases.clone(),
+                        globals_fields: self.globals_fields.clone(),
                         root: path == self.name,
                         version: None,
                     },
@@ -1085,9 +1429,7 @@ impl Cli {
 
         // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
         if human {
-            for warning in
-                deprecation_warnings(&rest, &command.options_fields, &command.aliases)
-            {
+            for warning in deprecation_warnings(&rest, &command.options_fields, &command.aliases) {
                 eprintln!("{warning}");
             }
         }
@@ -1099,15 +1441,18 @@ impl Cli {
                 agent: !human,
                 argv: rest,
                 defaults,
+                display_name,
                 env_fields: self.env_fields.clone(),
                 env_source,
                 format,
                 format_explicit: builtin.format_explicit,
+                globals,
                 input_options: BTreeMap::new(),
                 middlewares: all_middleware,
                 name: self.name.clone(),
                 parse_mode: ParseMode::Argv,
                 path: command_path.clone(),
+                request: None,
                 vars_fields: self.vars_fields.clone(),
                 version: self.version.clone(),
             },
@@ -1131,8 +1476,10 @@ impl Cli {
                     data
                 };
 
-                let formatted_cta =
-                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
+                let formatted_cta = merge_cta(
+                    format_cta_block(&self.name, cta.as_ref()),
+                    skills_cta.as_ref(),
+                );
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
@@ -1202,8 +1549,10 @@ impl Cli {
                 cta,
                 exit_code,
             } => {
-                let formatted_cta =
-                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
+                let formatted_cta = merge_cta(
+                    format_cta_block(&self.name, cta.as_ref()),
+                    skills_cta.as_ref(),
+                );
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
@@ -1255,6 +1604,24 @@ impl Cli {
                 )
                 .await;
             }
+            InternalResult::RecordStream(stream) => {
+                if let Some(exit_code) = handle_record_stream(
+                    stream,
+                    StreamingOptions {
+                        path: &command_path,
+                        start,
+                        format,
+                        format_explicit: builtin.format_explicit,
+                        human,
+                        render_output,
+                        verbose: builtin.verbose,
+                    },
+                )
+                .await
+                {
+                    std::process::exit(exit_code);
+                }
+            }
         }
 
         Ok(())
@@ -1289,7 +1656,7 @@ impl Cli {
         }
 
         // --- Step 1: Extract built-in flags ---
-        let builtin = match extract_builtin_flags(&argv, config_flag) {
+        let mut builtin = match extract_builtin_flags(&argv, config_flag) {
             Ok(b) => b,
             Err(e) => {
                 let msg = e.to_string();
@@ -1298,6 +1665,29 @@ impl Cli {
                 } else {
                     wln!(&format!(
                         "{{\"ok\":false,\"error\":{{\"code\":\"UNKNOWN\",\"message\":\"{}\"}}}}",
+                        msg.replace('"', "\\\"")
+                    ));
+                }
+                return Ok(Some(1));
+            }
+        };
+
+        let globals = match crate::parser::parse_globals(
+            &builtin.rest,
+            &self.globals_fields,
+            &self.global_aliases,
+        ) {
+            Ok(parsed) => {
+                builtin.rest = parsed.rest;
+                Value::Object(parsed.parsed.into_iter().collect())
+            }
+            Err(error) => {
+                let msg = error.to_string();
+                if human {
+                    wln!(&format_human_error("VALIDATION_ERROR", &msg));
+                } else {
+                    wln!(&format!(
+                        "{{\"ok\":false,\"error\":{{\"code\":\"VALIDATION_ERROR\",\"message\":\"{}\"}}}}",
                         msg.replace('"', "\\\"")
                     ));
                 }
@@ -1315,8 +1705,16 @@ impl Cli {
 
         // --- Step 2b: Handle --llms / --llms-full ---
         if builtin.llms || builtin.llms_full {
-            let commands_info = collect_command_info(&self.commands, &[]);
-            if builtin.llms_full {
+            let commands_info =
+                collect_all_command_info(self.root_command.as_ref(), &self.commands);
+            if builtin.format_explicit && builtin.format != Format::Markdown {
+                let manifest = if builtin.llms_full {
+                    build_llms_manifest(&self.commands, &self.globals_fields, true)
+                } else {
+                    build_llms_manifest(&self.commands, &self.globals_fields, false)
+                };
+                wln!(&format_value(&manifest, builtin.format));
+            } else if builtin.llms_full {
                 let groups = collect_group_descriptions(&self.commands, &[]);
                 let output = skill::generate(&self.name, &commands_info, &groups);
                 wln!(&output);
@@ -1338,7 +1736,7 @@ impl Cli {
                     &self.commands,
                     &self.middleware,
                     &self.env_fields,
-                    &Default::default(),
+                    &self.mcp_options,
                 )
                 .await?;
                 return Ok(None);
@@ -1355,6 +1753,8 @@ impl Cli {
             &self.aliases,
             &self.commands,
             self.root_command.as_ref(),
+            &self.globals_fields,
+            &self.global_aliases,
             &argv,
             std::env::var("COMPLETE").ok().as_deref(),
             std::env::var("_COMPLETE_INDEX").ok().as_deref(),
@@ -1383,6 +1783,8 @@ impl Cli {
                         description: Some(builtin_def.description.to_string()),
                         env_fields: Vec::new(),
                         examples: Vec::new(),
+                        global_aliases: HashMap::new(),
+                        globals_fields: Vec::new(),
                         hint: builtin_def.hint.clone(),
                         hide_global_options: true,
                         options_fields: Vec::new(),
@@ -1437,12 +1839,16 @@ impl Cli {
             // `skills list` / `skills ls`: list skills with installed status.
             if skills_sub == Some("list") {
                 if builtin.help {
-                    wln!(&format_builtin_subcommand_help(&self.name, builtin_def, "list"));
+                    wln!(&format_builtin_subcommand_help(
+                        &self.name,
+                        builtin_def,
+                        "list"
+                    ));
                     return Ok(None);
                 }
                 let skills = crate::sync_skills::list(
                     &self.name,
-                    &collect_command_info(&self.commands, &[]),
+                    &collect_all_command_info(self.root_command.as_ref(), &self.commands),
                     1,
                     self.description.as_deref(),
                 );
@@ -1502,7 +1908,7 @@ impl Cli {
 
             let result = crate::sync_skills::sync(
                 &self.name,
-                &collect_command_info(&self.commands, &[]),
+                &collect_all_command_info(self.root_command.as_ref(), &self.commands),
                 &crate::sync_skills::SyncOptions {
                     cwd: None,
                     depth: Some(depth),
@@ -1585,7 +1991,17 @@ impl Cli {
                 .find(|item| item.name == "mcp")
                 .expect("mcp builtin must exist");
 
-            if builtin.rest.get(index + 1).map(|token| token.as_str()) != Some("add") {
+            let mcp_sub_token = builtin.rest.get(index + 1).map(|token| token.as_str());
+            let mcp_sub = mcp_sub_token.map(|token| {
+                builtin_def
+                    .subcommands
+                    .iter()
+                    .find(|sub| sub.name == token || sub.aliases.contains(&token))
+                    .map(|sub| sub.name)
+                    .unwrap_or(token)
+            });
+
+            if mcp_sub.is_none() {
                 wln!(&format_builtin_help(&self.name, builtin_def));
                 return Ok(None);
             }
@@ -1594,8 +2010,21 @@ impl Cli {
                 wln!(&format_builtin_subcommand_help(
                     &self.name,
                     builtin_def,
-                    "add"
+                    mcp_sub.expect("checked above")
                 ));
+                return Ok(None);
+            }
+
+            if mcp_sub == Some("doctor") {
+                wln!(&format_value(
+                    &mcp_doctor_result(&self.commands, &self.mcp_options.tools),
+                    builtin.format,
+                ));
+                return Ok(None);
+            }
+
+            if mcp_sub != Some("add") {
+                wln!(&format_builtin_help(&self.name, builtin_def));
                 return Ok(None);
             }
 
@@ -1686,6 +2115,9 @@ impl Cli {
         if builtin.rest.is_empty() {
             if let Some(root_cmd) = &self.root_command {
                 if human && has_required_args(&root_cmd.args_fields) {
+                    if let Some(banner) = self.render_banner(human).await {
+                        wln!(&banner);
+                    }
                     wln!(&format_command_help(
                         &self.name,
                         root_cmd,
@@ -1693,11 +2125,16 @@ impl Cli {
                         &self.aliases,
                         config_flag,
                         self.version.as_deref(),
+                        &self.globals_fields,
+                        &self.global_aliases,
                         true,
                     ));
                     return Ok(None);
                 }
             } else if !builtin.help {
+                if let Some(banner) = self.render_banner(human).await {
+                    wln!(&banner);
+                }
                 wln!(&help::format_root(
                     &self.name,
                     &FormatRootOptions {
@@ -1709,6 +2146,8 @@ impl Cli {
                         config_flag: config_flag.map(|s| s.to_string()),
                         commands: collect_help_commands(&self.commands),
                         description: self.description.clone(),
+                        global_aliases: self.global_aliases.clone(),
+                        globals_fields: self.globals_fields.clone(),
                         root: true,
                         version: self.version.clone(),
                     },
@@ -1753,6 +2192,9 @@ impl Cli {
                     } else {
                         format!("{} {path}", self.name)
                     };
+                    if is_root && let Some(banner) = self.render_banner(human).await {
+                        wln!(&banner);
+                    }
                     wln!(&help::format_command(
                         &command_name,
                         &FormatCommandOptions {
@@ -1769,6 +2211,8 @@ impl Cli {
                             description: command.description.clone(),
                             env_fields: command.env_fields.clone(),
                             examples: command.examples.clone(),
+                            global_aliases: self.global_aliases.clone(),
+                            globals_fields: self.globals_fields.clone(),
                             hint: command.hint.clone(),
                             hide_global_options: false,
                             options_fields: command.options_fields.clone(),
@@ -1794,6 +2238,9 @@ impl Cli {
                         && let Some(root_cmd) = &self.root_command
                         && !commands.is_empty()
                     {
+                        if let Some(banner) = self.render_banner(human).await {
+                            wln!(&banner);
+                        }
                         wln!(&format_command_help(
                             &self.name,
                             root_cmd,
@@ -1801,9 +2248,14 @@ impl Cli {
                             &self.aliases,
                             config_flag,
                             self.version.as_deref(),
+                            &self.globals_fields,
+                            &self.global_aliases,
                             true,
                         ));
                     } else {
+                        if is_root && let Some(banner) = self.render_banner(human).await {
+                            wln!(&banner);
+                        }
                         wln!(&help::format_root(
                             &help_name,
                             &FormatRootOptions {
@@ -1815,6 +2267,8 @@ impl Cli {
                                 config_flag: config_flag.map(|s| s.to_string()),
                                 commands: collect_help_commands(commands),
                                 description: description.clone(),
+                                global_aliases: self.global_aliases.clone(),
+                                globals_fields: self.globals_fields.clone(),
                                 root: is_root,
                                 version: if is_root { self.version.clone() } else { None },
                             },
@@ -1840,6 +2294,8 @@ impl Cli {
                             config_flag: config_flag.map(|s| s.to_string()),
                             commands: collect_help_commands(&self.commands),
                             description: self.description.clone(),
+                            global_aliases: self.global_aliases.clone(),
+                            globals_fields: self.globals_fields.clone(),
                             root: path.is_empty(),
                             version: None,
                         },
@@ -1853,7 +2309,7 @@ impl Cli {
         if builtin.schema {
             match &resolved {
                 ResolvedCommand::Leaf { command, .. } => {
-                    let schema = build_command_schema(command);
+                    let schema = build_command_schema(command, &self.globals_fields);
                     let fmt = if builtin.format_explicit {
                         builtin.format
                     } else {
@@ -1888,7 +2344,13 @@ impl Cli {
             let render_output =
                 !(human && !builtin.format_explicit && policy == Some(OutputPolicy::AgentOnly));
 
-            let mut fetch_input = fetch::parse_argv(rest);
+            let mut fetch_input = match fetch::parse_argv_checked(rest) {
+                Ok(input) => input,
+                Err(error) => {
+                    wln!(&format_human_error("VALIDATION_ERROR", &error.to_string()));
+                    return Ok(Some(1));
+                }
+            };
 
             // Prepend base_path to the request path if configured.
             if let Some(bp) = base_path {
@@ -1946,6 +2408,8 @@ impl Cli {
                         config_flag: config_flag.map(|s| s.to_string()),
                         commands: collect_help_commands(commands),
                         description: description.clone(),
+                        global_aliases: self.global_aliases.clone(),
+                        globals_fields: self.globals_fields.clone(),
                         root: path == self.name,
                         version: None,
                     },
@@ -1965,7 +2429,8 @@ impl Cli {
 
                 // Root fallback is blocked when the unknown token looks like a
                 // typo of a known command (TS rootFallbackBlocked guard).
-                if path.is_empty() && suggestion.is_none()
+                if path.is_empty()
+                    && suggestion.is_none()
                     && let Some(root_cmd) = &self.root_command
                 {
                     (
@@ -2114,9 +2579,7 @@ impl Cli {
 
         // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
         if human {
-            for warning in
-                deprecation_warnings(&rest, &command.options_fields, &command.aliases)
-            {
+            for warning in deprecation_warnings(&rest, &command.options_fields, &command.aliases) {
                 wln!(&warning);
             }
         }
@@ -2128,15 +2591,18 @@ impl Cli {
                 agent: !human,
                 argv: rest,
                 defaults,
+                display_name: self.name.clone(),
                 env_fields: self.env_fields.clone(),
                 env_source,
                 format,
                 format_explicit: builtin.format_explicit,
+                globals,
                 input_options: BTreeMap::new(),
                 middlewares: all_middleware,
                 name: self.name.clone(),
                 parse_mode: ParseMode::Argv,
                 path: command_path.clone(),
+                request: None,
                 vars_fields: self.vars_fields.clone(),
                 version: self.version.clone(),
             },
@@ -2160,8 +2626,10 @@ impl Cli {
                     data
                 };
 
-                let formatted_cta =
-                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
+                let formatted_cta = merge_cta(
+                    format_cta_block(&self.name, cta.as_ref()),
+                    skills_cta.as_ref(),
+                );
 
                 // Macro to apply token ops before writing
                 macro_rules! wln_tok {
@@ -2228,8 +2696,10 @@ impl Cli {
                 cta,
                 exit_code,
             } => {
-                let formatted_cta =
-                    merge_cta(format_cta_block(&self.name, cta.as_ref()), skills_cta.as_ref());
+                let formatted_cta = merge_cta(
+                    format_cta_block(&self.name, cta.as_ref()),
+                    skills_cta.as_ref(),
+                );
 
                 if builtin.verbose {
                     let mut envelope = serde_json::Map::new();
@@ -2324,6 +2794,107 @@ impl Cli {
 
                 Ok(None)
             }
+            InternalResult::RecordStream(mut stream) => {
+                use futures::StreamExt;
+
+                let use_jsonl = format == Format::Jsonl;
+                let incremental = use_jsonl || (!builtin.format_explicit && format == Format::Toon);
+                let mut chunks = Vec::new();
+                let mut terminal = None;
+                while let Some(record) = stream.next().await {
+                    match record {
+                        StreamRecord::Chunk(value) => {
+                            if incremental {
+                                if use_jsonl {
+                                    let chunk =
+                                        serde_json::json!({ "type": "chunk", "data": value });
+                                    wln!(&serde_json::to_string(&chunk).unwrap_or_default());
+                                } else if render_output {
+                                    wln!(&format_value(&value, format));
+                                }
+                            } else {
+                                chunks.push(value);
+                            }
+                        }
+                        record => {
+                            terminal = Some(record);
+                            break;
+                        }
+                    }
+                }
+
+                let duration = format!("{}ms", start.elapsed().as_millis());
+                match terminal {
+                    Some(StreamRecord::Error {
+                        code,
+                        message,
+                        retryable,
+                        exit_code,
+                        cta,
+                    }) => {
+                        let formatted_cta = format_cta_block(&self.name, cta.as_ref());
+                        if use_jsonl {
+                            let mut error = serde_json::json!({
+                                "type": "error",
+                                "ok": false,
+                                "error": { "code": code, "message": message },
+                            });
+                            if retryable {
+                                error["error"]["retryable"] = Value::Bool(true);
+                            }
+                            wln!(&serde_json::to_string(&error).unwrap_or_default());
+                        } else if builtin.verbose || !incremental {
+                            let mut error = serde_json::json!({
+                                "ok": false,
+                                "error": { "code": code, "message": message },
+                                "meta": { "command": command_path, "duration": duration },
+                            });
+                            if retryable {
+                                error["error"]["retryable"] = Value::Bool(true);
+                            }
+                            if let Some(cta) = formatted_cta {
+                                error["meta"]["cta"] =
+                                    serde_json::to_value(cta).unwrap_or(Value::Null);
+                            }
+                            wln!(&format_value(&error, format));
+                        } else {
+                            wln!(&format_human_error(&code, &message));
+                        }
+                        Ok(Some(exit_code.unwrap_or(1)))
+                    }
+                    terminal => {
+                        let cta = match terminal {
+                            Some(StreamRecord::Ok { cta }) => {
+                                format_cta_block(&self.name, cta.as_ref())
+                            }
+                            _ => None,
+                        };
+                        if use_jsonl {
+                            let mut done = serde_json::json!({
+                                "type": "done", "ok": true,
+                                "meta": { "command": command_path, "duration": duration },
+                            });
+                            if let Some(cta) = cta {
+                                done["meta"]["cta"] =
+                                    serde_json::to_value(cta).unwrap_or(Value::Null);
+                            }
+                            wln!(&serde_json::to_string(&done).unwrap_or_default());
+                        } else if !incremental {
+                            let data = Value::Array(chunks);
+                            if builtin.verbose {
+                                let envelope = serde_json::json!({
+                                    "ok": true, "data": data,
+                                    "meta": { "command": command_path, "duration": duration },
+                                });
+                                wln!(&format_value(&envelope, format));
+                            } else if !human || render_output {
+                                wln!(&format_value(&data, format));
+                            }
+                        }
+                        Ok(None)
+                    }
+                }
+            }
         }
     }
 }
@@ -2331,6 +2902,34 @@ impl Cli {
 // ---------------------------------------------------------------------------
 // Command resolution
 // ---------------------------------------------------------------------------
+
+#[cfg(feature = "openapi")]
+fn insert_generated_command(
+    commands: &mut BTreeMap<String, CommandEntry>,
+    path: &str,
+    mut command: CommandDef,
+) {
+    let mut segments = path.split_whitespace();
+    let Some(head) = segments.next() else { return };
+    let tail = segments.collect::<Vec<_>>();
+    if tail.is_empty() {
+        command.name = head.to_string();
+        commands.insert(head.to_string(), CommandEntry::Leaf(Arc::new(command)));
+        return;
+    }
+
+    let entry = commands
+        .entry(head.to_string())
+        .or_insert_with(|| CommandEntry::Group {
+            description: command.description.clone(),
+            commands: BTreeMap::new(),
+            middleware: Vec::new(),
+            output_policy: None,
+        });
+    if let CommandEntry::Group { commands, .. } = entry {
+        insert_generated_command(commands, &tail.join(" "), command);
+    }
+}
 
 /// Result of resolving a command from argv tokens.
 enum ResolvedCommand<'a> {
@@ -2434,10 +3033,7 @@ fn lookup_entry<'a>(
 /// Collects candidate command names (including leaf aliases) at the group
 /// reached by following `path` (space-separated). An empty path returns the
 /// top-level names.
-fn candidates_at_path(
-    commands: &BTreeMap<String, CommandEntry>,
-    path: &str,
-) -> Vec<String> {
+fn candidates_at_path(commands: &BTreeMap<String, CommandEntry>, path: &str) -> Vec<String> {
     let mut current = commands;
     if !path.is_empty() {
         for segment in path.split(' ') {
@@ -2647,10 +3243,15 @@ fn extract_builtin_flags(
                 if let Some(f) = Format::from_str_opt(next) {
                     format = f;
                 } else {
-                    format = Format::Toon; // fallback
+                    return Err(format!(
+                        "Invalid format: \"{next}\". Expected one of: toon, json, yaml, md, jsonl, table, csv"
+                    )
+                    .into());
                 }
                 format_explicit = true;
                 i += 1;
+            } else {
+                return Err("Missing value for flag: --format".into());
             }
         } else if let Some(ref cfg) = cfg_flag {
             if token == cfg {
@@ -2693,16 +3294,26 @@ fn extract_builtin_flags(
             if let Some(next) = argv.get(i + 1) {
                 filter_output = Some(next.clone());
                 i += 1;
+            } else {
+                return Err("Missing value for flag: --filter-output".into());
             }
         } else if token == "--token-limit" {
             if let Some(next) = argv.get(i + 1) {
-                token_limit = next.parse().ok();
+                token_limit = Some(next.parse().map_err(|_| {
+                    format!("Invalid value for --token-limit: \"{next}\". Expected a number")
+                })?);
                 i += 1;
+            } else {
+                return Err("Missing value for flag: --token-limit".into());
             }
         } else if token == "--token-offset" {
             if let Some(next) = argv.get(i + 1) {
-                token_offset = next.parse().ok();
+                token_offset = Some(next.parse().map_err(|_| {
+                    format!("Invalid value for --token-offset: \"{next}\". Expected a number")
+                })?);
                 i += 1;
+            } else {
+                return Err("Missing value for flag: --token-offset".into());
             }
         } else if token == "--token-count" {
             token_count = true;
@@ -2899,23 +3510,7 @@ fn collect_command_info(
         path_parts.push(name);
         match entry {
             CommandEntry::Leaf(def) => {
-                result.push(skill::CommandInfo {
-                    name: path_parts.join(" "),
-                    description: def.description.clone(),
-                    args_fields: def.args_fields.clone(),
-                    options_fields: def.options_fields.clone(),
-                    env_fields: def.env_fields.clone(),
-                    hint: def.hint.clone(),
-                    examples: def
-                        .examples
-                        .iter()
-                        .map(|e| skill::Example {
-                            command: e.command.clone(),
-                            description: e.description.clone(),
-                        })
-                        .collect(),
-                    output_schema: def.output_schema.clone(),
-                });
+                result.push(skill_command_info(path_parts.join(" "), def));
             }
             CommandEntry::Group { commands: sub, .. } => {
                 result.extend(collect_command_info(sub, &path_parts));
@@ -2924,6 +3519,55 @@ fn collect_command_info(
         }
     }
     result
+}
+
+fn collect_all_command_info(
+    root: Option<&Arc<CommandDef>>,
+    commands: &BTreeMap<String, CommandEntry>,
+) -> Vec<skill::CommandInfo> {
+    let mut result = root
+        .into_iter()
+        .map(|command| skill_command_info(String::new(), command))
+        .collect::<Vec<_>>();
+    result.extend(collect_command_info(commands, &[]));
+    result
+}
+
+fn skill_command_info(name: String, command: &CommandDef) -> skill::CommandInfo {
+    let mcp = command.handler.mcp_options().cloned().unwrap_or_default();
+    let destructive = mcp.destructive
+        || mcp
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.destructive_hint)
+            == Some(true);
+    let hint = if destructive {
+        const CONFIRM: &str = "Confirm with the user before executing this destructive command.";
+        match &command.hint {
+            Some(hint) if hint.contains(CONFIRM) => Some(hint.clone()),
+            Some(hint) => Some(format!("{hint} {CONFIRM}")),
+            None => Some(CONFIRM.to_string()),
+        }
+    } else {
+        command.hint.clone()
+    };
+    skill::CommandInfo {
+        name,
+        description: command.description.clone(),
+        args_fields: command.args_fields.clone(),
+        options_fields: command.options_fields.clone(),
+        env_fields: command.env_fields.clone(),
+        hint,
+        examples: command
+            .examples
+            .iter()
+            .map(|example| skill::Example {
+                command: example.command.clone(),
+                description: example.description.clone(),
+            })
+            .collect(),
+        output_schema: command.output_schema.clone(),
+    }
 }
 
 /// Collects group descriptions for skill file generation.
@@ -2951,11 +3595,89 @@ fn collect_group_descriptions(
     result
 }
 
+fn build_llms_manifest(
+    commands: &BTreeMap<String, CommandEntry>,
+    globals_fields: &[FieldMeta],
+    full: bool,
+) -> Value {
+    fn collect(
+        commands: &BTreeMap<String, CommandEntry>,
+        prefix: &[String],
+        full: bool,
+        result: &mut Vec<Value>,
+    ) {
+        for (name, entry) in commands {
+            let mut path = prefix.to_vec();
+            path.push(name.clone());
+            match entry {
+                CommandEntry::Leaf(command) => {
+                    let mut value = serde_json::Map::new();
+                    value.insert("name".to_string(), Value::String(path.join(" ")));
+                    if let Some(description) = &command.description {
+                        value.insert(
+                            "description".to_string(),
+                            Value::String(description.clone()),
+                        );
+                    }
+                    if full {
+                        let schema = build_command_schema(command, &[]);
+                        if schema.as_object().is_some_and(|schema| !schema.is_empty()) {
+                            value.insert("schema".to_string(), schema);
+                        }
+                        if !command.examples.is_empty() {
+                            value.insert(
+                                "examples".to_string(),
+                                serde_json::to_value(
+                                    &command
+                                        .examples
+                                        .iter()
+                                        .map(|example| {
+                                            serde_json::json!({
+                                                "command": example.command,
+                                                "description": example.description,
+                                            })
+                                        })
+                                        .collect::<Vec<_>>(),
+                                )
+                                .unwrap_or(Value::Null),
+                            );
+                        }
+                    }
+                    result.push(Value::Object(value));
+                }
+                CommandEntry::Group { commands, .. } => collect(commands, &path, full, result),
+                CommandEntry::FetchGateway { .. } => {}
+            }
+        }
+    }
+
+    let mut command_values = Vec::new();
+    collect(commands, &[], full, &mut command_values);
+    command_values.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    let mut manifest = serde_json::Map::from_iter([
+        ("version".to_string(), Value::String("incur.v1".to_string())),
+        ("commands".to_string(), Value::Array(command_values)),
+    ]);
+    if !globals_fields.is_empty() {
+        manifest.insert(
+            "globals".to_string(),
+            crate::schema::to_json_schema(globals_fields),
+        );
+    }
+    Value::Object(manifest)
+}
+
 /// Builds a `--schema` JSON object for a command from its FieldMeta, with
 /// `args`, `env`, `options`, and `output` sections (each present only when the
 /// command declares them). Ported from `Cli.ts` `--schema` handling.
-fn build_command_schema(command: &CommandDef) -> Value {
+fn build_command_schema(command: &CommandDef, globals_fields: &[FieldMeta]) -> Value {
     let mut result = serde_json::Map::new();
+    if !globals_fields.is_empty() {
+        result.insert(
+            "globals".to_string(),
+            crate::schema::to_json_schema(globals_fields),
+        );
+    }
     if !command.args_fields.is_empty() {
         result.insert(
             "args".to_string(),
@@ -3041,6 +3763,8 @@ fn format_command_help(
     aliases: &[String],
     config_flag: Option<&str>,
     version: Option<&str>,
+    globals_fields: &[FieldMeta],
+    global_aliases: &HashMap<String, char>,
     root: bool,
 ) -> String {
     help::format_command(
@@ -3057,6 +3781,8 @@ fn format_command_help(
             description: command.description.clone(),
             env_fields: command.env_fields.clone(),
             examples: command.examples.clone(),
+            global_aliases: global_aliases.clone(),
+            globals_fields: globals_fields.to_vec(),
             hint: command.hint.clone(),
             hide_global_options: false,
             options_fields: command.options_fields.clone(),
@@ -3154,84 +3880,94 @@ fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
             description: "Register as MCP server",
             args_fields: Vec::new(),
             hint: None,
-            subcommands: vec![BuiltinSubcommand {
-                name: "add",
-                description: "Register as MCP server",
-                options_fields: vec![
-                    FieldMeta {
-                        name: "agent",
-                        cli_name: "agent".to_string(),
-                        description: Some("Target a specific agent (e.g. claude-code, cursor)"),
-                        field_type: crate::schema::FieldType::String,
-                        required: false,
-                        default: None,
-                        alias: None,
-                        deprecated: false,
-                        env_name: None,
-                    },
-                    FieldMeta {
-                        name: "command",
-                        cli_name: "command".to_string(),
-                        description: Some(
-                            "Override the command agents will run (e.g. \"my-cli --mcp\")",
-                        ),
-                        field_type: crate::schema::FieldType::String,
-                        required: false,
-                        default: None,
-                        alias: Some('c'),
-                        deprecated: false,
-                        env_name: None,
-                    },
-                    FieldMeta {
-                        name: "no_global",
-                        cli_name: "no-global".to_string(),
-                        description: Some("Install to project instead of globally"),
-                        field_type: crate::schema::FieldType::Boolean,
-                        required: false,
-                        default: Some(Value::Bool(false)),
-                        alias: None,
-                        deprecated: false,
-                        env_name: None,
-                    },
-                ],
-                option_aliases: HashMap::from([(String::from("command"), 'c')]),
-                aliases: Vec::new(),
-            }],
+            subcommands: vec![
+                BuiltinSubcommand {
+                    name: "add",
+                    description: "Register as MCP server",
+                    options_fields: vec![
+                        FieldMeta {
+                            name: "agent",
+                            cli_name: "agent".to_string(),
+                            description: Some("Target a specific agent (e.g. claude-code, cursor)"),
+                            field_type: crate::schema::FieldType::String,
+                            required: false,
+                            default: None,
+                            alias: None,
+                            deprecated: false,
+                            env_name: None,
+                        },
+                        FieldMeta {
+                            name: "command",
+                            cli_name: "command".to_string(),
+                            description: Some(
+                                "Override the command agents will run (e.g. \"my-cli --mcp\")",
+                            ),
+                            field_type: crate::schema::FieldType::String,
+                            required: false,
+                            default: None,
+                            alias: Some('c'),
+                            deprecated: false,
+                            env_name: None,
+                        },
+                        FieldMeta {
+                            name: "no_global",
+                            cli_name: "no-global".to_string(),
+                            description: Some("Install to project instead of globally"),
+                            field_type: crate::schema::FieldType::Boolean,
+                            required: false,
+                            default: Some(Value::Bool(false)),
+                            alias: None,
+                            deprecated: false,
+                            env_name: None,
+                        },
+                    ],
+                    option_aliases: HashMap::from([(String::from("command"), 'c')]),
+                    aliases: Vec::new(),
+                },
+                BuiltinSubcommand {
+                    name: "doctor",
+                    description: "Validate MCP server startup and tool listing",
+                    options_fields: Vec::new(),
+                    option_aliases: HashMap::new(),
+                    aliases: Vec::new(),
+                },
+            ],
         },
         BuiltinCommand {
             name: "skills",
             description: "Sync skill files to agents",
             args_fields: Vec::new(),
             hint: None,
-            subcommands: vec![BuiltinSubcommand {
-                name: "add",
-                description: "Sync skill files to agents",
-                options_fields: vec![
-                    FieldMeta {
-                        name: "depth",
-                        cli_name: "depth".to_string(),
-                        description: Some("Grouping depth for skill files (default: 1)"),
-                        field_type: crate::schema::FieldType::Number,
-                        required: false,
-                        default: Some(Value::Number(serde_json::Number::from(1))),
-                        alias: None,
-                        deprecated: false,
-                        env_name: None,
-                    },
-                    FieldMeta {
-                        name: "no_global",
-                        cli_name: "no-global".to_string(),
-                        description: Some("Install to project instead of globally"),
-                        field_type: crate::schema::FieldType::Boolean,
-                        required: false,
-                        default: Some(Value::Bool(false)),
-                        alias: None,
-                        deprecated: false,
-                        env_name: None,
-                    },
-                ],
-                option_aliases: HashMap::new(),
-                aliases: Vec::new(),
+            subcommands: vec![
+                BuiltinSubcommand {
+                    name: "add",
+                    description: "Sync skill files to agents",
+                    options_fields: vec![
+                        FieldMeta {
+                            name: "depth",
+                            cli_name: "depth".to_string(),
+                            description: Some("Grouping depth for skill files (default: 1)"),
+                            field_type: crate::schema::FieldType::Number,
+                            required: false,
+                            default: Some(Value::Number(serde_json::Number::from(1))),
+                            alias: None,
+                            deprecated: false,
+                            env_name: None,
+                        },
+                        FieldMeta {
+                            name: "no_global",
+                            cli_name: "no-global".to_string(),
+                            description: Some("Install to project instead of globally"),
+                            field_type: crate::schema::FieldType::Boolean,
+                            required: false,
+                            default: Some(Value::Bool(false)),
+                            alias: None,
+                            deprecated: false,
+                            env_name: None,
+                        },
+                    ],
+                    option_aliases: HashMap::new(),
+                    aliases: Vec::new(),
                 },
                 BuiltinSubcommand {
                     name: "list",
@@ -3239,7 +3975,8 @@ fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
                     options_fields: Vec::new(),
                     option_aliases: HashMap::new(),
                     aliases: vec!["ls"],
-                }],
+                },
+            ],
         },
     ]
 }
@@ -3259,6 +3996,8 @@ fn format_builtin_help(cli_name: &str, builtin: &BuiltinCommand) -> String {
                 })
                 .collect(),
             description: Some(builtin.description.to_string()),
+            global_aliases: HashMap::new(),
+            globals_fields: Vec::new(),
             root: false,
             version: None,
         },
@@ -3282,6 +4021,8 @@ fn format_builtin_subcommand_help(
             description: sub.map(|item| item.description.to_string()),
             env_fields: Vec::new(),
             examples: Vec::new(),
+            global_aliases: HashMap::new(),
+            globals_fields: Vec::new(),
             hint: None,
             hide_global_options: true,
             options_fields: sub
@@ -3310,6 +4051,8 @@ fn builtin_command_index(tokens: &[String], cli_name: &str, builtin_name: &str) 
 
 fn convert_to_completion_commands(
     commands: &BTreeMap<String, CommandEntry>,
+    globals_fields: &[FieldMeta],
+    global_aliases: &HashMap<String, char>,
 ) -> BTreeMap<String, crate::completions::CommandEntry> {
     let mut result = BTreeMap::new();
 
@@ -3322,10 +4065,16 @@ fn convert_to_completion_commands(
                         is_group: false,
                         description: def.description.clone(),
                         commands: BTreeMap::new(),
-                        options_fields: def.options_fields.clone(),
+                        options_fields: def
+                            .options_fields
+                            .iter()
+                            .chain(globals_fields)
+                            .cloned()
+                            .collect(),
                         aliases: def
                             .aliases
                             .iter()
+                            .chain(global_aliases)
                             .map(|(key, value)| (key.clone(), *value))
                             .collect(),
                     },
@@ -3341,9 +4090,16 @@ fn convert_to_completion_commands(
                     crate::completions::CommandEntry {
                         is_group: true,
                         description: description.clone(),
-                        commands: convert_to_completion_commands(sub_commands),
-                        options_fields: Vec::new(),
-                        aliases: BTreeMap::new(),
+                        commands: convert_to_completion_commands(
+                            sub_commands,
+                            globals_fields,
+                            global_aliases,
+                        ),
+                        options_fields: globals_fields.to_vec(),
+                        aliases: global_aliases
+                            .iter()
+                            .map(|(key, value)| (key.clone(), *value))
+                            .collect(),
                     },
                 );
             }
@@ -3356,12 +4112,23 @@ fn convert_to_completion_commands(
 
 fn completion_root_command(
     root_command: Option<&Arc<CommandDef>>,
+    globals_fields: &[FieldMeta],
+    global_aliases: &HashMap<String, char>,
 ) -> Option<crate::completions::CommandDef> {
-    root_command.map(|command| crate::completions::CommandDef {
-        options_fields: command.options_fields.clone(),
-        aliases: command
-            .aliases
-            .iter()
+    if root_command.is_none() && globals_fields.is_empty() {
+        return None;
+    }
+    Some(crate::completions::CommandDef {
+        options_fields: root_command
+            .into_iter()
+            .flat_map(|command| command.options_fields.iter())
+            .chain(globals_fields)
+            .cloned()
+            .collect(),
+        aliases: root_command
+            .into_iter()
+            .flat_map(|command| command.aliases.iter())
+            .chain(global_aliases)
             .map(|(key, value)| (key.clone(), *value))
             .collect(),
     })
@@ -3372,6 +4139,8 @@ fn completion_output(
     aliases: &[String],
     commands: &BTreeMap<String, CommandEntry>,
     root_command: Option<&Arc<CommandDef>>,
+    globals_fields: &[FieldMeta],
+    global_aliases: &HashMap<String, char>,
     argv: &[String],
     complete_shell: Option<&str>,
     complete_index: Option<&str>,
@@ -3398,8 +4167,8 @@ fn completion_output(
     let index = complete_index
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or_else(|| words.len().saturating_sub(1));
-    let commands = convert_to_completion_commands(commands);
-    let root = completion_root_command(root_command);
+    let commands = convert_to_completion_commands(commands, globals_fields, global_aliases);
+    let root = completion_root_command(root_command, globals_fields, global_aliases);
     let mut candidates = crate::completions::complete(&commands, root.as_ref(), &words, index);
     let builtins = builtin_commands(cli_name);
     let current = words.get(index).map(|word| word.as_str()).unwrap_or("");
@@ -3541,52 +4310,152 @@ async fn handle_streaming(
     }
 }
 
-// ---------------------------------------------------------------------------
-// MCP command conversion
-// ---------------------------------------------------------------------------
+async fn handle_record_stream(
+    mut stream: std::pin::Pin<Box<dyn futures::Stream<Item = StreamRecord> + Send>>,
+    opts: StreamingOptions<'_>,
+) -> Option<i32> {
+    use futures::StreamExt;
 
-/// Converts CLI command entries to MCP command entries.
-#[cfg(feature = "mcp")]
-fn convert_to_mcp_commands(
-    commands: &BTreeMap<String, CommandEntry>,
-) -> BTreeMap<String, crate::mcp::CommandEntry> {
-    let mut result = BTreeMap::new();
-    for (name, entry) in commands {
-        match entry {
-            CommandEntry::Leaf(def) => {
-                result.insert(
-                    name.clone(),
-                    crate::mcp::CommandEntry {
-                        is_group: false,
-                        description: def.description.clone(),
-                        commands: BTreeMap::new(),
-                        args_fields: def.args_fields.clone(),
-                        options_fields: def.options_fields.clone(),
-                        output_schema: def.output_schema.clone(),
-                    },
-                );
+    let mut chunks = Vec::new();
+    let mut terminal = None;
+    let use_jsonl = opts.format == Format::Jsonl;
+    let incremental = use_jsonl || (!opts.format_explicit && opts.format == Format::Toon);
+    while let Some(record) = stream.next().await {
+        match record {
+            StreamRecord::Chunk(value) => {
+                if incremental {
+                    if use_jsonl {
+                        let chunk = serde_json::json!({ "type": "chunk", "data": value });
+                        writeln_stdout(&serde_json::to_string(&chunk).unwrap_or_default());
+                    } else if opts.render_output {
+                        writeln_stdout(&format_value(&value, opts.format));
+                    }
+                } else {
+                    chunks.push(value);
+                }
             }
-            CommandEntry::Group {
-                description,
-                commands: sub,
-                ..
-            } => {
-                result.insert(
-                    name.clone(),
-                    crate::mcp::CommandEntry {
-                        is_group: true,
-                        description: description.clone(),
-                        commands: convert_to_mcp_commands(sub),
-                        args_fields: Vec::new(),
-                        options_fields: Vec::new(),
-                        output_schema: None,
-                    },
-                );
+            record => {
+                terminal = Some(record);
+                break;
             }
-            CommandEntry::FetchGateway { .. } => {}
         }
     }
-    result
+
+    let duration = format!("{}ms", opts.start.elapsed().as_millis());
+    match terminal {
+        Some(StreamRecord::Error {
+            code,
+            message,
+            retryable,
+            exit_code,
+            ..
+        }) => {
+            if use_jsonl {
+                let mut error = serde_json::json!({
+                    "type": "error", "ok": false,
+                    "error": { "code": code, "message": message },
+                });
+                if retryable {
+                    error["error"]["retryable"] = Value::Bool(true);
+                }
+                writeln_stdout(&serde_json::to_string(&error).unwrap_or_default());
+            } else if opts.verbose || !incremental {
+                let mut error = serde_json::json!({
+                    "ok": false,
+                    "error": { "code": code, "message": message },
+                    "meta": { "command": opts.path, "duration": duration },
+                });
+                if retryable {
+                    error["error"]["retryable"] = Value::Bool(true);
+                }
+                writeln_stdout(&format_value(&error, opts.format));
+            } else {
+                writeln_stdout(&format_human_error(&code, &message));
+            }
+            Some(exit_code.unwrap_or(1))
+        }
+        _ => {
+            if use_jsonl {
+                let done = serde_json::json!({
+                    "type": "done", "ok": true,
+                    "meta": { "command": opts.path, "duration": duration },
+                });
+                writeln_stdout(&serde_json::to_string(&done).unwrap_or_default());
+            } else if !incremental {
+                let data = Value::Array(chunks);
+                if opts.verbose {
+                    let envelope = serde_json::json!({
+                        "ok": true, "data": data,
+                        "meta": { "command": opts.path, "duration": duration },
+                    });
+                    writeln_stdout(&format_value(&envelope, opts.format));
+                } else if !opts.human || opts.render_output {
+                    writeln_stdout(&format_value(&data, opts.format));
+                }
+            }
+            None
+        }
+    }
+}
+
+fn mcp_doctor_result(
+    commands: &BTreeMap<String, CommandEntry>,
+    filter: &crate::mcp::McpToolFilter,
+) -> Value {
+    fn collect(
+        commands: &BTreeMap<String, CommandEntry>,
+        prefix: &[String],
+        filter: &crate::mcp::McpToolFilter,
+        tools: &mut Vec<Value>,
+    ) {
+        for (name, entry) in commands {
+            let mut path = prefix.to_vec();
+            path.push(name.clone());
+            match entry {
+                CommandEntry::Leaf(command)
+                    if command
+                        .handler
+                        .mcp_options()
+                        .is_none_or(|options| options.enabled) =>
+                {
+                    let mcp = command.handler.mcp_options().cloned().unwrap_or_default();
+                    let name = mcp.name.clone().unwrap_or_else(|| path.join("_"));
+                    if !crate::mcp::matches_tool_filter(&name, filter) {
+                        continue;
+                    }
+                    let mut value =
+                        serde_json::Map::from_iter([("name".to_string(), Value::String(name))]);
+                    if let Some(description) =
+                        mcp.description.as_ref().or(command.description.as_ref())
+                    {
+                        value.insert(
+                            "description".to_string(),
+                            Value::String(description.clone()),
+                        );
+                    }
+                    tools.push(Value::Object(value));
+                }
+                CommandEntry::Group { commands, .. } => collect(commands, &path, filter, tools),
+                CommandEntry::Leaf(_) | CommandEntry::FetchGateway { .. } => {}
+            }
+        }
+    }
+
+    let mut tools = Vec::new();
+    collect(commands, &[], filter, &mut tools);
+    tools.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    let warnings = if tools.is_empty() {
+        vec![Value::String("No MCP tools exposed.".to_string())]
+    } else {
+        Vec::new()
+    };
+    serde_json::json!({
+        "ok": true,
+        "toolCount": tools.len(),
+        "tools": tools,
+        "warnings": warnings,
+        "errors": [],
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3657,7 +4526,9 @@ fn truncate_tokens(output: &str, builtin: &BuiltinFlags) -> Option<(String, Opti
     }
     let start = offset.min(total);
     let actual_end = end.min(total);
-    let sliced = bpe.decode(tokens[start..actual_end].to_vec()).unwrap_or_default();
+    let sliced = bpe
+        .decode(tokens[start..actual_end].to_vec())
+        .unwrap_or_default();
     let next_offset = if actual_end < total {
         Some(actual_end)
     } else {
@@ -3877,6 +4748,195 @@ mod tests {
         }
     }
 
+    struct CaptureGlobalsHandler(Arc<tokio::sync::Mutex<Option<Value>>>);
+
+    #[async_trait::async_trait]
+    impl crate::command::CommandHandler for CaptureGlobalsHandler {
+        async fn run(&self, ctx: crate::command::CommandContext) -> CommandResult {
+            *self.0.lock().await = Some(ctx.globals);
+            CommandResult::Ok {
+                data: Value::Null,
+                cta: None,
+            }
+        }
+    }
+
+    fn global_fields() -> Vec<FieldMeta> {
+        vec![
+            FieldMeta {
+                name: "profile",
+                cli_name: "profile".to_string(),
+                description: Some("Profile to use"),
+                field_type: crate::schema::FieldType::String,
+                required: false,
+                default: Some(Value::String("default".to_string())),
+                alias: Some('p'),
+                deprecated: false,
+                env_name: None,
+            },
+            FieldMeta {
+                name: "trace",
+                cli_name: "trace".to_string(),
+                description: Some("Enable tracing"),
+                field_type: crate::schema::FieldType::Boolean,
+                required: false,
+                default: Some(Value::Bool(false)),
+                alias: None,
+                deprecated: false,
+                env_name: None,
+            },
+        ]
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_passes_globals_to_handler_at_any_position() {
+        let captured = Arc::new(tokio::sync::Mutex::new(None));
+        let mut command = make_leaf_command("ping", Some("Ping the server"));
+        command.handler = Box::new(CaptureGlobalsHandler(Arc::clone(&captured)));
+        let cli = Cli::create("test")
+            .globals_fields(global_fields())
+            .command("ping", command);
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "--profile".to_string(),
+                    "work".to_string(),
+                    "ping".to_string(),
+                    "--trace".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        assert_eq!(
+            captured.lock().await.clone(),
+            Some(serde_json::json!({ "profile": "work", "trace": true }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_passes_globals_to_middleware_with_alias_and_defaults() {
+        let captured = Arc::new(tokio::sync::Mutex::new(None));
+        let captured_middleware = Arc::clone(&captured);
+        let middleware: MiddlewareFn = Arc::new(move |ctx, next| {
+            let captured = Arc::clone(&captured_middleware);
+            Box::pin(async move {
+                *captured.lock().await = Some(ctx.globals);
+                next().await;
+            })
+        });
+        let cli = make_test_cli()
+            .globals_fields(global_fields())
+            .use_middleware(middleware);
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec!["ping".to_string(), "-p".to_string(), "work".to_string()],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        assert_eq!(
+            captured.lock().await.clone(),
+            Some(serde_json::json!({ "profile": "work", "trace": false }))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_help_lists_custom_global_options_without_validating_them() {
+        let cli = make_test_cli().globals_fields(global_fields());
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec!["ping".to_string(), "--help".to_string()],
+                &mut output,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Custom Global Options:"));
+        assert!(output.contains("-p, --profile <string>"));
+        assert!(output.contains("--trace"));
+    }
+
+    #[test]
+    #[should_panic(expected = "conflicts with a built-in flag")]
+    fn test_globals_reject_builtin_flag_conflicts() {
+        let mut fields = global_fields();
+        fields[0].name = "format";
+        fields[0].cli_name = "format".to_string();
+        let _ = Cli::create("test").globals_fields(fields);
+    }
+
+    #[test]
+    #[should_panic(expected = "conflicts with a global option")]
+    fn test_command_options_reject_global_conflicts() {
+        let mut command = make_leaf_command("ping", None);
+        command.options_fields = vec![global_fields().remove(0)];
+        let _ = Cli::create("test")
+            .globals_fields(global_fields())
+            .command("ping", command);
+    }
+
+    #[tokio::test]
+    async fn test_schema_includes_globals() {
+        let cli = make_test_cli().globals_fields(global_fields());
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "ping".to_string(),
+                    "--schema".to_string(),
+                    "--json".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(output["globals"]["properties"]["profile"]["type"], "string");
+    }
+
+    #[tokio::test]
+    async fn test_root_help_renders_banner_for_matching_mode() {
+        let cli = make_test_cli().banner_text(BannerMode::Human, "Test Banner");
+        let mut human_output = Vec::new();
+        let mut agent_output = Vec::new();
+
+        cli.serve_to(vec![], &mut human_output, true).await.unwrap();
+        cli.serve_to(vec![], &mut agent_output, false)
+            .await
+            .unwrap();
+
+        assert!(
+            String::from_utf8(human_output)
+                .unwrap()
+                .starts_with("Test Banner\n")
+        );
+        assert!(
+            !String::from_utf8(agent_output)
+                .unwrap()
+                .contains("Test Banner")
+        );
+    }
+
     fn make_leaf_command(name: &str, description: Option<&str>) -> CommandDef {
         CommandDef {
             name: name.to_string(),
@@ -3928,6 +4988,8 @@ mod tests {
             &[],
             &make_test_cli().commands,
             None,
+            &[],
+            &HashMap::new(),
             &["--".to_string(), "test".to_string(), "".to_string()],
             Some("bash"),
             Some("1"),
@@ -3946,6 +5008,8 @@ mod tests {
             &[],
             &make_test_cli().commands,
             None,
+            &[],
+            &HashMap::new(),
             &[
                 "--".to_string(),
                 "test".to_string(),
@@ -4054,6 +5118,7 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("test mcp"));
         assert!(output.contains("add"));
+        assert!(output.contains("doctor"));
     }
 
     #[tokio::test]
@@ -4076,6 +5141,62 @@ mod tests {
         assert!(output.contains("--command"));
         assert!(output.contains("--agent"));
         assert!(output.contains("--no-global"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_mcp_doctor_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "mcp".to_string(),
+                    "doctor".to_string(),
+                    "--help".to_string(),
+                ],
+                &mut output,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test mcp doctor"));
+        assert!(output.contains("Validate MCP server startup and tool listing"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_mcp_doctor_lists_tools_without_calling_them() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "mcp".to_string(),
+                    "doctor".to_string(),
+                    "--json".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(
+            output,
+            serde_json::json!({
+                "ok": true,
+                "toolCount": 1,
+                "tools": [{ "name": "ping", "description": "Ping the server" }],
+                "warnings": [],
+                "errors": [],
+            })
+        );
     }
 
     #[tokio::test]

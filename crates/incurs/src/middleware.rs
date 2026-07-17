@@ -44,14 +44,20 @@ pub struct MiddlewareContext {
     pub agent: bool,
     /// The resolved command path (e.g. `"users list"`).
     pub command: String,
+    /// The actual CLI display name used for user-facing messages.
+    pub display_name: String,
     /// Parsed environment variables from the CLI-level env schema.
     pub env: Value,
+    /// Parsed CLI-level global options.
+    pub globals: Value,
     /// The resolved output format.
     pub format: Format,
     /// Whether the user explicitly passed `--format` or `--json`.
     pub format_explicit: bool,
     /// The CLI name.
     pub name: String,
+    /// Transport request metadata for HTTP and MCP invocations.
+    pub request: Option<crate::command::RequestContext>,
     /// Shared variables set by upstream middleware. Downstream middleware and
     /// the command handler read from this map. Use the `RwLock` to set values.
     pub vars: Arc<RwLock<serde_json::Map<String, Value>>>,
@@ -64,10 +70,13 @@ impl Clone for MiddlewareContext {
         MiddlewareContext {
             agent: self.agent,
             command: self.command.clone(),
+            display_name: self.display_name.clone(),
             env: self.env.clone(),
+            globals: self.globals.clone(),
             format: self.format,
             format_explicit: self.format_explicit,
             name: self.name.clone(),
+            request: self.request.clone(),
             vars: Arc::clone(&self.vars),
             version: self.version.clone(),
         }
@@ -118,10 +127,13 @@ mod tests {
         MiddlewareContext {
             agent: false,
             command: "test".to_string(),
+            display_name: "test-cli".to_string(),
             env: Value::Null,
+            globals: Value::Null,
             format: Format::Toon,
             format_explicit: false,
             name: "test-cli".to_string(),
+            request: None,
             vars: Arc::new(RwLock::new(serde_json::Map::new())),
             version: None,
         }

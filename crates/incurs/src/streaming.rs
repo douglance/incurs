@@ -17,6 +17,9 @@ use tokio::sync::oneshot;
 /// A boxed, pinned, `Send` stream of JSON values.
 pub type ValueStream = Pin<Box<dyn Stream<Item = Value> + Send>>;
 
+/// A boxed, pinned stream of terminal-aware output records.
+pub type RecordStream = Pin<Box<dyn Stream<Item = crate::output::StreamRecord> + Send>>;
+
 /// Wraps a stream so that a signal is sent when it completes (or is dropped).
 ///
 /// This is used for the middleware + streaming interaction: the middleware
@@ -36,9 +39,25 @@ pub fn wrap_stream_with_signal(stream: ValueStream, signal: oneshot::Sender<()>)
     })
 }
 
+/// Wraps a terminal-aware stream so completion or cancellation releases middleware.
+pub fn wrap_record_stream_with_signal(
+    stream: RecordStream,
+    signal: oneshot::Sender<()>,
+) -> RecordStream {
+    Box::pin(RecordSignalingStream {
+        inner: stream,
+        signal: Some(signal),
+    })
+}
+
 /// A stream wrapper that sends a signal when it completes or is dropped.
 struct SignalingStream {
     inner: ValueStream,
+    signal: Option<oneshot::Sender<()>>,
+}
+
+struct RecordSignalingStream {
+    inner: RecordStream,
     signal: Option<oneshot::Sender<()>>,
 }
 
@@ -69,6 +88,31 @@ impl Drop for SignalingStream {
     fn drop(&mut self) {
         // If the stream is dropped before completion, still fire the signal
         // so the middleware chain can finish.
+        if let Some(signal) = self.signal.take() {
+            let _ = signal.send(());
+        }
+    }
+}
+
+impl Stream for RecordSignalingStream {
+    type Item = crate::output::StreamRecord;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let inner = unsafe { self.as_mut().map_unchecked_mut(|stream| &mut stream.inner) };
+        match inner.poll_next(cx) {
+            Poll::Ready(None) => {
+                if let Some(signal) = self.get_mut().signal.take() {
+                    let _ = signal.send(());
+                }
+                Poll::Ready(None)
+            }
+            other => other,
+        }
+    }
+}
+
+impl Drop for RecordSignalingStream {
+    fn drop(&mut self) {
         if let Some(signal) = self.signal.take() {
             let _ = signal.send(());
         }

@@ -31,7 +31,7 @@ fi
 # Build Rust example first
 # ---------------------------------------------------------------------------
 echo -e "${BOLD}Building Rust todoapp example...${RESET}"
-cargo build --example todoapp -p incur --manifest-path "$ROOT/Cargo.toml" 2>&1
+cargo build --example todoapp -p incurs --manifest-path "$ROOT/Cargo.toml" 2>&1
 if [ ! -f "$RUST_BIN" ]; then
   echo -e "${RED}ERROR: Rust binary not found at $RUST_BIN${RESET}"
   exit 1

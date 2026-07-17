@@ -477,7 +477,10 @@ mod tests {
         // No matching skill dir → false.
         let empty = std::env::temp_dir().join(format!("f10-empty-{}", std::process::id()));
         fs::create_dir_all(&empty).unwrap();
-        assert!(!has_installed_skills(&unique, Some(&empty.to_string_lossy())));
+        assert!(!has_installed_skills(
+            &unique,
+            Some(&empty.to_string_lossy())
+        ));
 
         // Cleanup
         let _ = fs::remove_file(meta_path(&unique));

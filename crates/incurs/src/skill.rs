@@ -107,12 +107,14 @@ pub fn generate(name: &str, commands: &[CommandInfo], groups: &BTreeMap<String, 
         let segment = cmd.name.split(' ').next().unwrap_or("");
         if last_group.as_deref() != Some(segment) {
             last_group = Some(segment.to_string());
-            let heading = if let Some(desc) = groups.get(segment) {
-                format!("## {} {}\n\n{}", name, segment, desc)
-            } else {
-                format!("## {} {}", name, segment)
-            };
-            sections.push(heading);
+            if !segment.is_empty() {
+                let heading = if let Some(desc) = groups.get(segment) {
+                    format!("## {} {}\n\n{}", name, segment, desc)
+                } else {
+                    format!("## {} {}", name, segment)
+                };
+                sections.push(heading);
+            }
         }
         sections.push(render_command_body(name, cmd, 3));
     }
@@ -139,6 +141,10 @@ pub fn split(
 
     let mut buckets: BTreeMap<String, Vec<&CommandInfo>> = BTreeMap::new();
     for cmd in commands {
+        if cmd.name.is_empty() {
+            buckets.entry(slugify(name)).or_default().push(cmd);
+            continue;
+        }
         let segments: Vec<&str> = cmd.name.split(' ').collect();
         let key = segments[..depth.min(segments.len())].join("-");
         buckets.entry(key).or_default().push(cmd);
@@ -153,10 +159,20 @@ pub fn split(
                 .take(depth)
                 .collect::<Vec<_>>()
                 .join(" ");
-            let title = format!("{} {}", name, prefix);
+            let title = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{} {}", name, prefix)
+            };
             SkillFile {
                 dir,
-                content: render_group(name, &title, &cmds_to_owned(&cmds), groups, Some(&prefix)),
+                content: render_group(
+                    name,
+                    &title,
+                    &cmds_to_owned(&cmds),
+                    groups,
+                    (!prefix.is_empty()).then_some(prefix.as_str()),
+                ),
             }
         })
         .collect()
@@ -207,7 +223,11 @@ pub fn hash(commands: &[CommandInfo]) -> String {
 
 /// Builds a command signature with arg placeholders.
 fn build_signature(cli: &str, cmd: &CommandInfo) -> String {
-    let base = format!("{} {}", cli, cmd.name);
+    let base = if cmd.name.is_empty() {
+        cli.to_string()
+    } else {
+        format!("{} {}", cli, cmd.name)
+    };
     if cmd.args_fields.is_empty() {
         return base;
     }
@@ -279,7 +299,11 @@ fn render_group(
 
 /// Renders a command's heading and sections without frontmatter.
 fn render_command_body(cli: &str, cmd: &CommandInfo, level: usize) -> String {
-    let full_name = format!("{} {}", cli, cmd.name);
+    let full_name = if cmd.name.is_empty() {
+        cli.to_string()
+    } else {
+        format!("{} {}", cli, cmd.name)
+    };
     let mut sections: Vec<String> = Vec::new();
     let h = "#".repeat(level);
 

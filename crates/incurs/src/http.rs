@@ -31,7 +31,7 @@ use serde_json::Value;
 use crate::cli::{Cli, CommandEntry};
 use crate::command::{self, CommandDef, ExecuteOptions, InternalResult, ParseMode};
 use crate::middleware::MiddlewareFn;
-use crate::output::Format;
+use crate::output::{Format, StreamRecord};
 use crate::schema::FieldMeta;
 
 // ---------------------------------------------------------------------------
@@ -40,8 +40,7 @@ use crate::schema::FieldMeta;
 
 /// Starts an HTTP server that exposes all registered commands as routes.
 pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
-    let state = build_app_state(cli);
-    let app = build_router(state);
+    let app = build_cli_router(cli)?;
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -49,10 +48,25 @@ pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::
     Ok(())
 }
 
+/// Builds an Axum router with command routes and stateless MCP-over-HTTP.
+pub fn build_cli_router(cli: &Cli) -> Result<Router, crate::errors::Error> {
+    let router = build_router(build_app_state(cli));
+    #[cfg(feature = "mcp")]
+    {
+        return Ok(router.nest_service("/mcp", crate::mcp::http_service(cli)?));
+    }
+    #[cfg(not(feature = "mcp"))]
+    Ok(router)
+}
+
 /// Builds an Axum router from the CLI. Useful for testing without binding
 /// to a socket.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
+        .route("/openapi.json", get(openapi_json))
+        .route("/.well-known/openapi.json", get(openapi_json))
+        .route("/openapi.yml", get(openapi_yaml))
+        .route("/openapi.yaml", get(openapi_yaml))
         .route("/{command}", get(handle_command).post(handle_command))
         .route(
             "/{group}/{command}",
@@ -72,6 +86,8 @@ pub struct AppState {
     pub name: String,
     /// The CLI version.
     pub version: Option<String>,
+    /// OpenAPI 3.2 document generated from the command tree.
+    pub openapi: Arc<Value>,
     /// Flattened command lookup.
     pub commands: Arc<BTreeMap<String, Arc<CommandDef>>>,
     /// Root-level middleware.
@@ -80,6 +96,8 @@ pub struct AppState {
     pub group_middleware: Arc<BTreeMap<String, Vec<MiddlewareFn>>>,
     /// CLI-level env fields.
     pub env_fields: Arc<Vec<FieldMeta>>,
+    /// CLI-level global option fields.
+    pub globals_fields: Arc<Vec<FieldMeta>>,
     /// Middleware vars fields.
     pub vars_fields: Arc<Vec<FieldMeta>>,
 }
@@ -94,10 +112,15 @@ pub fn build_app_state(cli: &Cli) -> AppState {
     AppState {
         name: cli.name.clone(),
         version: cli.version.clone(),
+        openapi: Arc::new(crate::openapi::from_cli(
+            cli,
+            &crate::openapi::DocumentOptions::default(),
+        )),
         commands: Arc::new(commands),
         middleware: Arc::new(cli.middleware.clone()),
         group_middleware: Arc::new(group_middleware),
         env_fields: Arc::new(cli.env_fields.clone()),
+        globals_fields: Arc::new(cli.globals_fields.clone()),
         vars_fields: Arc::new(cli.vars_fields.clone()),
     }
 }
@@ -138,23 +161,42 @@ fn flatten_commands(
 // Route handlers
 // ---------------------------------------------------------------------------
 
+async fn openapi_json(State(state): State<AppState>) -> Response {
+    json_response(StatusCode::OK, &state.openapi)
+}
+
+async fn openapi_yaml(State(state): State<AppState>) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/yaml")
+        .body(Body::from(crate::formatter::format(
+            &state.openapi,
+            Format::Yaml,
+        )))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 async fn handle_command(
     State(state): State<AppState>,
     Path(command): Path<String>,
     Query(query): Query<BTreeMap<String, String>>,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    execute_http_command(&state, &command, &[], query, body).await
+    execute_http_command(&state, &command, &[], query, method, headers, body).await
 }
 
 async fn handle_group_command(
     State(state): State<AppState>,
     Path((group, command)): Path<(String, String)>,
     Query(query): Query<BTreeMap<String, String>>,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
     let key = format!("{}/{}", group, command);
-    execute_http_command(&state, &key, &[], query, body).await
+    execute_http_command(&state, &key, &[], query, method, headers, body).await
 }
 
 async fn execute_http_command(
@@ -162,6 +204,8 @@ async fn execute_http_command(
     command_key: &str,
     args: &[String],
     query: BTreeMap<String, String>,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
     let start = std::time::Instant::now();
@@ -202,6 +246,30 @@ async fn execute_http_command(
         }
     }
 
+    let (globals, input_options) =
+        match crate::parser::parse_global_input(input_options, &state.globals_fields) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return json_response(
+                    StatusCode::BAD_REQUEST,
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": { "code": "VALIDATION_ERROR", "message": error.to_string() },
+                        "meta": { "command": path, "duration": format_duration(start) },
+                    }),
+                );
+            }
+        };
+    let request_headers = headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value| (name.as_str().to_string(), value.to_string()))
+        })
+        .collect();
+
     let mut all_middleware: Vec<MiddlewareFn> = state.middleware.as_ref().clone();
 
     if let Some(slash_pos) = command_key.find('/') {
@@ -221,15 +289,22 @@ async fn execute_http_command(
             agent: true,
             argv: args.to_vec(),
             defaults: None,
+            display_name: state.name.clone(),
             env_fields: state.env_fields.as_ref().clone(),
             env_source,
             format: Format::Json,
             format_explicit: true,
+            globals,
             input_options,
             middlewares: all_middleware,
             name: state.name.clone(),
             parse_mode: ParseMode::Split,
             path: path.clone(),
+            request: Some(crate::command::RequestContext {
+                headers: request_headers,
+                method: method.to_string(),
+                path: format!("/commands/{command_key}"),
+            }),
             vars_fields: state.vars_fields.as_ref().clone(),
             version: state.version.clone(),
         },
@@ -262,6 +337,7 @@ async fn execute_http_command(
             code,
             message,
             retryable,
+            field_errors,
             cta,
             ..
         } => {
@@ -277,6 +353,24 @@ async fn execute_http_command(
                     .as_object_mut()
                     .unwrap()
                     .insert("retryable".to_string(), Value::Bool(r));
+            }
+            if let Some(field_errors) = field_errors {
+                error_obj.as_object_mut().unwrap().insert(
+                    "fieldErrors".to_string(),
+                    Value::Array(
+                        field_errors
+                            .into_iter()
+                            .map(|error| {
+                                serde_json::json!({
+                                    "path": error.path,
+                                    "expected": error.expected,
+                                    "received": error.received,
+                                    "message": error.message,
+                                })
+                            })
+                            .collect(),
+                    ),
+                );
             }
 
             let mut response = serde_json::json!({
@@ -294,7 +388,8 @@ async fn execute_http_command(
             }
             json_response(status, &response)
         }
-        InternalResult::Stream(stream) => ndjson_stream_response(stream, &path),
+        InternalResult::Stream(stream) => ndjson_stream_response(stream, &path, start),
+        InternalResult::RecordStream(stream) => record_stream_response(stream, &path, start),
     }
 }
 
@@ -316,6 +411,7 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
 fn ndjson_stream_response(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = Value> + Send>>,
     path: &str,
+    start: std::time::Instant,
 ) -> Response {
     let path = path.to_string();
 
@@ -332,7 +428,7 @@ fn ndjson_stream_response(
         let done = serde_json::json!({
             "type": "done",
             "ok": true,
-            "meta": { "command": path }
+            "meta": { "command": path, "duration": format_duration(start) }
         });
         let mut done_line = serde_json::to_string(&done).unwrap_or_default();
         done_line.push('\n');
@@ -345,6 +441,72 @@ fn ndjson_stream_response(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "application/x-ndjson")
         .body(body)
+        .unwrap_or_else(|_| {
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
+        })
+}
+
+fn record_stream_response(
+    stream: std::pin::Pin<Box<dyn futures::Stream<Item = StreamRecord> + Send>>,
+    path: &str,
+    start: std::time::Instant,
+) -> Response {
+    let path = path.to_string();
+    let output = async_stream::stream! {
+        let mut inner = stream;
+        let mut terminal = None;
+        while let Some(record) = inner.next().await {
+            match record {
+                StreamRecord::Chunk(value) => {
+                    let mut line = serde_json::to_string(&serde_json::json!({
+                        "type": "chunk", "data": value,
+                    })).unwrap_or_default();
+                    line.push('\n');
+                    yield Ok::<_, std::io::Error>(line);
+                }
+                record => {
+                    terminal = Some(record);
+                    break;
+                }
+            }
+        }
+
+        let duration = format_duration(start);
+        let value = match terminal {
+            Some(StreamRecord::Error { code, message, retryable, cta, .. }) => {
+                let mut value = serde_json::json!({
+                    "type": "error", "ok": false,
+                    "error": { "code": code, "message": message },
+                    "meta": { "command": path, "duration": duration },
+                });
+                if retryable {
+                    value["error"]["retryable"] = Value::Bool(true);
+                }
+                if let Some(cta) = cta {
+                    value["meta"]["cta"] = serde_json::to_value(cta).unwrap_or(Value::Null);
+                }
+                value
+            }
+            terminal => {
+                let mut value = serde_json::json!({
+                    "type": "done", "ok": true,
+                    "meta": { "command": path, "duration": duration },
+                });
+                if let Some(StreamRecord::Ok { cta: Some(cta) }) = terminal {
+                    value["meta"]["cta"] = serde_json::to_value(cta).unwrap_or(Value::Null);
+                }
+                value
+            }
+        };
+        let mut line = serde_json::to_string(&value).unwrap_or_default();
+        line.push('\n');
+        yield Ok::<_, std::io::Error>(line);
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .body(Body::from_stream(output))
         .unwrap_or_else(|_| {
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
         })
@@ -374,7 +536,20 @@ mod tests {
         async fn run(&self, ctx: CommandContext) -> CommandResult {
             let mut data = serde_json::Map::new();
             data.insert("args".to_string(), ctx.args);
+            data.insert("globals".to_string(), ctx.globals);
             data.insert("options".to_string(), ctx.options);
+            data.insert(
+                "request".to_string(),
+                ctx.request
+                    .map(|request| {
+                        serde_json::json!({
+                            "method": request.method,
+                            "path": request.path,
+                            "headers": request.headers,
+                        })
+                    })
+                    .unwrap_or(Value::Null),
+            );
             CommandResult::Ok {
                 data: Value::Object(data),
                 cta: None,
@@ -442,14 +617,33 @@ mod tests {
             "users/list".to_string(),
             Arc::new(make_echo_command("list")),
         );
+        let mut typed = make_echo_command("typed");
+        typed.options_fields = vec![FieldMeta {
+            name: "limit",
+            cli_name: "limit".to_string(),
+            description: None,
+            field_type: crate::schema::FieldType::Number,
+            required: true,
+            default: None,
+            alias: None,
+            deprecated: false,
+            env_name: None,
+        }];
+        commands.insert("typed".to_string(), Arc::new(typed));
 
         AppState {
             name: "test-app".to_string(),
             version: Some("1.0.0".to_string()),
+            openapi: Arc::new(serde_json::json!({
+                "openapi": "3.2.0",
+                "info": { "title": "test-app", "version": "0.0.0" },
+                "paths": {},
+            })),
             commands: Arc::new(commands),
             middleware: Arc::new(Vec::new()),
             group_middleware: Arc::new(BTreeMap::new()),
             env_fields: Arc::new(Vec::new()),
+            globals_fields: Arc::new(Vec::new()),
             vars_fields: Arc::new(Vec::new()),
         }
     }
@@ -478,6 +672,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_openapi_document_routes() {
+        let response = build_router(make_test_state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/openapi.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap()["openapi"],
+            "3.2.0"
+        );
+
+        let response = build_router(make_test_state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/openapi.yaml")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/yaml");
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test]
+    async fn test_stateless_mcp_http_rejects_get() {
+        let cli = Cli::create("test").command("echo", make_echo_command("echo"));
+        let response = build_cli_router(&cli)
+            .unwrap()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/mcp")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
     async fn test_get_command_with_query_params() {
         let state = make_test_state();
         let app = build_router(state);
@@ -499,6 +740,74 @@ mod tests {
         assert_eq!(json["ok"], true);
         assert!(json["data"]["options"].is_object());
         assert_eq!(json["meta"]["command"], "echo");
+    }
+
+    #[tokio::test]
+    async fn test_structured_input_coercion_and_field_errors() {
+        let response = build_router(make_test_state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/typed?limit=10")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["options"]["limit"], 10);
+
+        let response = build_router(make_test_state())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/typed?limit=nope")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"]["fieldErrors"][0]["path"], "limit");
+        assert_eq!(json["error"]["fieldErrors"][0]["expected"], "number");
+    }
+
+    #[tokio::test]
+    async fn test_http_context_splits_globals_and_preserves_request_metadata() {
+        let mut state = make_test_state();
+        state.globals_fields = Arc::new(vec![FieldMeta {
+            name: "profile",
+            cli_name: "profile".to_string(),
+            description: None,
+            field_type: crate::schema::FieldType::String,
+            required: true,
+            default: None,
+            alias: None,
+            deprecated: false,
+            env_name: None,
+        }]);
+        let app = build_router(state);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/echo")
+                    .header("content-type", "application/json")
+                    .header("x-trace-id", "trace-1")
+                    .body(Body::from(r#"{"profile":"work","name":"bob"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["globals"]["profile"], "work");
+        assert_eq!(json["data"]["options"]["name"], "bob");
+        assert_eq!(json["data"]["request"]["method"], "POST");
+        assert_eq!(json["data"]["request"]["headers"]["x-trace-id"], "trace-1");
     }
 
     #[tokio::test]

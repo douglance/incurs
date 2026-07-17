@@ -154,6 +154,24 @@ pub fn parse_argv(argv: &[String]) -> FetchInput {
     }
 }
 
+/// Parses curl-style argv and rejects flags that are missing a value.
+pub fn parse_argv_checked(argv: &[String]) -> Result<FetchInput, crate::errors::ParseError> {
+    for (index, token) in argv.iter().enumerate() {
+        let flag = (token.starts_with("--") && !token.contains('='))
+            || (token.starts_with('-') && token.len() == 2);
+        let missing = argv.get(index + 1).is_none_or(|value| {
+            value.starts_with("--") || value.starts_with('-') && value.len() == 2
+        });
+        if flag && missing {
+            return Err(crate::errors::ParseError {
+                message: format!("Missing value for flag: {token}"),
+                cause: None,
+            });
+        }
+    }
+    Ok(parse_argv(argv))
+}
+
 /// Returns true if the content-type indicates a streaming NDJSON response.
 pub fn is_streaming_response(content_type: Option<&str>) -> bool {
     content_type == Some("application/x-ndjson")
@@ -201,6 +219,13 @@ mod tests {
         assert_eq!(input.path, "/users/123");
         assert_eq!(input.method, "GET");
         assert!(input.body.is_none());
+    }
+
+    #[test]
+    fn test_checked_parser_rejects_missing_flag_values() {
+        assert!(parse_argv_checked(&argv(&["--method"])).is_err());
+        assert!(parse_argv_checked(&argv(&["--query", "--other", "value"])).is_err());
+        assert!(parse_argv_checked(&argv(&["-X", "-H", "Accept: application/json"])).is_err());
     }
 
     #[test]

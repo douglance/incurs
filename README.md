@@ -6,16 +6,16 @@ Build CLIs that work for both humans and agents. Same commands serve via CLI, HT
 
 ## Status
 
-The vendored TypeScript reference is synced to incur v0.4.17. The Rust port includes selected upstream feature deltas through v0.4.8; the feature table below is the source of truth for current Rust support.
+The vendored TypeScript reference and the Rust implementation are synced to incur v0.4.17. The Rust APIs use native Rust types and traits, while preserving the upstream command, transport, discovery, validation, and output behavior.
 
 | Feature                                                 | Status                         |
 | ------------------------------------------------------- | ------------------------------ |
 | CLI parsing (args, options, flags)                      | Done                           |
-| Three transports (CLI, HTTP, MCP)                       | CLI done, HTTP/MCP stubbed     |
+| Three transports (CLI, HTTP, MCP)                       | Done                           |
 | Help (`--help`, `--version`)                            | Done                           |
 | Output formats (`--json`, `--format`, `--full-output`)  | Done                           |
 | Output filtering (`--filter-output`)                    | Done                           |
-| Streaming (async generators)                            | Done                           |
+| Streaming (chunks and terminal records)                 | Done                           |
 | Middleware (onion-style)                                | Done                           |
 | Shell completions (bash/zsh/fish/nushell)               | Done                           |
 | Agent discovery (21 agents)                             | Done                           |
@@ -24,7 +24,10 @@ The vendored TypeScript reference is synced to incur v0.4.17. The Rust port incl
 | TOON output format                                      | Done (via `toon-format` crate) |
 | Token counting/limiting                                 | Done (via `tiktoken-rs`)       |
 | Config file loading                                     | Done                           |
-| OpenAPI import                                          | Stubbed                        |
+| OpenAPI import/export                                   | Done                           |
+| Global options and aliases                              | Done                           |
+| Progressive/direct MCP discovery and filtering          | Done                           |
+| Remote MCP-over-HTTP command sources                    | Done                           |
 | Derive macros (`IncurArgs`, `IncurOptions`, `IncurEnv`) | Done                           |
 
 ## Quick Start
@@ -114,11 +117,11 @@ greet@1.0.0 — A greeting CLI
 See [`crates/incur/examples/todoapp.rs`](crates/incur/examples/todoapp.rs) for a full example with 6 commands, streaming, middleware, CTAs, and all output formats.
 
 ```bash
-cargo run -p incur --example todoapp -- --help
-cargo run -p incur --example todoapp -- add "Buy groceries" --priority high
-cargo run -p incur --example todoapp -- list --json
-cargo run -p incur --example todoapp -- stats --full-output
-cargo run -p incur --example todoapp -- stream
+cargo run -p incurs --example todoapp -- --help
+cargo run -p incurs --example todoapp -- add "Buy groceries" --priority high
+cargo run -p incurs --example todoapp -- list --json
+cargo run -p incurs --example todoapp -- stats --full-output
+cargo run -p incurs --example todoapp -- stream
 ```
 
 ## Architecture
@@ -146,14 +149,14 @@ crates/
 
 ## Keeping in Sync with Upstream
 
-This repository vendors TypeScript [wevm/incur](https://github.com/wevm/incur) v0.4.17 as its reference implementation. Rust support is ported incrementally from that reference:
+This repository vendors TypeScript [wevm/incur](https://github.com/wevm/incur) v0.4.17 as its reference implementation. Rust support is maintained from that reference:
 
 1. TS tests define correct behavior
 2. Rust integration tests (`tests/e2e.rs`, `tests/parser_test.rs`) port those tests
 3. `tests/compare.sh` diffs shared JSON behavior between the TS and Rust todoapp examples
 4. When upstream changes, port the new tests first (they fail), then update the Rust code
 
-The comparison suite covers shared behavior only; it does not imply complete Rust parity with every TypeScript feature.
+The comparison suite covers shared executable behavior; Rust unit and integration tests cover language-specific APIs and the HTTP, MCP, OpenAPI, streaming, and skill-generation contracts.
 
 ```bash
 # Run all Rust tests

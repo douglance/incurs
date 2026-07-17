@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use incurs::parser::{ParseOptions, parse};
+use incurs::parser::{ParseOptions, parse, parse_globals};
 use incurs::schema::{FieldMeta, FieldType, to_kebab};
 use serde_json::{Value, json};
 
@@ -73,6 +73,104 @@ fn parses_positional_args_in_schema_key_order() {
     let result = parse(&argv(&["hello", "world"]), &opts).unwrap();
     assert_eq!(result.args["greeting"], json!("hello"));
     assert_eq!(result.args["name"], json!("world"));
+}
+
+#[test]
+fn collects_remaining_positionals_into_a_final_array_arg() {
+    let opts = ParseOptions {
+        args_fields: vec![make_field(
+            "paths",
+            FieldType::Array(Box::new(FieldType::String)),
+            true,
+            None,
+            None,
+        )],
+        ..empty_opts()
+    };
+    let result = parse(&argv(&["a.ts", "b.ts", "c.ts"]), &opts).unwrap();
+    assert_eq!(result.args["paths"], json!(["a.ts", "b.ts", "c.ts"]));
+}
+
+#[test]
+fn assigns_scalar_args_before_a_final_array_arg() {
+    let opts = ParseOptions {
+        args_fields: vec![
+            make_field("target", FieldType::String, true, None, None),
+            make_field(
+                "paths",
+                FieldType::Array(Box::new(FieldType::String)),
+                true,
+                None,
+                None,
+            ),
+        ],
+        ..empty_opts()
+    };
+    let result = parse(&argv(&["dest", "a.ts", "b.ts"]), &opts).unwrap();
+    assert_eq!(result.args["target"], json!("dest"));
+    assert_eq!(result.args["paths"], json!(["a.ts", "b.ts"]));
+}
+
+#[test]
+fn collects_variadic_positionals_interleaved_with_options() {
+    let opts = ParseOptions {
+        args_fields: vec![make_field(
+            "paths",
+            FieldType::Array(Box::new(FieldType::String)),
+            true,
+            None,
+            None,
+        )],
+        options_fields: vec![make_field(
+            "verbose",
+            FieldType::Boolean,
+            false,
+            Some(json!(false)),
+            None,
+        )],
+        ..empty_opts()
+    };
+    let result = parse(&argv(&["a.ts", "--verbose", "b.ts"]), &opts).unwrap();
+    assert_eq!(result.args["paths"], json!(["a.ts", "b.ts"]));
+    assert_eq!(result.options["verbose"], json!(true));
+}
+
+#[test]
+fn variadic_arg_uses_its_default_when_omitted() {
+    let opts = ParseOptions {
+        args_fields: vec![make_field(
+            "paths",
+            FieldType::Array(Box::new(FieldType::String)),
+            false,
+            Some(json!(["."])),
+            None,
+        )],
+        ..empty_opts()
+    };
+    let result = parse(&argv(&[]), &opts).unwrap();
+    assert_eq!(result.args["paths"], json!(["."]));
+}
+
+#[test]
+fn rejects_a_non_final_array_arg() {
+    let opts = ParseOptions {
+        args_fields: vec![
+            make_field(
+                "paths",
+                FieldType::Array(Box::new(FieldType::String)),
+                true,
+                None,
+                None,
+            ),
+            make_field("target", FieldType::String, true, None, None),
+        ],
+        ..empty_opts()
+    };
+    let error = parse(&argv(&["a.ts", "dest"]), &opts).unwrap_err();
+    assert_eq!(
+        error.message,
+        "Variadic arg \"paths\" must be the last key in the args schema"
+    );
 }
 
 #[test]
@@ -151,7 +249,7 @@ fn coerces_string_to_number() {
         ..empty_opts()
     };
     let result = parse(&argv(&["--limit", "10"]), &opts).unwrap();
-    assert_eq!(result.options["limit"], json!(10.0));
+    assert_eq!(result.options["limit"], json!(10));
 }
 
 #[test]
@@ -201,24 +299,17 @@ fn returns_error_on_unknown_flags() {
 }
 
 #[test]
-fn missing_required_positional_args_produces_empty_entry() {
-    // NOTE: The Rust parser does not validate required positional args.
-    // The TS version throws a ValidationError. In Rust, validation is a
-    // separate step (IncurSchema::from_raw). Here we verify the parser
-    // simply omits the arg from the result.
+fn missing_required_positional_args_errors() {
     let opts = ParseOptions {
         args_fields: vec![make_field("name", FieldType::String, true, None, None)],
         ..empty_opts()
     };
-    let result = parse(&argv(&[]), &opts).unwrap();
-    assert!(!result.args.contains_key("name"));
+    let error = parse(&argv(&[]), &opts).unwrap_err();
+    assert!(error.to_string().contains("name"));
 }
 
 #[test]
-fn enum_value_passes_through_parser() {
-    // NOTE: The Rust parser does not validate enum values. The TS version
-    // throws a ValidationError on mismatch. In Rust, validation is a
-    // separate step. Here we verify the parser passes through the value.
+fn invalid_enum_value_errors() {
     let opts = ParseOptions {
         options_fields: vec![make_field(
             "state",
@@ -229,8 +320,9 @@ fn enum_value_passes_through_parser() {
         )],
         ..empty_opts()
     };
-    let result = parse(&argv(&["--state", "invalid"]), &opts).unwrap();
-    assert_eq!(result.options["state"], json!("invalid"));
+    let error = parse(&argv(&["--state", "invalid"]), &opts).unwrap_err();
+    assert!(error.to_string().contains("state"));
+    assert!(error.to_string().contains("open"));
 }
 
 #[test]
@@ -536,7 +628,7 @@ fn parses_positional_args_and_options_together() {
     };
     let result = parse(&argv(&["myrepo", "--limit", "5"]), &opts).unwrap();
     assert_eq!(result.args["repo"], json!("myrepo"));
-    assert_eq!(result.options["limit"], json!(5.0));
+    assert_eq!(result.options["limit"], json!(5));
 }
 
 #[test]
@@ -574,7 +666,7 @@ fn argv_overrides_config_defaults() {
         ..empty_opts()
     };
     let result = parse(&argv(&["--limit", "5"]), &opts).unwrap();
-    assert_eq!(result.options["limit"], json!(5.0));
+    assert_eq!(result.options["limit"], json!(5));
 }
 
 #[test]
@@ -662,7 +754,7 @@ fn argv_overrides_invalid_config_defaults() {
         ..empty_opts()
     };
     let result = parse(&argv(&["--limit", "5"]), &opts).unwrap();
-    assert_eq!(result.options["limit"], json!(5.0));
+    assert_eq!(result.options["limit"], json!(5));
 }
 
 #[test]
@@ -709,6 +801,111 @@ fn config_array_defaults_are_used_when_argv_omits_the_option() {
 }
 
 #[test]
+fn globals_extract_known_flags_and_return_command_tokens() {
+    let fields = vec![make_field("rpc_url", FieldType::String, true, None, None)];
+    let result = parse_globals(
+        &argv(&["--rpc-url", "http://example.com", "deploy"]),
+        &fields,
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert_eq!(result.parsed["rpc_url"], json!("http://example.com"));
+    assert_eq!(result.rest, argv(&["deploy"]));
+}
+
+#[test]
+fn globals_pass_unknown_flags_and_positionals_through() {
+    let fields = vec![make_field(
+        "verbose",
+        FieldType::Boolean,
+        false,
+        Some(json!(false)),
+        None,
+    )];
+    let result = parse_globals(
+        &argv(&["--unknown", "value", "deploy", "--verbose"]),
+        &fields,
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert_eq!(result.parsed["verbose"], json!(true));
+    assert_eq!(result.rest, argv(&["--unknown", "value", "deploy"]));
+}
+
+#[test]
+fn globals_support_aliases_counts_arrays_and_negation() {
+    let fields = vec![
+        make_field(
+            "recursive",
+            FieldType::Boolean,
+            false,
+            Some(json!(true)),
+            None,
+        ),
+        make_field("verbose", FieldType::Count, false, Some(json!(0)), None),
+        make_field(
+            "tag",
+            FieldType::Array(Box::new(FieldType::String)),
+            false,
+            Some(json!([])),
+            None,
+        ),
+    ];
+    let aliases = HashMap::from([("recursive".to_string(), 'r'), ("verbose".to_string(), 'v')]);
+    let result = parse_globals(
+        &argv(&[
+            "-rv",
+            "--verbose",
+            "--tag=one",
+            "--tag",
+            "two",
+            "--no-recursive",
+            "deploy",
+        ]),
+        &fields,
+        &aliases,
+    )
+    .unwrap();
+    assert_eq!(result.parsed["recursive"], json!(false));
+    assert_eq!(result.parsed["verbose"], json!(2));
+    assert_eq!(result.parsed["tag"], json!(["one", "two"]));
+    assert_eq!(result.rest, argv(&["deploy"]));
+}
+
+#[test]
+fn globals_preserve_separator_and_everything_after_it() {
+    let fields = vec![make_field(
+        "verbose",
+        FieldType::Boolean,
+        false,
+        Some(json!(false)),
+        None,
+    )];
+    let result = parse_globals(
+        &argv(&["--verbose", "--", "--unknown", "positional"]),
+        &fields,
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert_eq!(result.parsed["verbose"], json!(true));
+    assert_eq!(result.rest, argv(&["--", "--unknown", "positional"]));
+}
+
+#[test]
+fn globals_reject_missing_or_invalid_known_values() {
+    let fields = vec![make_field("limit", FieldType::Number, true, None, None)];
+    assert!(parse_globals(&argv(&["--limit"]), &fields, &HashMap::new()).is_err());
+    assert!(
+        parse_globals(
+            &argv(&["--limit", "not-a-number"]),
+            &fields,
+            &HashMap::new()
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn refined_option_schemas_validate_only_merged_winning_values() {
     // In TS, `.refine()` validates post-merge. The Rust parser has no
     // refinement step, but we verify that argv values override defaults and
@@ -724,6 +921,6 @@ fn refined_option_schemas_validate_only_merged_winning_values() {
         ..empty_opts()
     };
     let result = parse(&argv(&["--min", "1", "--max", "3"]), &opts).unwrap();
-    assert_eq!(result.options["min"], json!(1.0));
-    assert_eq!(result.options["max"], json!(3.0));
+    assert_eq!(result.options["min"], json!(1));
+    assert_eq!(result.options["max"], json!(3));
 }

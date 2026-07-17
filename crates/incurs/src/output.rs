@@ -44,6 +44,24 @@ pub enum CommandResult {
     },
     /// Streaming output.
     Stream(Pin<Box<dyn futures::Stream<Item = Value> + Send>>),
+    /// Streaming output with an explicit terminal success or error record.
+    RecordStream(Pin<Box<dyn futures::Stream<Item = StreamRecord> + Send>>),
+}
+
+/// A record emitted by a terminal-aware command stream.
+pub enum StreamRecord {
+    /// A regular streamed data chunk.
+    Chunk(Value),
+    /// Successful stream completion with optional CTA metadata.
+    Ok { cta: Option<CtaBlock> },
+    /// Failed stream completion.
+    Error {
+        code: String,
+        message: String,
+        retryable: bool,
+        exit_code: Option<i32>,
+        cta: Option<CtaBlock>,
+    },
 }
 
 /// Execution result returned from `command::execute()`.

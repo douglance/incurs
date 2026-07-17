@@ -33,10 +33,222 @@ pub struct GeneratedCommand {
 }
 
 /// Options for OpenAPI command generation.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum GenerateMode {
+    /// Use each operationId as the generated command name.
+    #[default]
+    Operation,
+    /// Derive command names from path namespaces and HTTP methods.
+    Namespace,
+}
+
+/// Options for OpenAPI command generation.
+#[derive(Debug, Clone)]
 pub struct GenerateOptions {
     /// Base path prefix prepended to all operation paths.
     pub base_path: Option<String>,
+    /// Strip schema details that do not affect command input parsing.
+    pub compact: bool,
+    /// Header names copied from inbound HTTP requests to upstream requests.
+    pub forward_headers: Vec<String>,
+    /// Command naming strategy.
+    pub mode: GenerateMode,
+    /// Whether credential header options are generated from security schemes.
+    pub security: bool,
+}
+
+impl Default for GenerateOptions {
+    fn default() -> Self {
+        Self {
+            base_path: None,
+            compact: false,
+            forward_headers: Vec::new(),
+            mode: GenerateMode::Operation,
+            security: true,
+        }
+    }
+}
+
+/// Options for generating an OpenAPI document from a CLI.
+#[derive(Debug, Clone, Default)]
+pub struct DocumentOptions {
+    /// API description override.
+    pub description: Option<String>,
+    /// API version. Defaults to `0.0.0`.
+    pub version: Option<String>,
+}
+
+/// OpenAPI document source accepted by hosted command generation.
+#[derive(Debug, Clone)]
+pub enum OpenApiSource {
+    /// An already parsed OpenAPI document.
+    Document(Value),
+    /// An HTTP(S) URL or local JSON/YAML document string.
+    Text(String),
+}
+
+/// Loads an OpenAPI document from a parsed value, URL, JSON, or YAML string.
+#[cfg(feature = "openapi")]
+pub async fn load_source(source: OpenApiSource) -> Result<Value, Box<dyn std::error::Error>> {
+    match source {
+        OpenApiSource::Document(document) => Ok(document),
+        OpenApiSource::Text(source)
+            if source.starts_with("http://") || source.starts_with("https://") =>
+        {
+            let text = reqwest::get(source)
+                .await?
+                .error_for_status()?
+                .text()
+                .await?;
+            serde_json::from_str(&text)
+                .or_else(|_| serde_yaml_ng::from_str(&text))
+                .map_err(Into::into)
+        }
+        OpenApiSource::Text(source) => serde_json::from_str(&source)
+            .or_else(|_| serde_yaml_ng::from_str(&source))
+            .map_err(Into::into),
+    }
+}
+
+/// Generates an OpenAPI 3.2 document from a CLI command tree.
+pub fn from_cli(cli: &crate::cli::Cli, options: &DocumentOptions) -> Value {
+    fn collect(
+        commands: &BTreeMap<String, crate::cli::CommandEntry>,
+        prefix: &[String],
+        paths: &mut serde_json::Map<String, Value>,
+    ) {
+        for (name, entry) in commands {
+            let mut command_path = prefix.to_vec();
+            command_path.push(name.clone());
+            match entry {
+                crate::cli::CommandEntry::Leaf(command) => {
+                    let args_path = command
+                        .args_fields
+                        .iter()
+                        .map(|field| format!("/{{{}}}", field.name))
+                        .collect::<String>();
+                    let path = format!("/{}{}", command_path.join("/"), args_path);
+                    let method = infer_document_method(name, command);
+                    let parameters = command
+                        .args_fields
+                        .iter()
+                        .map(|field| {
+                            serde_json::json!({
+                                "name": field.name,
+                                "in": "path",
+                                "required": true,
+                                "description": field.description,
+                                "schema": field_schema(field),
+                            })
+                        })
+                        .chain(
+                            (method == "get")
+                                .then_some(command.options_fields.iter())
+                                .into_iter()
+                                .flatten()
+                                .map(|field| {
+                                    serde_json::json!({
+                                        "name": field.name,
+                                        "in": "query",
+                                        "required": field.required,
+                                        "description": field.description,
+                                        "schema": field_schema(field),
+                                    })
+                                }),
+                        )
+                        .collect::<Vec<_>>();
+                    let mut operation = serde_json::Map::from_iter([
+                        (
+                            "operationId".to_string(),
+                            Value::String(operation_id(&method, &path)),
+                        ),
+                        ("parameters".to_string(), Value::Array(parameters)),
+                        (
+                            "responses".to_string(),
+                            serde_json::json!({ "200": { "description": "Successful response" } }),
+                        ),
+                    ]);
+                    if let Some(description) = &command.description {
+                        operation.insert("summary".to_string(), Value::String(description.clone()));
+                    }
+                    if method != "get" && !command.options_fields.is_empty() {
+                        operation.insert(
+                            "requestBody".to_string(),
+                            serde_json::json!({
+                                "required": command.options_fields.iter().any(|field| field.required),
+                                "content": {
+                                    "application/json": {
+                                        "schema": crate::schema::to_json_schema(&command.options_fields),
+                                    }
+                                }
+                            }),
+                        );
+                    }
+                    if let Some(output) = &command.output_schema {
+                        operation["responses"]["200"]["content"] = serde_json::json!({
+                            "application/json": { "schema": output }
+                        });
+                    }
+                    paths.insert(
+                        path,
+                        serde_json::json!({ method: Value::Object(operation) }),
+                    );
+                }
+                crate::cli::CommandEntry::Group { commands, .. } => {
+                    collect(commands, &command_path, paths)
+                }
+                crate::cli::CommandEntry::FetchGateway { .. } => {}
+            }
+        }
+    }
+
+    let mut paths = serde_json::Map::new();
+    collect(&cli.commands, &[], &mut paths);
+    serde_json::json!({
+        "openapi": "3.2.0",
+        "info": {
+            "title": cli.name,
+            "version": options.version.as_deref().unwrap_or("0.0.0"),
+            "description": options.description.as_ref().or(cli.description.as_ref()),
+        },
+        "paths": paths,
+    })
+}
+
+fn field_schema(field: &FieldMeta) -> Value {
+    crate::schema::to_json_schema(std::slice::from_ref(field))["properties"][&field.cli_name]
+        .clone()
+}
+
+fn infer_document_method(name: &str, command: &crate::command::CommandDef) -> String {
+    let destructive = command
+        .handler
+        .mcp_options()
+        .and_then(|options| options.annotations.as_ref())
+        .and_then(|annotations| annotations.destructive_hint)
+        == Some(true);
+    match name.to_lowercase().as_str() {
+        name if name.contains("delete") || name.contains("remove") => "delete".to_string(),
+        name if name.contains("update") || name.contains("patch") => "patch".to_string(),
+        name if name.contains("create") || name.contains("add") => "post".to_string(),
+        _ if destructive => "post".to_string(),
+        _ => "get".to_string(),
+    }
+}
+
+fn operation_id(method: &str, path: &str) -> String {
+    let suffix = path
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut characters = segment.chars();
+            characters
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + characters.as_str())
+                .unwrap_or_default()
+        })
+        .collect::<String>();
+    format!("{method}{suffix}")
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +296,10 @@ pub async fn generate_commands(
     };
 
     let mut commands = BTreeMap::new();
+    let namespace_paths = paths
+        .keys()
+        .map(|path| namespace_segments(path))
+        .collect::<Vec<_>>();
     let http_methods = [
         "get", "post", "put", "patch", "delete", "head", "options", "trace",
     ];
@@ -108,17 +324,33 @@ pub async fn generate_commands(
             };
 
             let operation_id = op.get("operationId").and_then(|v| v.as_str());
-            let name = match operation_id {
-                Some(id) => id.to_string(),
-                None => generate_operation_name(method, path),
+            let name = match options.mode {
+                GenerateMode::Operation => operation_id
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| generate_operation_name(method, path)),
+                GenerateMode::Namespace => {
+                    let segments = namespace_segments(path);
+                    let operation_count = methods
+                        .keys()
+                        .filter(|candidate| http_methods.contains(&candidate.as_str()))
+                        .count();
+                    let parent = namespace_paths.iter().any(|candidate| {
+                        candidate.len() > segments.len() && candidate.starts_with(&segments)
+                    });
+                    generate_namespace_name(method, &segments, operation_count > 1 || parent)
+                }
             };
 
             let http_method = method.to_uppercase();
-            let description = op
-                .get("summary")
-                .and_then(|v| v.as_str())
-                .or_else(|| op.get("description").and_then(|v| v.as_str()))
-                .map(|s| s.to_string());
+            let summary = op.get("summary").and_then(|v| v.as_str());
+            let operation_description = op.get("description").and_then(|v| v.as_str());
+            let description = summary.or(operation_description).map(ToString::to_string);
+            let mcp_description = match (summary, operation_description) {
+                (Some(summary), Some(description)) if summary != description => {
+                    Some(format!("{summary}\n\n{description}"))
+                }
+                _ => description.clone(),
+            };
 
             let parameters = op
                 .get("parameters")
@@ -135,8 +367,27 @@ pub async fn generate_commands(
                 .iter()
                 .filter(|p| p.get("in").and_then(|v| v.as_str()) == Some("query"))
                 .collect();
+            let mut header_params = parameters
+                .iter()
+                .filter(|p| p.get("in").and_then(|v| v.as_str()) == Some("header"))
+                .cloned()
+                .collect::<Vec<_>>();
+            if options.security {
+                header_params.extend(security_header_params(&resolved, op));
+            }
 
             let (body_props, body_required_set) = extract_body_schema(op);
+            let mut mcp_input_schema = operation_input_schema(
+                &path_params,
+                &query_params,
+                &header_params,
+                &body_props,
+                &body_required_set,
+            );
+            if options.compact {
+                mcp_input_schema = compact_schema(&mcp_input_schema);
+            }
+            let output_schema = extract_output_schema(op);
 
             let args_fields: Vec<FieldMeta> = path_params
                 .iter()
@@ -148,6 +399,19 @@ pub async fn generate_commands(
             for p in &query_params {
                 let required = p.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
                 options_fields.push(param_to_field_meta(p, required));
+            }
+
+            for p in &header_params {
+                let required = p.get("required").and_then(|v| v.as_bool()).unwrap_or(false);
+                let mut field = param_to_field_meta(p, required);
+                let normalized = p
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("header")
+                    .to_lowercase();
+                field.name = Box::leak(normalized.clone().into_boxed_str());
+                field.cli_name = normalized;
+                options_fields.push(field);
             }
 
             for (key, schema) in &body_props {
@@ -177,6 +441,13 @@ pub async fn generate_commands(
                 .collect();
             let handler_body_prop_names: Vec<String> =
                 body_props.iter().map(|(k, _)| k.clone()).collect();
+            let handler_header_params = header_params
+                .iter()
+                .filter_map(|parameter| {
+                    let name = parameter.get("name")?.as_str()?.to_string();
+                    Some((name.to_lowercase(), name))
+                })
+                .collect();
 
             let handler = OpenApiHandler {
                 fetch_fn: handler_fetch,
@@ -186,6 +457,24 @@ pub async fn generate_commands(
                 path_param_names: handler_path_param_names,
                 query_param_names: handler_query_param_names,
                 body_prop_names: handler_body_prop_names,
+                header_params: handler_header_params,
+                forward_headers: options.forward_headers.clone(),
+                mcp: crate::command::McpCommandOptions {
+                    description: mcp_description,
+                    annotations: Some(crate::command::McpAnnotations {
+                        read_only_hint: Some(matches!(
+                            http_method.as_str(),
+                            "GET" | "HEAD" | "OPTIONS"
+                        )),
+                        destructive_hint: Some(!matches!(
+                            http_method.as_str(),
+                            "GET" | "HEAD" | "OPTIONS"
+                        )),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                mcp_input_schema,
             };
 
             let cmd_def = CommandDef {
@@ -202,7 +491,7 @@ pub async fn generate_commands(
                 output_policy: None,
                 handler: Box::new(handler),
                 middleware: Vec::new(),
-                output_schema: None,
+                output_schema,
             };
 
             commands.insert(name, cmd_def);
@@ -236,6 +525,10 @@ struct OpenApiHandler {
     path_param_names: Vec<String>,
     query_param_names: Vec<String>,
     body_prop_names: Vec<String>,
+    header_params: Vec<(String, String)>,
+    forward_headers: Vec<String>,
+    mcp: crate::command::McpCommandOptions,
+    mcp_input_schema: Value,
 }
 
 #[cfg(feature = "openapi")]
@@ -287,7 +580,31 @@ impl crate::command::CommandHandler for OpenApiHandler {
             format!("{}?{}", url_path, query_parts.join("&"))
         };
 
-        let mut headers: Vec<(String, String)> = Vec::new();
+        let mut headers: Vec<(String, String)> = self
+            .header_params
+            .iter()
+            .filter_map(|(option, header)| {
+                options
+                    .get(option)
+                    .filter(|value| !value.is_null())
+                    .map(|value| (header.clone(), value_to_string(value)))
+            })
+            .collect();
+        for name in &self.forward_headers {
+            if headers
+                .iter()
+                .any(|(header, _)| header.eq_ignore_ascii_case(name))
+            {
+                continue;
+            }
+            if let Some(value) = ctx
+                .request
+                .as_ref()
+                .and_then(|request| request.headers.get(&name.to_lowercase()))
+            {
+                headers.push((name.clone(), value.clone()));
+            }
+        }
         let body = if !self.body_prop_names.is_empty() {
             let mut body_obj = serde_json::Map::new();
             for key in &self.body_prop_names {
@@ -336,6 +653,14 @@ impl crate::command::CommandHandler for OpenApiHandler {
             data: result,
             cta: None,
         }
+    }
+
+    fn mcp_options(&self) -> Option<&crate::command::McpCommandOptions> {
+        Some(&self.mcp)
+    }
+
+    fn mcp_input_schema(&self) -> Option<&Value> {
+        Some(&self.mcp_input_schema)
     }
 }
 
@@ -390,6 +715,93 @@ fn generate_operation_name(method: &str, path: &str) -> String {
         })
         .collect();
     format!("{}_{}", method, sanitized)
+}
+
+#[cfg(feature = "openapi")]
+fn namespace_segments(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            segment
+                .trim_start_matches('{')
+                .trim_end_matches('}')
+                .to_string()
+        })
+        .collect()
+}
+
+#[cfg(feature = "openapi")]
+fn generate_namespace_name(method: &str, segments: &[String], needs_method: bool) -> String {
+    if segments.is_empty() {
+        method.to_string()
+    } else if needs_method {
+        format!("{} {method}", segments.join(" "))
+    } else {
+        segments.join(" ")
+    }
+}
+
+#[cfg(feature = "openapi")]
+fn security_header_params(spec: &Value, operation: &serde_json::Map<String, Value>) -> Vec<Value> {
+    let schemes = spec
+        .pointer("/components/securitySchemes")
+        .and_then(Value::as_object);
+    let requirements = operation
+        .get("security")
+        .or_else(|| spec.get("security"))
+        .and_then(Value::as_array);
+    let mut headers = Vec::new();
+    for requirement in requirements.into_iter().flatten() {
+        for name in requirement
+            .as_object()
+            .into_iter()
+            .flat_map(|value| value.keys())
+        {
+            let Some(scheme) = schemes.and_then(|schemes| schemes.get(name)) else {
+                continue;
+            };
+            let parameter = if scheme.get("type").and_then(Value::as_str) == Some("apiKey")
+                && scheme.get("in").and_then(Value::as_str) == Some("header")
+            {
+                scheme.get("name").and_then(Value::as_str).map(|header| {
+                    serde_json::json!({
+                        "name": header,
+                        "in": "header",
+                        "required": false,
+                        "description": scheme.get("description").and_then(Value::as_str).unwrap_or("Credential header"),
+                        "schema": { "type": "string" },
+                    })
+                })
+            } else if scheme.get("type").and_then(Value::as_str) == Some("http")
+                && matches!(
+                    scheme
+                        .get("scheme")
+                        .and_then(Value::as_str)
+                        .map(str::to_lowercase)
+                        .as_deref(),
+                    Some("basic" | "bearer")
+                )
+            {
+                Some(serde_json::json!({
+                    "name": "authorization",
+                    "in": "header",
+                    "required": false,
+                    "description": scheme.get("description").and_then(Value::as_str).unwrap_or("Authorization header"),
+                    "schema": { "type": "string" },
+                }))
+            } else {
+                None
+            };
+            if let Some(parameter) = parameter
+                && !headers
+                    .iter()
+                    .any(|existing: &Value| existing["name"].as_str() == parameter["name"].as_str())
+            {
+                headers.push(parameter);
+            }
+        }
+    }
+    headers
 }
 
 #[allow(dead_code)]
@@ -512,6 +924,99 @@ fn extract_body_schema(
         .collect();
 
     (props, required_set)
+}
+
+#[cfg(feature = "openapi")]
+fn operation_input_schema(
+    path: &[&Value],
+    query: &[&Value],
+    headers: &[Value],
+    body: &[(String, Value)],
+    body_required: &std::collections::HashSet<String>,
+) -> Value {
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::new();
+    for parameter in path
+        .iter()
+        .copied()
+        .chain(query.iter().copied())
+        .chain(headers.iter())
+    {
+        let Some(raw_name) = parameter.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let name = if parameter.get("in").and_then(Value::as_str) == Some("header") {
+            raw_name.to_lowercase()
+        } else {
+            raw_name.to_string()
+        };
+        let mut schema = parameter
+            .get("schema")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({ "type": "string" }));
+        if let Some(description) = parameter.get("description") {
+            schema["description"] = description.clone();
+        }
+        properties.insert(name.clone(), schema);
+        if parameter.get("required").and_then(Value::as_bool) == Some(true) {
+            required.push(Value::String(name));
+        }
+    }
+    for (name, schema) in body {
+        properties.insert(name.clone(), schema.clone());
+        if body_required.contains(name) {
+            required.push(Value::String(name.clone()));
+        }
+    }
+    let mut result = serde_json::Map::from_iter([
+        ("type".to_string(), Value::String("object".to_string())),
+        ("properties".to_string(), Value::Object(properties)),
+    ]);
+    if !required.is_empty() {
+        result.insert("required".to_string(), Value::Array(required));
+    }
+    Value::Object(result)
+}
+
+#[cfg(feature = "openapi")]
+fn extract_output_schema(operation: &serde_json::Map<String, Value>) -> Option<Value> {
+    operation
+        .get("responses")?
+        .as_object()?
+        .iter()
+        .find(|(status, _)| status.starts_with('2'))?
+        .1
+        .pointer("/content/application~1json/schema")
+        .cloned()
+}
+
+#[cfg(feature = "openapi")]
+fn compact_schema(schema: &Value) -> Value {
+    match schema {
+        Value::Object(schema) => {
+            let mut result = serde_json::Map::new();
+            for (key, value) in schema {
+                if matches!(key.as_str(), "example" | "examples") {
+                    continue;
+                }
+                if key == "pattern" && value.as_str().is_some_and(|pattern| pattern.len() > 100) {
+                    continue;
+                }
+                if key == "format"
+                    && matches!(
+                        value.as_str(),
+                        Some("date" | "date-time" | "duration" | "time")
+                    )
+                {
+                    continue;
+                }
+                result.insert(key.clone(), compact_schema(value));
+            }
+            Value::Object(result)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(compact_schema).collect()),
+        value => value.clone(),
+    }
 }
 
 #[allow(dead_code)]
@@ -813,6 +1318,29 @@ mod tests {
         assert_eq!(create_user.options_fields.len(), 1);
         assert_eq!(create_user.options_fields[0].name, "name");
         assert!(create_user.options_fields[0].required);
+
+        let namespace = generate_commands(
+            &spec,
+            Arc::new(|_url, _method, _headers, _body| {
+                Box::pin(async { serde_json::json!({"ok": true}) })
+            }),
+            &GenerateOptions {
+                mode: GenerateMode::Namespace,
+                ..GenerateOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            namespace.keys().cloned().collect::<Vec<_>>(),
+            vec![
+                "health".to_string(),
+                "users get".to_string(),
+                "users id delete".to_string(),
+                "users id get".to_string(),
+                "users post".to_string(),
+            ]
+        );
     }
 
     #[cfg(feature = "openapi")]
@@ -856,8 +1384,11 @@ mod tests {
         let ctx = crate::command::CommandContext {
             agent: false,
             args: serde_json::json!({"id": 42}),
+            display_name: "test".to_string(),
             env: Value::Null,
+            globals: Value::Null,
             options: serde_json::json!({}),
+            request: None,
             format: crate::output::Format::Json,
             format_explicit: false,
             name: "test".to_string(),
@@ -910,8 +1441,11 @@ mod tests {
         let ctx = crate::command::CommandContext {
             agent: false,
             args: serde_json::json!({}),
+            display_name: "test".to_string(),
             env: Value::Null,
+            globals: Value::Null,
             options: serde_json::json!({"limit": 5}),
+            request: None,
             format: crate::output::Format::Json,
             format_explicit: false,
             name: "test".to_string(),
@@ -970,8 +1504,11 @@ mod tests {
         let ctx = crate::command::CommandContext {
             agent: false,
             args: serde_json::json!({}),
+            display_name: "test".to_string(),
             env: Value::Null,
+            globals: Value::Null,
             options: serde_json::json!({"name": "Bob"}),
+            request: None,
             format: crate::output::Format::Json,
             format_explicit: false,
             name: "test".to_string(),

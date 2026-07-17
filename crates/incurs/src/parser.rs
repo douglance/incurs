@@ -31,6 +31,15 @@ pub struct ParseResult {
     pub options: BTreeMap<String, Value>,
 }
 
+/// The result of extracting CLI-level global options from argv.
+#[derive(Debug, Clone)]
+pub struct ParseGlobalsResult {
+    /// Parsed global option values.
+    pub parsed: BTreeMap<String, Value>,
+    /// Tokens not consumed as globals, preserved for command parsing.
+    pub rest: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Internal lookup tables
 // ---------------------------------------------------------------------------
@@ -137,11 +146,14 @@ fn coerce(value: Value, field_type: &FieldType) -> Value {
     match field_type {
         FieldType::Number => match &value {
             Value::String(s) => s
-                .parse::<f64>()
-                .map(|n| {
-                    serde_json::Number::from_f64(n)
-                        .map(Value::Number)
-                        .unwrap_or(value.clone())
+                .parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| {
+                    s.parse::<f64>().map(|number| {
+                        serde_json::Number::from_f64(number)
+                            .map(Value::Number)
+                            .unwrap_or(value.clone())
+                    })
                 })
                 .unwrap_or(value),
             _ => value,
@@ -273,11 +285,36 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
         }
     }
 
-    // Assign positionals to args fields in order.
+    // Assign positionals to args fields in order. A final array field is
+    // variadic and collects all remaining positional values.
     let mut args: BTreeMap<String, Value> = BTreeMap::new();
     for (idx, field) in options.args_fields.iter().enumerate() {
-        if let Some(val) = positionals.get(idx) {
+        if matches!(field.field_type, FieldType::Array(_)) {
+            if idx != options.args_fields.len() - 1 {
+                return Err(ParseError {
+                    message: format!(
+                        "Variadic arg \"{}\" must be the last key in the args schema",
+                        field.name
+                    ),
+                    cause: None,
+                });
+            }
+            let values = positionals[idx..]
+                .iter()
+                .cloned()
+                .map(Value::String)
+                .collect::<Vec<_>>();
+            if !values.is_empty() {
+                args.insert(field.name.to_string(), Value::Array(values));
+            }
+        } else if let Some(val) = positionals.get(idx) {
             args.insert(field.name.to_string(), Value::String(val.clone()));
+        }
+
+        if !args.contains_key(field.name)
+            && let Some(default) = &field.default
+        {
+            args.insert(field.name.to_string(), default.clone());
         }
     }
 
@@ -348,10 +385,270 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
         }
     }
 
+    validate_fields(&args, &options.args_fields, "argument")?;
+    validate_fields(&raw_options, &options.options_fields, "option")?;
+
     Ok(ParseResult {
         args,
         options: raw_options,
     })
+}
+
+/// Validates parsed values against required fields and declared field types.
+pub fn validate_fields(
+    values: &BTreeMap<String, Value>,
+    fields: &[FieldMeta],
+    kind: &str,
+) -> Result<(), ParseError> {
+    for field in fields {
+        let Some(value) = values.get(field.name) else {
+            if field.required {
+                return Err(ParseError {
+                    message: format!("Missing required {kind}: {}", field.cli_name),
+                    cause: None,
+                });
+            }
+            continue;
+        };
+
+        if !value_matches_type(value, &field.field_type) {
+            let expected = match &field.field_type {
+                FieldType::Enum(values) => values.join(" | "),
+                field_type => field_type.display_name(),
+            };
+            return Err(ParseError {
+                message: format!(
+                    "Invalid value for {kind} {}: expected {expected}, received {value}",
+                    field.cli_name
+                ),
+                cause: None,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Coerces structured object values according to their declared field types.
+pub fn coerce_fields(
+    mut values: BTreeMap<String, Value>,
+    fields: &[FieldMeta],
+) -> BTreeMap<String, Value> {
+    for field in fields {
+        if let Some(value) = values.remove(field.name) {
+            values.insert(field.name.to_string(), coerce(value, &field.field_type));
+        } else if let Some(default) = &field.default {
+            values.insert(field.name.to_string(), default.clone());
+        }
+    }
+    values
+}
+
+/// Returns field-level validation details for structured transport inputs.
+pub fn field_errors(
+    values: &BTreeMap<String, Value>,
+    fields: &[FieldMeta],
+) -> Vec<crate::errors::FieldError> {
+    let mut errors = Vec::new();
+    for field in fields {
+        let Some(value) = values.get(field.name) else {
+            if field.required {
+                errors.push(crate::errors::FieldError {
+                    path: field.name.to_string(),
+                    expected: field.field_type.display_name(),
+                    received: "undefined".to_string(),
+                    message: "Required".to_string(),
+                });
+            }
+            continue;
+        };
+        if !value_matches_type(value, &field.field_type) {
+            errors.push(crate::errors::FieldError {
+                path: field.name.to_string(),
+                expected: match &field.field_type {
+                    FieldType::Enum(values) => values.join(" | "),
+                    field_type => field_type.display_name(),
+                },
+                received: value.to_string(),
+                message: format!("Invalid value for {}", field.cli_name),
+            });
+        }
+    }
+    errors
+}
+
+/// Extracts known CLI-level global options while preserving command tokens and
+/// unknown flags for the regular command parser.
+pub fn parse_globals(
+    argv: &[String],
+    fields: &[FieldMeta],
+    aliases: &HashMap<String, char>,
+) -> Result<ParseGlobalsResult, ParseError> {
+    let names = OptionNames::build(fields, aliases);
+    let mut parsed = BTreeMap::new();
+    let mut rest = Vec::new();
+    let mut i = 0;
+
+    while i < argv.len() {
+        let token = &argv[i];
+        if token == "--" {
+            rest.extend_from_slice(&argv[i..]);
+            break;
+        }
+
+        if token.starts_with("--no-") && token.len() > 5 {
+            if let Some(name) = names.normalize(&token[5..]) {
+                parsed.insert(name, Value::Bool(false));
+            } else {
+                rest.push(token.clone());
+            }
+            i += 1;
+            continue;
+        }
+
+        if let Some(raw) = token.strip_prefix("--") {
+            if let Some((raw_name, value)) = raw.split_once('=') {
+                if let Some(name) = names.normalize(raw_name) {
+                    set_option(&mut parsed, &name, value, &names);
+                } else {
+                    rest.push(token.clone());
+                }
+                i += 1;
+                continue;
+            }
+
+            let Some(name) = names.normalize(raw) else {
+                rest.push(token.clone());
+                i += 1;
+                continue;
+            };
+            if names.is_count(&name) {
+                let count = parsed.get(&name).and_then(Value::as_u64).unwrap_or(0);
+                parsed.insert(name, Value::Number((count + 1).into()));
+                i += 1;
+            } else if names.is_boolean(&name) {
+                parsed.insert(name, Value::Bool(true));
+                i += 1;
+            } else {
+                let value = argv.get(i + 1).ok_or_else(|| ParseError {
+                    message: format!("Missing value for flag: {token}"),
+                    cause: None,
+                })?;
+                set_option(&mut parsed, &name, value, &names);
+                i += 2;
+            }
+            continue;
+        }
+
+        if token.starts_with('-') && token.len() >= 2 {
+            let chars = token[1..].chars().collect::<Vec<_>>();
+            if chars.iter().any(|ch| !names.alias_to_name.contains_key(ch)) {
+                rest.push(token.clone());
+                i += 1;
+                continue;
+            }
+            for (index, ch) in chars.iter().enumerate() {
+                let name = names.alias_to_name.get(ch).expect("checked above");
+                let last = index == chars.len() - 1;
+                if names.is_count(name) {
+                    let count = parsed.get(name).and_then(Value::as_u64).unwrap_or(0);
+                    parsed.insert(name.clone(), Value::Number((count + 1).into()));
+                } else if names.is_boolean(name) {
+                    parsed.insert(name.clone(), Value::Bool(true));
+                } else if !last {
+                    return Err(ParseError {
+                        message: format!("Non-boolean flag -{ch} must be last in a stacked alias"),
+                        cause: None,
+                    });
+                } else {
+                    let value = argv.get(i + 1).ok_or_else(|| ParseError {
+                        message: format!("Missing value for flag: -{ch}"),
+                        cause: None,
+                    })?;
+                    set_option(&mut parsed, name, value, &names);
+                    i += 1;
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        rest.push(token.clone());
+        i += 1;
+    }
+
+    for field in fields {
+        if let Some(value) = parsed.remove(field.name) {
+            let value = coerce(value, &field.field_type);
+            if !value_matches_type(&value, &field.field_type) {
+                return Err(ParseError {
+                    message: format!(
+                        "Invalid value for --{}: expected {}",
+                        field.cli_name,
+                        field.field_type.display_name()
+                    ),
+                    cause: None,
+                });
+            }
+            parsed.insert(field.name.to_string(), value);
+        } else if let Some(default) = &field.default {
+            parsed.insert(field.name.to_string(), default.clone());
+        } else if field.required {
+            return Err(ParseError {
+                message: format!("Missing required global option: --{}", field.cli_name),
+                cause: None,
+            });
+        }
+    }
+
+    Ok(ParseGlobalsResult { parsed, rest })
+}
+
+/// Splits and validates CLI-level global values from structured HTTP input.
+pub fn parse_global_input(
+    mut input: BTreeMap<String, Value>,
+    fields: &[FieldMeta],
+) -> Result<(Value, BTreeMap<String, Value>), ParseError> {
+    let mut globals = serde_json::Map::new();
+    for field in fields {
+        let value = input
+            .remove(field.name)
+            .or_else(|| input.remove(&field.cli_name));
+        if let Some(value) = value {
+            let value = coerce(value, &field.field_type);
+            if !value_matches_type(&value, &field.field_type) {
+                return Err(ParseError {
+                    message: format!(
+                        "Invalid value for global option --{}: expected {}",
+                        field.cli_name,
+                        field.field_type.display_name()
+                    ),
+                    cause: None,
+                });
+            }
+            globals.insert(field.name.to_string(), value);
+        } else if let Some(default) = &field.default {
+            globals.insert(field.name.to_string(), default.clone());
+        } else if field.required {
+            return Err(ParseError {
+                message: format!("Missing required global option: --{}", field.cli_name),
+                cause: None,
+            });
+        }
+    }
+    Ok((Value::Object(globals), input))
+}
+
+fn value_matches_type(value: &Value, field_type: &FieldType) -> bool {
+    match field_type {
+        FieldType::String => value.is_string(),
+        FieldType::Number | FieldType::Count => value.is_number(),
+        FieldType::Boolean => value.is_boolean(),
+        FieldType::Array(_) => value.is_array(),
+        FieldType::Enum(values) => value
+            .as_str()
+            .is_some_and(|value| values.iter().any(|candidate| candidate == value)),
+        FieldType::Value => true,
+    }
 }
 
 /// Parses environment variables against field metadata.
@@ -606,10 +903,7 @@ mod tests {
             defaults: None,
         };
         let result = parse(&argv(&["--port", "8080"]), &opts).unwrap();
-        assert_eq!(
-            result.options["port"],
-            Value::Number(serde_json::Number::from_f64(8080.0).unwrap())
-        );
+        assert_eq!(result.options["port"], Value::from(8080));
     }
 
     #[test]
@@ -754,10 +1048,7 @@ mod tests {
             defaults: None,
         };
         let result = parse(&argv(&["42"]), &opts).unwrap();
-        assert_eq!(
-            result.args["count"],
-            Value::Number(serde_json::Number::from_f64(42.0).unwrap())
-        );
+        assert_eq!(result.args["count"], Value::from(42));
     }
 
     #[test]

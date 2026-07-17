@@ -30,6 +30,10 @@ pub struct FormatRootOptions {
     pub commands: Vec<CommandSummary>,
     /// A short description of the CLI or group.
     pub description: Option<String>,
+    /// CLI-level custom global option fields.
+    pub globals_fields: Vec<FieldMeta>,
+    /// Map of custom global option names to single-char aliases.
+    pub global_aliases: HashMap<String, char>,
     /// Whether this is the root-level CLI (shows additional built-in flags).
     pub root: bool,
     /// CLI version string.
@@ -56,6 +60,10 @@ pub struct FormatCommandOptions {
     pub hint: Option<String>,
     /// Whether to hide the global options section.
     pub hide_global_options: bool,
+    /// CLI-level custom global option fields.
+    pub globals_fields: Vec<FieldMeta>,
+    /// Map of custom global option names to single-char aliases.
+    pub global_aliases: HashMap<String, char>,
     /// Schema for named options/flags.
     pub options_fields: Vec<FieldMeta>,
     /// Map of option names to single-char aliases.
@@ -111,6 +119,11 @@ pub fn format_root(name: &str, options: &FormatRootOptions) -> String {
             }
         }
     }
+
+    lines.extend(custom_global_options_lines(
+        &options.globals_fields,
+        &options.global_aliases,
+    ));
 
     // Global options
     lines.extend(global_options_lines(
@@ -281,6 +294,13 @@ pub fn format_command(name: &str, options: &FormatCommandOptions) -> String {
         }
     }
 
+    if !options.hide_global_options {
+        lines.extend(custom_global_options_lines(
+            &options.globals_fields,
+            &options.global_aliases,
+        ));
+    }
+
     // Global options
     if !options.hide_global_options {
         lines.extend(global_options_lines(
@@ -349,6 +369,57 @@ struct EnvEntry {
     default_value: Option<String>,
 }
 
+fn custom_global_options_lines(
+    fields: &[FieldMeta],
+    aliases: &HashMap<String, char>,
+) -> Vec<String> {
+    if fields.is_empty() {
+        return Vec::new();
+    }
+
+    let entries = fields
+        .iter()
+        .map(|field| {
+            let type_name = field.field_type.display_name();
+            let value = if matches!(field.field_type, FieldType::Boolean | FieldType::Count) {
+                String::new()
+            } else {
+                format!(" <{type_name}>")
+            };
+            let flag = match aliases.get(field.name).copied().or(field.alias) {
+                Some(alias) => format!("-{alias}, --{}{value}", field.cli_name),
+                None => format!("--{}{value}", field.cli_name),
+            };
+            OptionEntry {
+                flag,
+                description: field.description.unwrap_or("").to_string(),
+                default_value: field.default.as_ref().map(|value| format!("{value}")),
+                deprecated: field.deprecated,
+            }
+        })
+        .collect::<Vec<_>>();
+    let max_len = entries
+        .iter()
+        .map(|entry| entry.flag.len())
+        .max()
+        .unwrap_or(0);
+    let mut lines = vec![String::new(), "Custom Global Options:".to_string()];
+    for entry in entries {
+        let padding = " ".repeat(max_len - entry.flag.len());
+        let prefix = if entry.deprecated {
+            "[deprecated] "
+        } else {
+            ""
+        };
+        let description = match entry.default_value {
+            Some(default) => format!("{prefix}{} (default: {default})", entry.description),
+            None => format!("{prefix}{}", entry.description),
+        };
+        lines.push(format!("  {}{padding}  {description}", entry.flag));
+    }
+    lines
+}
+
 /// Builds the synopsis string with `<required>` and `[optional]` placeholders.
 fn build_synopsis(name: &str, args_fields: &[FieldMeta]) -> String {
     if args_fields.is_empty() {
@@ -380,8 +451,8 @@ fn global_options_lines(root: bool, config_flag: Option<&str>) -> Vec<String> {
     if root {
         let builtins = vec![
             ("completions", "Generate shell completion script"),
-            ("mcp add", "Register as MCP server"),
-            ("skills add", "Sync skill files to agents"),
+            ("mcp", "Register as MCP server (add, doctor)"),
+            ("skills", "Sync skill files to agents (add, list)"),
         ];
         let max_cmd = builtins.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
         lines.push(String::new());
@@ -507,6 +578,8 @@ mod tests {
                     },
                 ],
                 description: Some("A test CLI".to_string()),
+                global_aliases: HashMap::new(),
+                globals_fields: Vec::new(),
                 root: false,
                 version: Some("1.0.0".to_string()),
             },
@@ -544,6 +617,8 @@ mod tests {
                     command: "production".to_string(),
                     description: Some("Deploy to prod".to_string()),
                 }],
+                global_aliases: HashMap::new(),
+                globals_fields: Vec::new(),
                 hint: None,
                 hide_global_options: false,
                 options_fields: vec![FieldMeta {
