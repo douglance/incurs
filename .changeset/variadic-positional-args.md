@@ -1,5 +1,5 @@
 ---
-'incur': minor
+'incur': patch
 ---
 
 Added variadic positional arguments: a final `z.array(...)` args key collects all remaining positionals.
