@@ -1,0 +1,16 @@
+error[E0271]: expected `{async block@$DIR/tests/ui/typed_output_mismatch.rs:11:75: 11:85}` to be a future that resolves to `TypedResult<Expected>`, but it resolves to `TypedResult<String>`
+  --> tests/ui/typed_output_mismatch.rs:11:58
+   |
+11 |     let _ = CommandDef::typed::<(), (), (), Expected, _, _>("bad", |_ctx| async move {
+   |                                                          ^ expected `TypedResult<Expected>`, found `TypedResult<String>`
+   |
+   = note: expected enum `TypedResult<Expected>`
+              found enum `TypedResult<std::string::String>`
+note: required by a bound in `incurs::command::CommandDef::typed`
+  --> src/command.rs
+   |
+   |     pub fn typed<Args, Options, Env, Output, Handler, HandlerFuture>(
+   |            ----- required by a bound in this associated function
+...
+   |         HandlerFuture: Future<Output = TypedResult<Output>> + Send + 'static,
+   |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `CommandDef::typed`

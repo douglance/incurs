@@ -1960,12 +1960,7 @@ mod streaming {
     #[tokio::test]
     async fn terminal_success_preserves_cta() {
         let r = serve(&create_app(), &["stream-ok", "--format", "jsonl"]).await;
-        let lines = r
-            .output
-            .trim()
-            .lines()
-            .map(|line| json(line))
-            .collect::<Vec<_>>();
+        let lines = r.output.trim().lines().map(json).collect::<Vec<_>>();
         assert_eq!(lines[2]["type"], "done");
         assert_eq!(
             lines[2]["meta"]["cta"]["commands"][0]["command"],
@@ -1976,12 +1971,7 @@ mod streaming {
     #[tokio::test]
     async fn terminal_error_stops_stream_and_sets_exit_code() {
         let r = serve(&create_app(), &["stream-error", "--format", "jsonl"]).await;
-        let lines = r
-            .output
-            .trim()
-            .lines()
-            .map(|line| json(line))
-            .collect::<Vec<_>>();
+        let lines = r.output.trim().lines().map(json).collect::<Vec<_>>();
         assert_eq!(r.exit_code, Some(77));
         assert_eq!(lines[1]["type"], "error");
         assert_eq!(lines[1]["error"]["code"], "STREAM_ERR");

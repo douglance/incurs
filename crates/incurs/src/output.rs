@@ -157,8 +157,6 @@ impl Format {
             "yaml" => Some(Format::Yaml),
             "md" | "markdown" => Some(Format::Markdown),
             "jsonl" => Some(Format::Jsonl),
-            "table" => Some(Format::Table),
-            "csv" => Some(Format::Csv),
             _ => None,
         }
     }

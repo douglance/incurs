@@ -562,15 +562,15 @@ impl crate::command::CommandHandler for OpenApiHandler {
 
         let mut query_parts: Vec<String> = Vec::new();
         for param_name in &self.query_param_names {
-            if let Some(value) = options.get(param_name) {
-                if !value.is_null() {
-                    let str_val = value_to_string(value);
-                    query_parts.push(format!(
-                        "{}={}",
-                        urlencoding::encode(param_name),
-                        urlencoding::encode(&str_val)
-                    ));
-                }
+            if let Some(value) = options.get(param_name)
+                && !value.is_null()
+            {
+                let str_val = value_to_string(value);
+                query_parts.push(format!(
+                    "{}={}",
+                    urlencoding::encode(param_name),
+                    urlencoding::encode(&str_val)
+                ));
             }
         }
 
@@ -608,10 +608,10 @@ impl crate::command::CommandHandler for OpenApiHandler {
         let body = if !self.body_prop_names.is_empty() {
             let mut body_obj = serde_json::Map::new();
             for key in &self.body_prop_names {
-                if let Some(value) = options.get(key) {
-                    if !value.is_null() {
-                        body_obj.insert(key.clone(), value.clone());
-                    }
+                if let Some(value) = options.get(key)
+                    && !value.is_null()
+                {
+                    body_obj.insert(key.clone(), value.clone());
                 }
             }
             if body_obj.is_empty() {
@@ -626,27 +626,27 @@ impl crate::command::CommandHandler for OpenApiHandler {
 
         let result = (self.fetch_fn)(full_url, self.http_method.clone(), headers, body).await;
 
-        if let Some(obj) = result.as_object() {
-            if obj.get("ok") == Some(&Value::Bool(false)) {
-                let message = obj
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| obj.get("error").and_then(|v| v.as_str()))
-                    .unwrap_or("Request failed")
-                    .to_string();
-                let code = obj
-                    .get("status")
-                    .and_then(|v| v.as_u64())
-                    .map(|s| format!("HTTP_{}", s))
-                    .unwrap_or_else(|| "HTTP_ERROR".to_string());
-                return crate::output::CommandResult::Error {
-                    code,
-                    message,
-                    retryable: false,
-                    exit_code: Some(1),
-                    cta: None,
-                };
-            }
+        if let Some(obj) = result.as_object()
+            && obj.get("ok") == Some(&Value::Bool(false))
+        {
+            let message = obj
+                .get("message")
+                .and_then(|v| v.as_str())
+                .or_else(|| obj.get("error").and_then(|v| v.as_str()))
+                .unwrap_or("Request failed")
+                .to_string();
+            let code = obj
+                .get("status")
+                .and_then(|v| v.as_u64())
+                .map(|s| format!("HTTP_{}", s))
+                .unwrap_or_else(|| "HTTP_ERROR".to_string());
+            return crate::output::CommandResult::Error {
+                code,
+                message,
+                retryable: false,
+                exit_code: Some(1),
+                cta: None,
+            };
         }
 
         crate::output::CommandResult::Ok {

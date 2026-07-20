@@ -1,0 +1,28 @@
+{
+  "expected_tests": 1062,
+  "files": [
+    { "file": "src/Cli.test-d.ts", "classification": "rust_native", "rust_target": "crates/incurs/tests/typed.rs and compile-fail tests", "reason": "TypeScript inference maps to Rust compile-time API checks" },
+    { "file": "src/Cli.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/cli.rs and crates/incurs/tests/e2e.rs", "reason": "Observable CLI, HTTP, MCP, middleware, and artifact behavior" },
+    { "file": "src/Completions.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/completions.rs", "reason": "Shell completion contract" },
+    { "file": "src/Errors.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/errors.rs", "reason": "Structured error contract" },
+    { "file": "src/Fetch.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/fetch.rs and crates/incurs/src/http.rs", "reason": "Fetch parsing, gateway, response, and streaming behavior" },
+    { "file": "src/Filter.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/filter.rs", "reason": "Output-filter grammar and projection" },
+    { "file": "src/Formatter.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/formatter.rs", "reason": "Machine and human output formatting" },
+    { "file": "src/Help.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/help.rs", "reason": "Help text contract" },
+    { "file": "src/Mcp.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/mcp.rs and crates/incurs/src/http.rs", "reason": "MCP tool server behavior" },
+    { "file": "src/McpSource.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/mcp.rs", "reason": "Remote MCP command-source behavior" },
+    { "file": "src/Openapi.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/openapi.rs", "reason": "OpenAPI import, export, security, and forwarding behavior" },
+    { "file": "src/Parser.test-d.ts", "classification": "rust_native", "rust_target": "crates/incurs/tests/typed.rs and compile-fail tests", "reason": "TypeScript parser inference maps to derived Rust input types" },
+    { "file": "src/Parser.test.ts", "classification": "shared", "rust_target": "crates/incurs/tests/parser_test.rs", "reason": "Argv parsing and validation behavior" },
+    { "file": "src/Schema.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/schema.rs and crates/incurs-macros", "reason": "Schema projection contract" },
+    { "file": "src/Skill.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/skill.rs", "reason": "Generated skill content" },
+    { "file": "src/Skillgen.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/skill.rs and crates/incurs/src/sync_skills.rs", "reason": "Skill artifact generation" },
+    { "file": "src/SyncMcp.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/sync_mcp.rs", "reason": "Agent MCP registration behavior" },
+    { "file": "src/SyncSkills.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/sync_skills.rs", "reason": "Skill installation and drift behavior" },
+    { "file": "src/Typegen.test.ts", "classification": "rust_native", "rust_target": "crates/incurs-cli/src/main.rs", "reason": "Rust source and canonical JSON replace TypeScript declaration generation" },
+    { "file": "src/bun-compile.test.ts", "classification": "typescript_only", "rust_target": "cargo build and minimal-feature checks", "reason": "Bun compilation is TypeScript-runtime specific" },
+    { "file": "src/e2e.test.ts", "classification": "shared", "rust_target": "crates/incurs/tests/e2e.rs and tests/parity/cases.json", "reason": "End-to-end observable behavior across all transports" },
+    { "file": "src/lazy-imports.test.ts", "classification": "typescript_only", "rust_target": "Cargo feature isolation checks", "reason": "JavaScript module loading maps to Rust feature isolation" },
+    { "file": "src/middleware.test.ts", "classification": "shared", "rust_target": "crates/incurs/src/middleware.rs", "reason": "Middleware typing and execution order" }
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  { "name": "help", "args": ["--help"], "compare": "text" },
+  { "name": "version", "args": ["--version"], "compare": "text" },
+  { "name": "default toon", "args": ["stats"], "compare": "text" },
+  { "name": "json shorthand", "args": ["stats", "--json"], "compare": "json" },
+  { "name": "json format", "args": ["list", "--format", "json"], "compare": "json" },
+  { "name": "yaml format", "args": ["stats", "--format", "yaml"], "compare": "text" },
+  { "name": "option default", "args": ["list", "--json"], "compare": "json" },
+  { "name": "option value", "args": ["list", "--status", "pending", "--json"], "compare": "json" },
+  { "name": "option alias", "args": ["list", "-s", "done", "--json"], "compare": "json" },
+  { "name": "positional", "args": ["get", "1", "--json"], "compare": "json" },
+  { "name": "structured error", "args": ["get", "99", "--json"], "compare": "json" },
+  { "name": "cta", "args": ["add", "test item", "--priority", "high", "--json"], "compare": "json" },
+  { "name": "filter", "args": ["stats", "--filter-output", "by_priority.high", "--json"], "compare": "json" },
+  { "name": "full output", "args": ["complete", "1", "--full-output", "--json"], "compare": "json" },
+  { "name": "buffered stream", "args": ["stream", "--json"], "compare": "json" },
+  { "name": "jsonl stream", "args": ["stream", "--format", "jsonl"], "compare": "json_lines" }
+]

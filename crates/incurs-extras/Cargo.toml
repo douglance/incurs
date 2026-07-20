@@ -1,0 +1,11 @@
+[package]
+name = "incurs-extras"
+version = "0.3.0"
+edition = "2024"
+description = "Opt-in output formats and extensions for incurs"
+license = "MIT"
+repository = "https://github.com/douglance/incurs"
+
+[dependencies]
+incurs = { path = "../incurs", version = "0.3.0" }
+serde_json = "1"

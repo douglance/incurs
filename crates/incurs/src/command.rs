@@ -8,10 +8,14 @@
 //! Ported from `src/internal/command.ts`.
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use futures::Stream;
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 
@@ -172,6 +176,212 @@ impl CommandDef {
             mcp: None,
         }
     }
+
+    /// Creates a fully typed command builder.
+    ///
+    /// The input schemas are derived from [`crate::schema::IncurSchema`], and
+    /// the output schema is derived from [`schemars::JsonSchema`]. The handler
+    /// receives typed values after the shared transport parser validates the
+    /// raw CLI, HTTP, or MCP input.
+    pub fn typed<Args, Options, Env, Output, Handler, HandlerFuture>(
+        name: impl Into<String>,
+        handler: Handler,
+    ) -> CommandBuilder
+    where
+        Args: crate::schema::IncurSchema + Send + Sync + 'static,
+        Options: crate::schema::IncurSchema + Send + Sync + 'static,
+        Env: crate::schema::IncurSchema + Send + Sync + 'static,
+        Output: JsonSchema + Serialize + Send + Sync + 'static,
+        Handler: Fn(TypedContext<Args, Options, Env>) -> HandlerFuture + Send + Sync + 'static,
+        HandlerFuture: Future<Output = TypedResult<Output>> + Send + 'static,
+    {
+        let output_schema = serde_json::to_value(schemars::schema_for!(Output))
+            .expect("schemars output must serialize to JSON");
+        let mut builder = Self::build(
+            name,
+            TypedHandler::<Args, Options, Env, Output, Handler> {
+                handler,
+                marker: PhantomData,
+            },
+        )
+        .args::<Args>()
+        .options::<Options>()
+        .env::<Env>();
+        builder.def.output_schema = Some(output_schema);
+        builder
+    }
+}
+
+/// Typed command execution context.
+pub struct TypedContext<Args, Options, Env> {
+    /// Whether the consumer is an agent.
+    pub agent: bool,
+    /// Validated positional arguments.
+    pub args: Args,
+    /// Actual CLI display name used for user-facing messages.
+    pub display_name: String,
+    /// Validated environment variables.
+    pub env: Env,
+    /// Parsed CLI-level global options.
+    pub globals: Value,
+    /// Validated named options.
+    pub options: Options,
+    /// Transport request metadata for HTTP and MCP executions.
+    pub request: Option<RequestContext>,
+    /// Resolved output format.
+    pub format: Format,
+    /// Whether the output format was explicitly requested.
+    pub format_explicit: bool,
+    /// Canonical CLI name.
+    pub name: String,
+    /// Middleware variables visible to the command.
+    pub vars: Value,
+    /// CLI version.
+    pub version: Option<String>,
+}
+
+/// Result returned by a typed command handler.
+pub enum TypedResult<Output> {
+    /// Successful typed output and optional CTA metadata.
+    Ok {
+        /// Serializable command output.
+        data: Output,
+        /// Optional follow-up commands.
+        cta: Option<CtaBlock>,
+    },
+    /// Structured command failure.
+    Error {
+        /// Machine-readable error code.
+        code: String,
+        /// Human-readable error message.
+        message: String,
+        /// Whether retrying may succeed.
+        retryable: bool,
+        /// Optional process exit code.
+        exit_code: Option<i32>,
+        /// Optional follow-up commands.
+        cta: Option<CtaBlock>,
+    },
+}
+
+impl<Output> TypedResult<Output> {
+    /// Creates a successful typed result.
+    pub fn ok(data: Output) -> Self {
+        Self::Ok { data, cta: None }
+    }
+
+    /// Creates a successful typed result with CTA metadata.
+    pub fn ok_with_cta(data: Output, cta: CtaBlock) -> Self {
+        Self::Ok {
+            data,
+            cta: Some(cta),
+        }
+    }
+
+    /// Creates a structured typed error result.
+    pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Error {
+            code: code.into(),
+            message: message.into(),
+            retryable: false,
+            exit_code: Some(1),
+            cta: None,
+        }
+    }
+}
+
+type TypedHandlerMarker<Args, Options, Env, Output> =
+    PhantomData<fn() -> (Args, Options, Env, Output)>;
+
+struct TypedHandler<Args, Options, Env, Output, Handler> {
+    handler: Handler,
+    marker: TypedHandlerMarker<Args, Options, Env, Output>,
+}
+
+#[async_trait::async_trait]
+impl<Args, Options, Env, Output, Handler, HandlerFuture> CommandHandler
+    for TypedHandler<Args, Options, Env, Output, Handler>
+where
+    Args: crate::schema::IncurSchema + Send + Sync + 'static,
+    Options: crate::schema::IncurSchema + Send + Sync + 'static,
+    Env: crate::schema::IncurSchema + Send + Sync + 'static,
+    Output: Serialize + Send + Sync + 'static,
+    Handler: Fn(TypedContext<Args, Options, Env>) -> HandlerFuture + Send + Sync + 'static,
+    HandlerFuture: Future<Output = TypedResult<Output>> + Send + 'static,
+{
+    async fn run(&self, ctx: CommandContext) -> CommandResult {
+        let args = match typed_input::<Args>(&ctx.args, "args") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let options = match typed_input::<Options>(&ctx.options, "options") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let env = match typed_input::<Env>(&ctx.env, "env") {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        match (self.handler)(TypedContext {
+            agent: ctx.agent,
+            args,
+            display_name: ctx.display_name,
+            env,
+            globals: ctx.globals,
+            options,
+            request: ctx.request,
+            format: ctx.format,
+            format_explicit: ctx.format_explicit,
+            name: ctx.name,
+            vars: ctx.vars,
+            version: ctx.version,
+        })
+        .await
+        {
+            TypedResult::Ok { data, cta } => match serde_json::to_value(data) {
+                Ok(data) => CommandResult::Ok { data, cta },
+                Err(error) => CommandResult::Error {
+                    code: "SERIALIZATION_ERROR".to_string(),
+                    message: error.to_string(),
+                    retryable: false,
+                    exit_code: Some(1),
+                    cta: None,
+                },
+            },
+            TypedResult::Error {
+                code,
+                message,
+                retryable,
+                exit_code,
+                cta,
+            } => CommandResult::Error {
+                code,
+                message,
+                retryable,
+                exit_code,
+                cta,
+            },
+        }
+    }
+}
+
+fn typed_input<Input: crate::schema::IncurSchema>(
+    value: &Value,
+    kind: &str,
+) -> std::result::Result<Input, CommandResult> {
+    let raw = value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    Input::from_raw(&raw).map_err(|error| CommandResult::Error {
+        code: "VALIDATION_ERROR".to_string(),
+        message: format!("Failed to parse typed {kind}: {error}"),
+        retryable: false,
+        exit_code: Some(1),
+        cta: None,
+    })
 }
 
 /// Builder for constructing a [`CommandDef`] ergonomically with derive macros.
@@ -875,7 +1085,10 @@ mod tests {
     #[test]
     fn test_parse_option_value() {
         assert_eq!(parse_option_value("42"), Value::from(42));
-        assert_eq!(parse_option_value("3.14"), Value::from(3.14));
+        assert_eq!(
+            parse_option_value("3.14"),
+            Value::from("3.14".parse::<f64>().unwrap())
+        );
         assert_eq!(parse_option_value("true"), Value::Bool(true));
         assert_eq!(parse_option_value("false"), Value::Bool(false));
         assert_eq!(

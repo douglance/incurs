@@ -298,7 +298,7 @@ fn format_markdown(value: &Value, path: &[String]) -> String {
 // ---------------------------------------------------------------------------
 
 /// Renders an aligned ASCII table with box-drawing-style separators.
-fn format_table(value: &Value) -> String {
+pub fn format_table(value: &Value) -> String {
     if is_scalar(value) {
         return scalar_to_string(value);
     }
@@ -451,7 +451,7 @@ fn value_to_cell(value: &Value) -> String {
 // ---------------------------------------------------------------------------
 
 /// Renders CSV output from a JSON value.
-fn format_csv(value: &Value) -> String {
+pub fn format_csv(value: &Value) -> String {
     if is_scalar(value) {
         return csv_escape(&scalar_to_string(value));
     }

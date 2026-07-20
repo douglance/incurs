@@ -352,11 +352,11 @@ mod tests {
         let schema = from_command_tree(&commands, &[]);
 
         // No commands property because the only entry is a FetchGateway.
-        assert!(schema.get("properties").map_or(true, |p| {
+        assert!(schema.get("properties").is_none_or(|p| {
             p.get("commands").is_none()
                 || p["commands"]["properties"]
                     .as_object()
-                    .map_or(true, |m| m.is_empty())
+                    .is_none_or(|m| m.is_empty())
         }));
     }
 

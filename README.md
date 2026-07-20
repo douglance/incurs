@@ -1,171 +1,174 @@
 # incurs
 
-A Rust port of [wevm/incur](https://github.com/wevm/incur) — the CLI framework for humans and AI agents.
+A Rust implementation of [wevm/incur](https://github.com/wevm/incur), the CLI framework for humans and agents.
 
-Build CLIs that work for both humans and agents. Same commands serve via CLI, HTTP, and MCP. Agent discovery, token-efficient output, streaming, middleware, shell completions — all built in.
+Define a command once and expose the same validated behavior through CLI, HTTP, MCP, OpenAPI, skill files, and shell completions. The vendored TypeScript 0.4.17 implementation is the behavioral oracle; Rust-only extensions are opt-in.
 
 ## Status
 
-The vendored TypeScript reference and the Rust implementation are synced to incur v0.4.17. The Rust APIs use native Rust types and traits, while preserving the upstream command, transport, discovery, validation, and output behavior.
+Version 0.3.0 establishes an executable parity gate and a typed Rust authoring path.
 
-| Feature                                                 | Status                         |
-| ------------------------------------------------------- | ------------------------------ |
-| CLI parsing (args, options, flags)                      | Done                           |
-| Three transports (CLI, HTTP, MCP)                       | Done                           |
-| Help (`--help`, `--version`)                            | Done                           |
-| Output formats (`--json`, `--format`, `--full-output`)  | Done                           |
-| Output filtering (`--filter-output`)                    | Done                           |
-| Streaming (chunks and terminal records)                 | Done                           |
-| Middleware (onion-style)                                | Done                           |
-| Shell completions (bash/zsh/fish/nushell)               | Done                           |
-| Agent discovery (21 agents)                             | Done                           |
-| Skill file generation (`--llms`, `skills add`)          | Done                           |
-| MCP registration (`mcp add`)                            | Done                           |
-| TOON output format                                      | Done (via `toon-format` crate) |
-| Token counting/limiting                                 | Done (via `tiktoken-rs`)       |
-| Config file loading                                     | Done                           |
-| OpenAPI import/export                                   | Done                           |
-| Global options and aliases                              | Done                           |
-| Progressive/direct MCP discovery and filtering          | Done                           |
-| Remote MCP-over-HTTP command sources                    | Done                           |
-| Derive macros (`IncurArgs`, `IncurOptions`, `IncurEnv`) | Done                           |
+| Surface | 0.3 status |
+| --- | --- |
+| CLI parsing, help, validation, aliases, output and streaming | Parity-gated |
+| HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
+| MCP 2025-11-25, progressive/direct discovery and calls | Implemented with `rmcp` 2.2 |
+| OpenAPI, skills and shell completions | Generated from the shared command graph |
+| Typed args, options, env and output | `CommandDef::typed` plus derive macros |
+| Rust and JSON generation | `incurs gen` |
+| Rust-only table and CSV formats | Explicit `incurs-extras` opt-in |
 
-## Quick Start
+The parity inventory classifies all 1,062 tests in the vendored TypeScript oracle. `cargo xtask parity` also runs shared CLI observations against both implementations and compares structured JSON/JSONL or normalized text.
 
-Add to your `Cargo.toml`:
+## Quick start
 
 ```toml
 [dependencies]
-incur = { git = "https://github.com/douglance/incurs" }
-async-trait = "0.1"
+incurs = "0.3"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
-serde_json = "1"
 ```
 
-Build a CLI:
-
 ```rust
-use incur::cli::Cli;
-use incur::command::{CommandDef, CommandHandler, CommandContext, Example};
-use incur::output::CommandResult;
-use incur::schema::{FieldMeta, FieldType};
-use serde_json::json;
-use std::collections::HashMap;
+use incurs::cli::Cli;
+use incurs::command::{CommandDef, TypedContext, TypedResult};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-struct GreetHandler;
+#[derive(Deserialize, incurs::Args)]
+struct GreetArgs {
+    /// Name to greet.
+    name: String,
+}
 
-#[async_trait::async_trait]
-impl CommandHandler for GreetHandler {
-    async fn run(&self, ctx: CommandContext) -> CommandResult {
-        let name = ctx.args.get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("world");
-        CommandResult::Ok {
-            data: json!({ "message": format!("Hello, {}!", name) }),
-            cta: None,
-        }
-    }
+#[derive(Deserialize, incurs::Options)]
+struct GreetOptions {
+    /// Add an exclamation mark.
+    excited: bool,
+}
+
+#[derive(JsonSchema, Serialize)]
+struct GreetOutput {
+    message: String,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::io::Result<()> {
+    let greet = CommandDef::typed::<GreetArgs, GreetOptions, (), GreetOutput, _, _>(
+        "greet",
+        |ctx: TypedContext<GreetArgs, GreetOptions, ()>| async move {
+            TypedResult::ok(GreetOutput {
+                message: format!(
+                    "Hello, {}{}",
+                    ctx.args.name,
+                    if ctx.options.excited { "!" } else { "." },
+                ),
+            })
+        },
+    )
+    .description("Greet someone")
+    .done();
+
     Cli::create("greet")
-        .description("A greeting CLI")
         .version("1.0.0")
-        .command("hello", CommandDef {
-            name: "hello".to_string(),
-            description: Some("Say hello".to_string()),
-            args_fields: vec![FieldMeta {
-                name: "name",
-                cli_name: "name".to_string(),
-                description: Some("Who to greet"),
-                field_type: FieldType::String,
-                required: false,
-                default: Some(json!("world")),
-                alias: None,
-                deprecated: false,
-                env_name: None,
-            }],
-            options_fields: vec![],
-            env_fields: vec![],
-            aliases: HashMap::new(),
-            examples: vec![],
-            hint: None,
-            format: None,
-            output_policy: None,
-            handler: Box::new(GreetHandler),
-            middleware: vec![],
-            output_schema: None,
-        })
+        .command("greet", greet)
         .serve()
         .await
-        .unwrap();
 }
 ```
 
-```
-$ greet hello Alice
-{"message":"Hello, Alice!"}
-
-$ greet --help
-greet@1.0.0 — A greeting CLI
-...
+```console
+$ greet greet Ada --excited --json
+{"message":"Hello, Ada!"}
 ```
 
-## Example
+`CommandDef::typed` derives the transport schemas from the input types and the output JSON Schema from `GreetOutput`. The handler receives validated values regardless of whether it was called by CLI, HTTP, or MCP.
 
-See [`crates/incur/examples/todoapp.rs`](crates/incur/examples/todoapp.rs) for a full example with 6 commands, streaming, middleware, CTAs, and all output formats.
+## Code generation
+
+Install or run the workspace CLI, then point it at a Cargo project whose binary exports `--llms-full --format json`:
+
+```bash
+cargo run -p incurs-cli -- gen --dir ./my-cli --entry my-cli --config-schema
+```
+
+The command writes deterministic artifacts:
+
+- `src/incurs_generated.rs`: typed command modules, argument/option types, CTA renderers, and the embedded manifest
+- `incurs.manifest.json`: canonical shared command manifest
+- `config.schema.json`: optional configuration schema
+
+Use `--output` and `--json-output` to override the first two paths. `--entry` accepts a Cargo binary name or an executable path.
+
+## Rust-only extensions
+
+Parity-default help and parsing expose only upstream formats. Table and CSV remain available through the separate extension crate:
+
+```toml
+[dependencies]
+incurs-extras = "0.3"
+```
+
+```rust
+use incurs_extras::{CliExtras, ExtraFormat};
+
+let cli = cli.default_extra_format(ExtraFormat::Table);
+```
+
+## Runtime and transports
+
+`Cli::run_to` is the injectable execution boundary. `serve` and `serve_with` are process adapters over it, while `serve_to` is the stable buffered test surface. This keeps parsing, discovery, middleware, command execution, formatting, CTAs, and exit behavior on one path.
+
+The optional transport features are:
+
+```toml
+incurs = { version = "0.3", features = ["http", "mcp", "openapi"] }
+```
+
+HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known skill files, and fetch gateways. MCP supports current protocol initialization, filtered progressive discovery, direct discovery, and invocation through the same command graph.
+
+## Examples
+
+[`crates/incurs/examples/todoapp.rs`](crates/incurs/examples/todoapp.rs) exercises commands, streaming, middleware, CTAs, discovery, and output formats.
 
 ```bash
 cargo run -p incurs --example todoapp -- --help
 cargo run -p incurs --example todoapp -- add "Buy groceries" --priority high
 cargo run -p incurs --example todoapp -- list --json
-cargo run -p incurs --example todoapp -- stats --full-output
 cargo run -p incurs --example todoapp -- stream
 ```
 
-## Architecture
-
-```
-crates/
-  incur/           # main library (9,400+ lines)
-    src/
-      cli.rs       # Cli builder, serve(), command tree
-      command.rs   # unified execute() across CLI/HTTP/MCP
-      parser.rs    # argv parsing (--key=val, -abc, --no-flag, counts, arrays)
-      help.rs      # help text generation
-      formatter.rs # TOON, JSON, YAML, Markdown output
-      filter.rs    # output filtering by key paths
-      errors.rs    # error hierarchy
-      middleware.rs # onion-style async middleware
-      agents.rs    # 21 AI agent configs with detection
-      skill.rs     # SKILL.md generation
-      completions.rs # bash/zsh/fish/nushell
-      streaming.rs # async stream utilities
-      ...          # + fetch, mcp, config, sync, openapi
-  incur-macros/    # proc macros (#[derive(IncurArgs/Options/Env)])
-  incur-cli/       # codegen binary (stub)
-```
-
-## Keeping in Sync with Upstream
-
-This repository vendors TypeScript [wevm/incur](https://github.com/wevm/incur) v0.4.17 as its reference implementation. Rust support is maintained from that reference:
-
-1. TS tests define correct behavior
-2. Rust integration tests (`tests/e2e.rs`, `tests/parser_test.rs`) port those tests
-3. `tests/compare.sh` diffs shared JSON behavior between the TS and Rust todoapp examples
-4. When upstream changes, port the new tests first (they fail), then update the Rust code
-
-The comparison suite covers shared executable behavior; Rust unit and integration tests cover language-specific APIs and the HTTP, MCP, OpenAPI, streaming, and skill-generation contracts.
+## Verification
 
 ```bash
-# Run all Rust tests
-cargo test --workspace
+# TypeScript oracle inventory plus executable cross-language cases
+cargo xtask parity
 
-# Run the TS vs Rust comparison
-bash tests/compare.sh
+# Rust contracts across every feature
+cargo test --workspace --all-features
+
+# Public documentation
+cargo doc --workspace --all-features --no-deps
+```
+
+See [MIGRATION.md](MIGRATION.md) for the 0.2 to 0.3 transition.
+
+## Architecture
+
+```text
+typed command definitions
+          |
+          v
+shared command graph + schemas
+  |       |       |       |
+ CLI     HTTP     MCP   generated artifacts
+                           |-- OpenAPI
+                           |-- skills
+                           |-- completions
+                           `-- Rust/JSON codegen
 ```
 
 ## License
 
-MIT — same as upstream [wevm/incur](https://github.com/wevm/incur).
+MIT, matching upstream [wevm/incur](https://github.com/wevm/incur).

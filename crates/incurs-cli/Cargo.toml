@@ -1,6 +1,6 @@
 [package]
 name = "incurs-cli"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 
 [[bin]]
@@ -8,5 +8,9 @@ name = "incurs"
 path = "src/main.rs"
 
 [dependencies]
-incurs = { path = "../incurs", features = ["cli"] }
+incurs = { path = "../incurs", version = "0.3.0", features = ["cli"] }
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+
+[dev-dependencies]
+syn = { version = "2", features = ["full"] }

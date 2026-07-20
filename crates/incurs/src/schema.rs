@@ -75,6 +75,16 @@ pub trait IncurSchema: Sized {
     }
 }
 
+impl IncurSchema for () {
+    fn fields() -> Vec<FieldMeta> {
+        Vec::new()
+    }
+
+    fn from_raw(_raw: &BTreeMap<String, Value>) -> std::result::Result<Self, ValidationError> {
+        Ok(())
+    }
+}
+
 /// Builds a JSON Schema object from a slice of [`FieldMeta`], following the
 /// type mapping used by the `--schema` flag: String→string, Number/Count→number,
 /// Boolean→boolean, Array→array of inner, Enum→string with `enum` values, and

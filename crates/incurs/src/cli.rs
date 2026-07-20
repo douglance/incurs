@@ -29,6 +29,44 @@ use crate::output::*;
 use crate::schema::FieldMeta;
 use crate::skill;
 
+struct ProcessWriter;
+
+impl std::io::Write for ProcessWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        std::io::stdout().write(buffer)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stdout().flush()
+    }
+}
+
+/// Injectable process inputs used by the shared CLI execution path.
+pub struct Runtime {
+    /// Actual binary name used in user-facing output.
+    pub display_name: String,
+    /// Environment variables visible to command schemas.
+    pub env: HashMap<String, String>,
+    /// Whether output is being rendered for a human terminal.
+    pub human: bool,
+}
+
+impl Runtime {
+    /// Creates a runtime using explicit process inputs.
+    pub fn new(display_name: impl Into<String>, env: HashMap<String, String>, human: bool) -> Self {
+        Self {
+            display_name: display_name.into(),
+            env,
+            human,
+        }
+    }
+
+    /// Creates a runtime from the current process environment.
+    pub fn process(display_name: impl Into<String>, human: bool) -> Self {
+        Self::new(display_name, std::env::vars().collect(), human)
+    }
+}
+
 /// Controls which consumers see a root help banner.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum BannerMode {
@@ -127,7 +165,7 @@ pub struct Cli {
     /// Root-level middleware that runs around every command.
     pub(crate) middleware: Vec<MiddlewareFn>,
     /// Root command handler (for CLIs with a default command).
-    root_command: Option<Arc<CommandDef>>,
+    pub(crate) root_command: Option<Arc<CommandDef>>,
     /// CLI-level environment variable fields.
     pub(crate) env_fields: Vec<FieldMeta>,
     /// CLI-level global option fields.
@@ -239,7 +277,6 @@ impl Cli {
     pub fn globals_fields(mut self, fields: Vec<FieldMeta>) -> Self {
         const BUILTIN_FLAGS: &[&str] = &[
             "config-schema",
-            "csv",
             "filter-output",
             "format",
             "full-output",
@@ -249,7 +286,6 @@ impl Cli {
             "llms-full",
             "mcp",
             "schema",
-            "table",
             "token-count",
             "token-limit",
             "token-offset",
@@ -476,6 +512,17 @@ impl Cli {
         self
     }
 
+    /// Generates the skill files exposed by HTTP discovery and `skills add`.
+    #[cfg(feature = "http")]
+    pub(crate) fn skill_files(&self, depth: usize) -> Vec<skill::SkillFile> {
+        skill::split(
+            &self.name,
+            &collect_all_command_info(self.root_command.as_ref(), &self.commands),
+            depth,
+            &collect_group_descriptions(&self.commands, &[]),
+        )
+    }
+
     /// Parses process argv, runs the matched command, writes output to stdout.
     pub async fn serve(&self) -> Result<(), Box<dyn std::error::Error>> {
         let mut process = std::env::args();
@@ -488,8 +535,15 @@ impl Cli {
                     .map(ToString::to_string)
             })
             .unwrap_or_else(|| self.name.clone());
-        self.serve_with_display_name(process.collect(), display_name)
-            .await
+        let human = std::io::stdout().is_terminal();
+        let mut writer = ProcessWriter;
+        if let Some(code) = self
+            .serve_to_with_display_name(process.collect(), &mut writer, human, display_name)
+            .await?
+        {
+            std::process::exit(code);
+        }
+        Ok(())
     }
 
     /// Serves with explicit argv (useful for testing).
@@ -537,9 +591,18 @@ impl Cli {
     }
 
     pub async fn serve_with(&self, argv: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-        self.serve_with_display_name(argv, self.name.clone()).await
+        let human = std::io::stdout().is_terminal();
+        let mut writer = ProcessWriter;
+        if let Some(code) = self
+            .serve_to_with_display_name(argv, &mut writer, human, self.name.clone())
+            .await?
+        {
+            std::process::exit(code);
+        }
+        Ok(())
     }
 
+    #[allow(dead_code)]
     async fn serve_with_display_name(
         &self,
         argv: Vec<String>,
@@ -1629,7 +1692,7 @@ impl Cli {
 
     /// Testable serve: writes output to the provided writer and returns exit code.
     ///
-    /// Unlike [`serve_with`], this method:
+    /// Unlike [`Self::serve_with`], this method:
     /// - Writes to a caller-provided writer instead of stdout
     /// - Returns the exit code instead of calling `std::process::exit`
     /// - Accepts a `human` flag instead of checking `is_terminal()`
@@ -1641,6 +1704,33 @@ impl Cli {
         writer: &mut dyn std::io::Write,
         human: bool,
     ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
+        self.serve_to_with_display_name(argv, writer, human, self.name.clone())
+            .await
+    }
+
+    async fn serve_to_with_display_name(
+        &self,
+        argv: Vec<String>,
+        writer: &mut dyn std::io::Write,
+        human: bool,
+        display_name: String,
+    ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
+        self.run_to(argv, writer, Runtime::process(display_name, human))
+            .await
+    }
+
+    /// Executes with fully injectable process inputs and captures the exit code.
+    pub async fn run_to(
+        &self,
+        argv: Vec<String>,
+        writer: &mut dyn std::io::Write,
+        runtime: Runtime,
+    ) -> Result<Option<i32>, Box<dyn std::error::Error>> {
+        let Runtime {
+            display_name,
+            env,
+            human,
+        } = runtime;
         let config_flag = self.config.as_ref().map(|c| c.flag.as_str());
 
         // Inline helper to write a line to the writer
@@ -2576,7 +2666,7 @@ impl Cli {
             .collect();
 
         // --- Step 10: Build env source ---
-        let env_source: std::collections::HashMap<String, String> = std::env::vars().collect();
+        let env_source = env;
 
         // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
         if human {
@@ -2592,7 +2682,7 @@ impl Cli {
                 agent: !human,
                 argv: rest,
                 defaults,
-                display_name: self.name.clone(),
+                display_name,
                 env_fields: self.env_fields.clone(),
                 env_source,
                 format,
@@ -2684,6 +2774,16 @@ impl Cli {
                         wln!(&format_human_cta(cta));
                     }
                 } else {
+                    let data = match (data, formatted_cta.as_ref()) {
+                        (Value::Object(mut data), Some(cta)) => {
+                            data.insert(
+                                "cta".to_string(),
+                                serde_json::to_value(cta).unwrap_or(Value::Null),
+                            );
+                            Value::Object(data)
+                        }
+                        (data, _) => data,
+                    };
                     let output = format_value(&data, format);
                     wln_tok!(&output);
                 }
@@ -2734,6 +2834,12 @@ impl Cli {
                     error_obj.insert("message".to_string(), Value::String(message.clone()));
                     if let Some(r) = retryable {
                         error_obj.insert("retryable".to_string(), Value::Bool(r));
+                    }
+                    if let Some(cta) = &formatted_cta {
+                        error_obj.insert(
+                            "cta".to_string(),
+                            serde_json::to_value(cta).unwrap_or(Value::Null),
+                        );
                     }
                     wln!(&format_value(&Value::Object(error_obj), format));
                 }
@@ -3233,19 +3339,13 @@ fn extract_builtin_flags(
         } else if token == "--json" {
             format = Format::Json;
             format_explicit = true;
-        } else if token == "--table" {
-            format = Format::Table;
-            format_explicit = true;
-        } else if token == "--csv" {
-            format = Format::Csv;
-            format_explicit = true;
         } else if token == "--format" {
             if let Some(next) = argv.get(i + 1) {
                 if let Some(f) = Format::from_str_opt(next) {
                     format = f;
                 } else {
                     return Err(format!(
-                        "Invalid format: \"{next}\". Expected one of: toon, json, yaml, md, jsonl, table, csv"
+                        "Invalid format: \"{next}\". Expected one of: toon, json, yaml, md, jsonl"
                     )
                     .into());
                 }

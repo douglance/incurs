@@ -141,10 +141,7 @@ impl crate::command::CommandHandler for RemoteToolHandler {
         };
         let result = self
             .client
-            .call_tool(rmcp::model::CallToolRequestParam {
-                name: name.into(),
-                arguments: Some(arguments),
-            })
+            .call_tool(rmcp::model::CallToolRequestParams::new(name).with_arguments(arguments))
             .await;
         match result {
             Ok(result) if result.is_error != Some(true) => {
@@ -152,7 +149,7 @@ impl crate::command::CommandHandler for RemoteToolHandler {
                     result
                         .content
                         .first()
-                        .and_then(|content| content.raw.as_text())
+                        .and_then(|content| content.as_text())
                         .and_then(|text| serde_json::from_str(&text.text).ok())
                         .unwrap_or(Value::Null)
                 });
@@ -163,7 +160,7 @@ impl crate::command::CommandHandler for RemoteToolHandler {
                 message: result
                     .content
                     .first()
-                    .and_then(|content| content.raw.as_text())
+                    .and_then(|content| content.as_text())
                     .map(|text| text.text.clone())
                     .unwrap_or_else(|| "Remote MCP tool failed".to_string()),
                 retryable: false,
@@ -287,14 +284,15 @@ async fn discover_remote_tools(
     let mut offset = 0_u64;
     loop {
         let search = client
-            .call_tool(rmcp::model::CallToolRequestParam {
-                name: "search_tools".into(),
-                arguments: Some(serde_json::Map::from_iter([
-                    ("query".to_string(), Value::String(String::new())),
-                    ("limit".to_string(), Value::from(20)),
-                    ("offset".to_string(), Value::from(offset)),
-                ])),
-            })
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("search_tools").with_arguments(
+                    serde_json::Map::from_iter([
+                        ("query".to_string(), Value::String(String::new())),
+                        ("limit".to_string(), Value::from(20)),
+                        ("offset".to_string(), Value::from(offset)),
+                    ]),
+                ),
+            )
             .await
             .map_err(remote_error)?;
         let value = remote_result_value(search)?;
@@ -305,19 +303,18 @@ async fn discover_remote_tools(
             .filter_map(|tool| tool["name"].as_str())
         {
             let details = client
-                .call_tool(rmcp::model::CallToolRequestParam {
-                    name: "get_tool_details".into(),
-                    arguments: Some(serde_json::Map::from_iter([(
-                        "name".to_string(),
-                        Value::String(name.to_string()),
-                    )])),
-                })
+                .call_tool(
+                    rmcp::model::CallToolRequestParams::new("get_tool_details").with_arguments(
+                        serde_json::Map::from_iter([(
+                            "name".to_string(),
+                            Value::String(name.to_string()),
+                        )]),
+                    ),
+                )
                 .await
                 .map_err(remote_error)?;
-            tools.push(
-                serde_json::from_value(remote_result_value(details)?)
-                    .map_err(|error| remote_error(error))?,
-            );
+            tools
+                .push(serde_json::from_value(remote_result_value(details)?).map_err(remote_error)?);
         }
         let Some(next) = value.get("nextOffset").and_then(Value::as_u64) else {
             break;
@@ -339,7 +336,7 @@ fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, cra
             result
                 .content
                 .first()
-                .and_then(|content| content.raw.as_text())
+                .and_then(|content| content.as_text())
                 .map(|text| text.text.clone())
                 .unwrap_or_else(|| "Remote MCP tool failed".to_string()),
         )));
@@ -348,7 +345,7 @@ fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, cra
         result
             .content
             .first()
-            .and_then(|content| content.raw.as_text())
+            .and_then(|content| content.as_text())
             .and_then(|text| serde_json::from_str(&text.text).ok())
             .unwrap_or(Value::Null)
     }))
@@ -506,8 +503,8 @@ mod server {
     use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
-        CallToolRequestParam, CallToolResult, Content, Implementation, ListToolsResult, Meta,
-        PaginatedRequestParam, ProgressNotificationParam, ServerCapabilities, ServerInfo, Tool,
+        CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult, Meta,
+        PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities, ServerInfo, Tool,
         ToolAnnotations,
     };
     use rmcp::service::{RequestContext, RoleServer};
@@ -587,12 +584,14 @@ mod server {
                             .output_schema
                             .as_ref()
                             .and_then(|schema| schema.as_object().cloned().map(Arc::new)),
-                        annotations: mcp.annotations.as_ref().map(|annotations| ToolAnnotations {
-                            title: annotations.title.clone(),
-                            read_only_hint: annotations.read_only_hint,
-                            destructive_hint: annotations.destructive_hint,
-                            idempotent_hint: annotations.idempotent_hint,
-                            open_world_hint: annotations.open_world_hint,
+                        annotations: mcp.annotations.as_ref().map(|annotations| {
+                            ToolAnnotations::from_raw(
+                                annotations.title.clone(),
+                                annotations.read_only_hint,
+                                annotations.destructive_hint,
+                                annotations.idempotent_hint,
+                                annotations.open_world_hint,
+                            )
                         }),
                         instructions: mcp.instructions.clone(),
                     });
@@ -730,13 +729,13 @@ mod server {
                 description.to_string(),
                 Arc::new(schema.as_object().cloned().unwrap_or_default()),
             );
-            tool.annotations = Some(ToolAnnotations {
-                title: None,
-                read_only_hint: Some(read_only),
-                destructive_hint: Some(!read_only),
-                idempotent_hint: Some(read_only),
-                open_world_hint: Some(!matches!(name, "search_tools" | "get_tool_details")),
-            });
+            tool.annotations = Some(ToolAnnotations::from_raw(
+                None,
+                Some(read_only),
+                Some(!read_only),
+                Some(read_only),
+                Some(!matches!(name, "search_tools" | "get_tool_details")),
+            ));
             tool
         })
         .collect()
@@ -815,12 +814,12 @@ mod server {
                     .and_then(|annotations| annotations.read_only_hint)
                     == Some(true);
                 if name == "call_read_tool" && !read_only {
-                    return Ok(Some(CallToolResult::error(vec![Content::text(
+                    return Ok(Some(CallToolResult::error(vec![ContentBlock::text(
                         serde_json::json!({ "error": format!("Tool is not read-only: {tool_name}") }).to_string(),
                     )])));
                 }
                 if name == "call_write_tool" && read_only {
-                    return Ok(Some(CallToolResult::error(vec![Content::text(
+                    return Ok(Some(CallToolResult::error(vec![ContentBlock::text(
                         serde_json::json!({ "error": format!("Tool is read-only: {tool_name}") })
                             .to_string(),
                     )])));
@@ -891,12 +890,10 @@ mod server {
             .as_ref()
             .map(|cta| format!("{text}\n\n{}", render_cta(cta)))
             .unwrap_or(text);
-        CallToolResult {
-            content: vec![Content::text(text)],
-            structured_content: structured.then_some(data),
-            is_error: Some(false),
-            meta: cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)]))),
-        }
+        let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
+        result.structured_content = structured.then_some(data);
+        result.meta = cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)])));
+        result
     }
 
     fn tool_result_error(
@@ -909,12 +906,8 @@ mod server {
             .as_ref()
             .map(|cta| format!("{message}\n\n{}", render_cta(cta)))
             .unwrap_or(message);
-        CallToolResult {
-            content: vec![Content::text(text)],
-            structured_content: None,
-            is_error: Some(true),
-            meta: cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)]))),
-        }
+        CallToolResult::error(vec![ContentBlock::text(text)])
+            .with_meta(cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)]))))
     }
 
     // -----------------------------------------------------------------------
@@ -995,23 +988,21 @@ mod server {
 
     impl ServerHandler for IncurMcpServer {
         fn get_info(&self) -> ServerInfo {
-            ServerInfo {
-                protocol_version: Default::default(),
-                capabilities: ServerCapabilities::builder().enable_tools().build(),
-                server_info: Implementation {
-                    name: self.server_name.clone(),
-                    version: self.server_version.clone(),
-                    icons: None,
-                    title: None,
-                    website_url: None,
-                },
-                instructions: self.instructions.clone(),
+            let info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+                .with_server_info(Implementation::new(
+                    self.server_name.clone(),
+                    self.server_version.clone(),
+                ));
+            if let Some(instructions) = &self.instructions {
+                info.with_instructions(instructions.clone())
+            } else {
+                info
             }
         }
 
         fn list_tools(
             &self,
-            _request: Option<PaginatedRequestParam>,
+            _request: Option<PaginatedRequestParams>,
             _context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_
         {
@@ -1025,7 +1016,7 @@ mod server {
 
         fn call_tool(
             &self,
-            request: CallToolRequestParam,
+            request: CallToolRequestParams,
             context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_
         {
@@ -1167,21 +1158,21 @@ mod server {
                             };
                             chunks.push(chunk.clone());
                             if let Some(progress_token) = progress_token.clone() {
+                                let message = serde_json::to_string(&chunk)
+                                    .unwrap_or_else(|_| "null".to_string());
                                 let _ = peer
-                                    .notify_progress(ProgressNotificationParam {
-                                        progress_token,
-                                        progress: chunks.len() as f64,
-                                        total: None,
-                                        message: Some(
-                                            serde_json::to_string(&chunk)
-                                                .unwrap_or_else(|_| "null".to_string()),
-                                        ),
-                                    })
+                                    .notify_progress(
+                                        ProgressNotificationParam::new(
+                                            progress_token,
+                                            chunks.len() as f64,
+                                        )
+                                        .with_message(message),
+                                    )
                                     .await;
                             }
                         }
                         let text = serde_json::to_string(&chunks).unwrap_or_else(|_| "[]".into());
-                        Ok(CallToolResult::success(vec![Content::text(text)]))
+                        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
                     }
                     command::InternalResult::RecordStream(stream) => {
                         let mut stream = stream;
@@ -1197,16 +1188,16 @@ mod server {
                                 crate::output::StreamRecord::Chunk(chunk) => {
                                     chunks.push(chunk.clone());
                                     if let Some(progress_token) = progress_token.clone() {
+                                        let message = serde_json::to_string(&chunk)
+                                            .unwrap_or_else(|_| "null".to_string());
                                         let _ = peer
-                                            .notify_progress(ProgressNotificationParam {
-                                                progress_token,
-                                                progress: chunks.len() as f64,
-                                                total: None,
-                                                message: Some(
-                                                    serde_json::to_string(&chunk)
-                                                        .unwrap_or_else(|_| "null".to_string()),
-                                                ),
-                                            })
+                                            .notify_progress(
+                                                ProgressNotificationParam::new(
+                                                    progress_token,
+                                                    chunks.len() as f64,
+                                                )
+                                                .with_message(message),
+                                            )
                                             .await;
                                     }
                                 }
@@ -1278,18 +1269,16 @@ mod server {
         let transport = stdio();
 
         let running = server.serve(transport).await.map_err(|e| {
-            crate::errors::Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("MCP server failed to start: {e}"),
-            )))
+            crate::errors::Error::Other(Box::new(std::io::Error::other(format!(
+                "MCP server failed to start: {e}"
+            ))))
         })?;
 
         // Block until the client disconnects or the server is cancelled.
         let _quit_reason = running.waiting().await.map_err(|e| {
-            crate::errors::Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("MCP server task failed: {e}"),
-            )))
+            crate::errors::Error::Other(Box::new(std::io::Error::other(format!(
+                "MCP server task failed: {e}"
+            ))))
         })?;
 
         Ok(())
@@ -1321,13 +1310,12 @@ mod server {
             env_fields.to_vec(),
             options,
         )?;
+        let mut config = StreamableHttpServerConfig::default();
+        config.stateful_mode = false;
         Ok(StreamableHttpService::new(
             move || Ok(server.clone()),
             Default::default(),
-            StreamableHttpServerConfig {
-                stateful_mode: false,
-                ..Default::default()
-            },
+            config,
         ))
     }
 }

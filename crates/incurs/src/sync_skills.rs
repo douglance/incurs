@@ -464,7 +464,7 @@ mod tests {
     fn test_has_installed_skills_detects_installed() {
         let unique = format!("f10-cli-{}", std::process::id());
         // Record metadata (uses the ambient XDG/home data dir for this name only).
-        write_meta(&unique, "abc123", &[unique.clone()]);
+        write_meta(&unique, "abc123", std::slice::from_ref(&unique));
 
         // Create a temp cwd with the skill installed.
         let tmp = std::env::temp_dir().join(format!("f10-cwd-{}", std::process::id()));

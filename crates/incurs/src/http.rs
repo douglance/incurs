@@ -30,6 +30,7 @@ use serde_json::Value;
 
 use crate::cli::{Cli, CommandEntry};
 use crate::command::{self, CommandDef, ExecuteOptions, InternalResult, ParseMode};
+use crate::fetch::FetchHandler;
 use crate::middleware::MiddlewareFn;
 use crate::output::{Format, StreamRecord};
 use crate::schema::FieldMeta;
@@ -67,11 +68,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/.well-known/openapi.json", get(openapi_json))
         .route("/openapi.yml", get(openapi_yaml))
         .route("/openapi.yaml", get(openapi_yaml))
-        .route("/{command}", get(handle_command).post(handle_command))
         .route(
-            "/{group}/{command}",
-            get(handle_group_command).post(handle_group_command),
+            "/.well-known/skills/index.json",
+            get(well_known_skills_index),
         )
+        .route("/.well-known/skills/{name}/SKILL.md", get(well_known_skill))
+        .route("/", get(handle_root).post(handle_root))
+        .route("/{*path}", get(handle_path).post(handle_path))
         .with_state(state)
 }
 
@@ -100,14 +103,54 @@ pub struct AppState {
     pub globals_fields: Arc<Vec<FieldMeta>>,
     /// Middleware vars fields.
     pub vars_fields: Arc<Vec<FieldMeta>>,
+    /// Generated skill discovery index.
+    pub skill_index: Arc<Value>,
+    /// Generated skill files keyed by their public directory name.
+    pub skills: Arc<BTreeMap<String, String>>,
+    /// Fetch gateways keyed by their mounted command path.
+    pub gateways: Arc<BTreeMap<String, HttpGateway>>,
+}
+
+/// Fetch gateway projected into the HTTP router.
+#[derive(Clone)]
+pub struct HttpGateway {
+    /// Optional path prepended before forwarding.
+    pub base_path: Option<String>,
+    /// Gateway handler.
+    pub handler: Arc<dyn FetchHandler>,
 }
 
 /// Builds the application state from a Cli instance.
 pub fn build_app_state(cli: &Cli) -> AppState {
     let mut commands = BTreeMap::new();
     let mut group_middleware = BTreeMap::new();
+    let mut gateways = BTreeMap::new();
 
-    flatten_commands(&cli.commands, "", &mut commands, &mut group_middleware);
+    flatten_commands(
+        &cli.commands,
+        "",
+        &mut commands,
+        &mut group_middleware,
+        &mut gateways,
+    );
+    if let Some(root) = &cli.root_command {
+        commands.insert(String::new(), Arc::clone(root));
+    }
+    let skills = cli
+        .skill_files(1)
+        .into_iter()
+        .map(|file| (file.dir, file.content))
+        .collect::<BTreeMap<_, _>>();
+    let skill_index = serde_json::json!({
+        "skills": skills
+            .iter()
+            .map(|(name, content)| serde_json::json!({
+                "name": name,
+                "description": skill_description(content),
+                "files": ["SKILL.md"],
+            }))
+            .collect::<Vec<_>>()
+    });
 
     AppState {
         name: cli.name.clone(),
@@ -122,6 +165,9 @@ pub fn build_app_state(cli: &Cli) -> AppState {
         env_fields: Arc::new(cli.env_fields.clone()),
         globals_fields: Arc::new(cli.globals_fields.clone()),
         vars_fields: Arc::new(cli.vars_fields.clone()),
+        skill_index: Arc::new(skill_index),
+        skills: Arc::new(skills),
+        gateways: Arc::new(gateways),
     }
 }
 
@@ -130,6 +176,7 @@ fn flatten_commands(
     prefix: &str,
     commands: &mut BTreeMap<String, Arc<CommandDef>>,
     group_mw: &mut BTreeMap<String, Vec<MiddlewareFn>>,
+    gateways: &mut BTreeMap<String, HttpGateway>,
 ) {
     for (name, entry) in entries {
         let key = if prefix.is_empty() {
@@ -150,9 +197,19 @@ fn flatten_commands(
                 if !middleware.is_empty() {
                     group_mw.insert(key.clone(), middleware.clone());
                 }
-                flatten_commands(sub_commands, &key, commands, group_mw);
+                flatten_commands(sub_commands, &key, commands, group_mw, gateways);
             }
-            CommandEntry::FetchGateway { .. } => {}
+            CommandEntry::FetchGateway {
+                base_path, handler, ..
+            } => {
+                gateways.insert(
+                    key,
+                    HttpGateway {
+                        base_path: base_path.clone(),
+                        handler: Arc::clone(handler),
+                    },
+                );
+            }
         }
     }
 }
@@ -176,27 +233,105 @@ async fn openapi_yaml(State(state): State<AppState>) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-async fn handle_command(
-    State(state): State<AppState>,
-    Path(command): Path<String>,
-    Query(query): Query<BTreeMap<String, String>>,
-    method: axum::http::Method,
-    headers: axum::http::HeaderMap,
-    body: axum::body::Bytes,
-) -> Response {
-    execute_http_command(&state, &command, &[], query, method, headers, body).await
+async fn well_known_skills_index(State(state): State<AppState>) -> Response {
+    cached_response(
+        "application/json",
+        serde_json::to_string(&*state.skill_index).unwrap_or_default(),
+    )
 }
 
-async fn handle_group_command(
+async fn well_known_skill(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match state.skills.get(&name) {
+        Some(content) => cached_response("text/markdown", content.clone()),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn handle_root(
     State(state): State<AppState>,
-    Path((group, command)): Path<(String, String)>,
     Query(query): Query<BTreeMap<String, String>>,
     method: axum::http::Method,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    let key = format!("{}/{}", group, command);
-    execute_http_command(&state, &key, &[], query, method, headers, body).await
+    execute_http_command(&state, "", &[], query, method, headers, body).await
+}
+
+async fn handle_path(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    Query(query): Query<BTreeMap<String, String>>,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let segments = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let resolved = (1..=segments.len()).rev().find_map(|length| {
+        let key = segments[..length].join("/");
+        (state.commands.contains_key(&key) || state.gateways.contains_key(&key))
+            .then_some((key, length))
+    });
+    let Some((key, length)) = resolved else {
+        return command_not_found(&state, &path);
+    };
+    let args = segments[length..]
+        .iter()
+        .map(|segment| (*segment).to_string())
+        .collect::<Vec<_>>();
+    if let Some(gateway) = state.gateways.get(&key) {
+        return execute_http_gateway(gateway, &path, query, method, headers, body).await;
+    }
+    execute_http_command(&state, &key, &args, query, method, headers, body).await
+}
+
+async fn execute_http_gateway(
+    gateway: &HttpGateway,
+    path: &str,
+    query: BTreeMap<String, String>,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let path = match &gateway.base_path {
+        Some(base) => format!(
+            "{}/{}",
+            base.trim_end_matches('/'),
+            path.trim_start_matches('/')
+        ),
+        None => format!("/{}", path.trim_start_matches('/')),
+    };
+    let output = gateway
+        .handler
+        .handle(crate::fetch::FetchInput {
+            path,
+            method: method.to_string(),
+            headers: headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|value| (name.to_string(), value.to_string()))
+                })
+                .collect(),
+            body: (!body.is_empty()).then(|| String::from_utf8_lossy(&body).into_owned()),
+            query: query.into_iter().collect(),
+        })
+        .await;
+    let mut response = Response::builder().status(output.status);
+    for (name, value) in output.headers {
+        response = response.header(name, value);
+    }
+    let body = match output.data {
+        Value::String(value) => value,
+        value => serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string()),
+    };
+    response
+        .body(Body::from(body))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 async fn execute_http_command(
@@ -213,22 +348,7 @@ async fn execute_http_command(
 
     let command = match state.commands.get(command_key) {
         Some(cmd) => Arc::clone(cmd),
-        None => {
-            return json_response(
-                StatusCode::NOT_FOUND,
-                &serde_json::json!({
-                    "ok": false,
-                    "error": {
-                        "code": "COMMAND_NOT_FOUND",
-                        "message": format!("'{}' is not a command for '{}'.", command_key, state.name),
-                    },
-                    "meta": {
-                        "command": path,
-                        "duration": format_duration(start),
-                    }
-                }),
-            );
-        }
+        None => return command_not_found(state, command_key),
     };
 
     let mut input_options: BTreeMap<String, Value> = query
@@ -236,13 +356,12 @@ async fn execute_http_command(
         .map(|(k, v)| (k, Value::String(v)))
         .collect();
 
-    if !body.is_empty() {
-        if let Ok(body_str) = std::str::from_utf8(&body) {
-            if let Ok(Value::Object(body_map)) = serde_json::from_str::<Value>(body_str) {
-                for (k, v) in body_map {
-                    input_options.insert(k, v);
-                }
-            }
+    if !body.is_empty()
+        && let Ok(body_str) = std::str::from_utf8(&body)
+        && let Ok(Value::Object(body_map)) = serde_json::from_str::<Value>(body_str)
+    {
+        for (k, v) in body_map {
+            input_options.insert(k, v);
         }
     }
 
@@ -272,9 +391,10 @@ async fn execute_http_command(
 
     let mut all_middleware: Vec<MiddlewareFn> = state.middleware.as_ref().clone();
 
-    if let Some(slash_pos) = command_key.find('/') {
-        let group = &command_key[..slash_pos];
-        if let Some(group_mw) = state.group_middleware.get(group) {
+    let segments = command_key.split('/').collect::<Vec<_>>();
+    for length in 1..segments.len() {
+        let group = segments[..length].join("/");
+        if let Some(group_mw) = state.group_middleware.get(&group) {
             all_middleware.extend(group_mw.iter().cloned());
         }
     }
@@ -303,7 +423,14 @@ async fn execute_http_command(
             request: Some(crate::command::RequestContext {
                 headers: request_headers,
                 method: method.to_string(),
-                path: format!("/commands/{command_key}"),
+                path: format!(
+                    "/{}",
+                    std::iter::once(command_key)
+                        .chain(args.iter().map(String::as_str))
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                ),
             }),
             vars_fields: state.vars_fields.as_ref().clone(),
             version: state.version.clone(),
@@ -323,13 +450,13 @@ async fn execute_http_command(
                     "duration": duration,
                 }
             });
-            if let Some(cta) = cta {
-                if let Some(meta) = response.get_mut("meta").and_then(|m| m.as_object_mut()) {
-                    meta.insert(
-                        "cta".to_string(),
-                        serde_json::to_value(cta).unwrap_or(Value::Null),
-                    );
-                }
+            if let Some(cta) = cta
+                && let Some(meta) = response.get_mut("meta").and_then(|m| m.as_object_mut())
+            {
+                meta.insert(
+                    "cta".to_string(),
+                    serde_json::to_value(cta).unwrap_or(Value::Null),
+                );
             }
             json_response(StatusCode::OK, &response)
         }
@@ -378,13 +505,13 @@ async fn execute_http_command(
                 "error": error_obj,
                 "meta": { "command": path, "duration": duration }
             });
-            if let Some(cta) = cta {
-                if let Some(meta) = response.get_mut("meta").and_then(|m| m.as_object_mut()) {
-                    meta.insert(
-                        "cta".to_string(),
-                        serde_json::to_value(cta).unwrap_or(Value::Null),
-                    );
-                }
+            if let Some(cta) = cta
+                && let Some(meta) = response.get_mut("meta").and_then(|m| m.as_object_mut())
+            {
+                meta.insert(
+                    "cta".to_string(),
+                    serde_json::to_value(cta).unwrap_or(Value::Null),
+                );
             }
             json_response(status, &response)
         }
@@ -406,6 +533,40 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
         .unwrap_or_else(|_| {
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
         })
+}
+
+fn cached_response(content_type: &'static str, body: String) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "public, max-age=300")
+        .body(Body::from(body))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+fn command_not_found(state: &AppState, path: &str) -> Response {
+    json_response(
+        StatusCode::NOT_FOUND,
+        &serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "COMMAND_NOT_FOUND",
+                "message": format!("'{}' is not a command for '{}'.", path, state.name),
+            },
+            "meta": {
+                "command": path.replace('/', " "),
+                "duration": "0ms",
+            }
+        }),
+    )
+}
+
+fn skill_description(content: &str) -> String {
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix("description: "))
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn ndjson_stream_response(
@@ -529,6 +690,35 @@ mod tests {
     use std::collections::HashMap;
     use tower::ServiceExt;
 
+    #[cfg(feature = "mcp")]
+    async fn mcp_request(cli: &Cli, body: Value) -> (StatusCode, Value) {
+        let response = build_cli_router(cli)
+            .unwrap()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(header::HOST, "localhost")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::ACCEPT, "application/json, text/event-stream")
+                    .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        let json = if let Some(data) = text.lines().find_map(|line| line.strip_prefix("data: ")) {
+            serde_json::from_str(data)
+                .unwrap_or_else(|error| panic!("invalid SSE JSON ({error}): {text:?}"))
+        } else {
+            serde_json::from_str(&text)
+                .unwrap_or_else(|error| panic!("invalid MCP JSON ({error}): {text:?}"))
+        };
+        (status, json)
+    }
+
     struct EchoHandler;
 
     #[async_trait::async_trait]
@@ -558,6 +748,24 @@ mod tests {
     }
 
     struct StreamHandler;
+
+    struct GatewayHandler;
+
+    #[async_trait::async_trait]
+    impl crate::fetch::FetchHandler for GatewayHandler {
+        async fn handle(&self, request: crate::fetch::FetchInput) -> crate::fetch::FetchOutput {
+            crate::fetch::FetchOutput {
+                ok: true,
+                status: 200,
+                data: serde_json::json!({
+                    "path": request.path,
+                    "method": request.method,
+                    "query": request.query,
+                }),
+                headers: vec![("content-type".to_string(), "application/json".to_string())],
+            }
+        }
+    }
 
     #[async_trait::async_trait]
     impl CommandHandler for StreamHandler {
@@ -645,6 +853,9 @@ mod tests {
             env_fields: Arc::new(Vec::new()),
             globals_fields: Arc::new(Vec::new()),
             vars_fields: Arc::new(Vec::new()),
+            skill_index: Arc::new(serde_json::json!({ "skills": [] })),
+            skills: Arc::new(BTreeMap::new()),
+            gateways: Arc::new(BTreeMap::new()),
         }
     }
 
@@ -710,12 +921,114 @@ mod tests {
             .oneshot(
                 axum::http::Request::builder()
                     .uri("/mcp")
+                    .header(header::HOST, "localhost")
                     .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test]
+    async fn test_mcp_http_rejects_non_loopback_host() {
+        let cli = Cli::create("test").command("echo", make_echo_command("echo"));
+        let response = build_cli_router(&cli)
+            .unwrap()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(header::HOST, "evil.example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test]
+    async fn test_mcp_initialize_and_progressive_tools() {
+        let cli = Cli::create("test")
+            .version("1.0.0")
+            .command("echo", make_echo_command("echo"));
+        let (status, initialized) = mcp_request(
+            &cli,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "test", "version": "1.0.0" }
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(initialized["result"]["serverInfo"]["name"], "test");
+        assert_eq!(initialized["result"]["serverInfo"]["version"], "1.0.0");
+        assert!(initialized["result"]["capabilities"]["tools"].is_object());
+
+        let (_, listed) = mcp_request(
+            &cli,
+            serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+        )
+        .await;
+        let names = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            vec![
+                "search_tools",
+                "get_tool_details",
+                "call_read_tool",
+                "call_write_tool"
+            ]
+        );
+    }
+
+    #[cfg(feature = "mcp")]
+    #[tokio::test]
+    async fn test_mcp_direct_tool_call_executes_shared_command() {
+        let cli = Cli::create("test")
+            .mcp(crate::mcp::McpServeOptions {
+                tools: crate::mcp::McpToolFilter {
+                    discovery: crate::mcp::McpDiscovery::Direct,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .command("echo", make_echo_command("echo"));
+        let (_, listed) = mcp_request(
+            &cli,
+            serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+        )
+        .await;
+        assert_eq!(listed["result"]["tools"][0]["name"], "echo");
+
+        let (_, called) = mcp_request(
+            &cli,
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": { "name": "echo", "arguments": {} }
+            }),
+        )
+        .await;
+        assert_eq!(called["result"]["isError"], false);
+        let content: Value =
+            serde_json::from_str(called["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["options"], serde_json::json!({}));
     }
 
     #[tokio::test]
@@ -854,6 +1167,122 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_arbitrarily_nested_command_with_trailing_args() {
+        let mut state = make_test_state();
+        let mut command = make_echo_command("show");
+        command.args_fields = vec![FieldMeta {
+            name: "id",
+            cli_name: "id".to_string(),
+            description: None,
+            field_type: crate::schema::FieldType::String,
+            required: true,
+            default: None,
+            alias: None,
+            deprecated: false,
+            env_name: None,
+        }];
+        Arc::make_mut(&mut state.commands)
+            .insert("admin/users/show".to_string(), Arc::new(command));
+        let response = build_router(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/admin/users/show/user-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["data"]["args"]["id"], "user-1");
+        assert_eq!(value["data"]["request"]["path"], "/admin/users/show/user-1");
+    }
+
+    #[tokio::test]
+    async fn test_root_command() {
+        let mut state = make_test_state();
+        Arc::make_mut(&mut state.commands)
+            .insert(String::new(), Arc::new(make_echo_command("root")));
+        let response = build_router(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/?name=Ada")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_well_known_skills() {
+        let cli = Cli::create("test").command("echo", make_echo_command("echo"));
+        let app = build_cli_router(&cli).unwrap();
+        let index = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/.well-known/skills/index.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(index.status(), StatusCode::OK);
+        assert_eq!(
+            index.headers()[header::CACHE_CONTROL],
+            "public, max-age=300"
+        );
+        let body = to_bytes(index.into_body(), usize::MAX).await.unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["skills"][0]["name"], "echo");
+
+        let skill = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/.well-known/skills/echo/SKILL.md")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(skill.status(), StatusCode::OK);
+        assert_eq!(skill.headers()[header::CONTENT_TYPE], "text/markdown");
+    }
+
+    #[tokio::test]
+    async fn test_fetch_gateway_forwards_http_request() {
+        let cli = Cli::create("test").fetch_gateway(
+            "api",
+            GatewayHandler,
+            crate::fetch::FetchGatewayOptions {
+                description: None,
+                base_path: None,
+                output_policy: None,
+            },
+        );
+        let response = build_cli_router(&cli)
+            .unwrap()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/users?limit=2")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["path"], "/api/users");
+        assert_eq!(value["method"], "POST");
+        assert_eq!(value["query"][0], serde_json::json!(["limit", "2"]));
+    }
+
+    #[tokio::test]
     async fn test_streaming_command() {
         let state = make_test_state();
         let app = build_router(state);
@@ -944,7 +1373,8 @@ mod tests {
 
         let mut commands = BTreeMap::new();
         let mut group_mw = BTreeMap::new();
-        flatten_commands(&entries, "", &mut commands, &mut group_mw);
+        let mut gateways = BTreeMap::new();
+        flatten_commands(&entries, "", &mut commands, &mut group_mw, &mut gateways);
 
         assert!(commands.contains_key("hello"));
         assert!(commands.contains_key("users/list"));
