@@ -1027,6 +1027,7 @@ mod server {
             let env_fields = self.env_fields.clone();
             let discovery = self.discovery;
             let progress_token = context.meta.get_progress_token();
+            #[cfg(feature = "http")]
             let transport_request =
                 context
                     .extensions
@@ -1045,6 +1046,8 @@ mod server {
                         method: parts.method.to_string(),
                         path: parts.uri.path().to_string(),
                     });
+            #[cfg(not(feature = "http"))]
+            let transport_request = None;
             let peer = context.peer;
             let cancellation = context.ct;
 

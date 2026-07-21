@@ -180,6 +180,8 @@ pub struct Cli {
     output_policy: Option<OutputPolicy>,
     /// Default output format.
     format: Option<Format>,
+    /// Rust-only output formats explicitly enabled by an extension crate.
+    extra_formats: Vec<Format>,
     /// MCP server instructions, discovery, and filtering options.
     pub(crate) mcp_options: crate::mcp::McpServeOptions,
 }
@@ -203,6 +205,7 @@ impl Cli {
             config: None,
             output_policy: None,
             format: None,
+            extra_formats: Vec::new(),
             mcp_options: crate::mcp::McpServeOptions::default(),
         }
     }
@@ -246,6 +249,15 @@ impl Cli {
     /// Sets the default output format.
     pub fn format(mut self, format: Format) -> Self {
         self.format = Some(format);
+        self
+    }
+
+    /// Enables additional output formats supplied by a Rust extension crate.
+    #[doc(hidden)]
+    pub fn enable_extra_formats(mut self, formats: impl IntoIterator<Item = Format>) -> Self {
+        self.extra_formats.extend(formats);
+        self.extra_formats.sort_by_key(|format| format.to_string());
+        self.extra_formats.dedup();
         self
     }
 
@@ -612,7 +624,7 @@ impl Cli {
         let config_flag = self.config.as_ref().map(|c| c.flag.as_str());
 
         // --- Step 1: Extract built-in flags ---
-        let mut builtin = match extract_builtin_flags(&argv, config_flag) {
+        let mut builtin = match extract_builtin_flags(&argv, config_flag, &self.extra_formats) {
             Ok(b) => b,
             Err(e) => {
                 let msg = e.to_string();
@@ -1746,7 +1758,7 @@ impl Cli {
         }
 
         // --- Step 1: Extract built-in flags ---
-        let mut builtin = match extract_builtin_flags(&argv, config_flag) {
+        let mut builtin = match extract_builtin_flags(&argv, config_flag, &self.extra_formats) {
             Ok(b) => b,
             Err(e) => {
                 let msg = e.to_string();
@@ -3293,6 +3305,7 @@ struct BuiltinFlags {
 fn extract_builtin_flags(
     argv: &[String],
     config_flag: Option<&str>,
+    extra_formats: &[Format],
 ) -> Result<BuiltinFlags, Box<dyn std::error::Error>> {
     let mut verbose = false;
     let mut llms = false;
@@ -3341,7 +3354,12 @@ fn extract_builtin_flags(
             format_explicit = true;
         } else if token == "--format" {
             if let Some(next) = argv.get(i + 1) {
-                if let Some(f) = Format::from_str_opt(next) {
+                if let Some(f) = Format::from_str_opt(next).or_else(|| {
+                    extra_formats
+                        .iter()
+                        .copied()
+                        .find(|format| format.to_string() == *next)
+                }) {
                     format = f;
                 } else {
                     return Err(format!(
@@ -4663,7 +4681,7 @@ mod tests {
             "--json".to_string(),
             "list".to_string(),
         ];
-        let result = extract_builtin_flags(&argv, None).unwrap();
+        let result = extract_builtin_flags(&argv, None, &[]).unwrap();
         assert!(result.verbose);
         assert_eq!(result.format, Format::Json);
         assert!(result.format_explicit);
@@ -4673,7 +4691,7 @@ mod tests {
     #[test]
     fn test_extract_builtin_flags_help() {
         let argv: Vec<String> = vec!["--help".to_string()];
-        let result = extract_builtin_flags(&argv, None).unwrap();
+        let result = extract_builtin_flags(&argv, None, &[]).unwrap();
         assert!(result.help);
         assert!(result.rest.is_empty());
     }
@@ -4681,7 +4699,7 @@ mod tests {
     #[test]
     fn test_extract_builtin_flags_format() {
         let argv: Vec<String> = vec!["--format".to_string(), "yaml".to_string()];
-        let result = extract_builtin_flags(&argv, None).unwrap();
+        let result = extract_builtin_flags(&argv, None, &[]).unwrap();
         assert_eq!(result.format, Format::Yaml);
         assert!(result.format_explicit);
     }
@@ -4693,7 +4711,7 @@ mod tests {
             "myconfig.json".to_string(),
             "deploy".to_string(),
         ];
-        let result = extract_builtin_flags(&argv, Some("config")).unwrap();
+        let result = extract_builtin_flags(&argv, Some("config"), &[]).unwrap();
         assert_eq!(result.config_path, Some("myconfig.json".to_string()));
         assert_eq!(result.rest, vec!["deploy"]);
     }
@@ -5080,7 +5098,7 @@ mod tests {
     #[test]
     fn test_extract_builtin_flags_config_schema() {
         let argv: Vec<String> = vec!["--config-schema".to_string()];
-        let result = extract_builtin_flags(&argv, Some("config")).unwrap();
+        let result = extract_builtin_flags(&argv, Some("config"), &[]).unwrap();
         assert!(result.config_schema);
     }
 

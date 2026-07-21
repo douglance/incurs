@@ -9,3 +9,6 @@ repository = "https://github.com/douglance/incurs"
 [dependencies]
 incurs = { path = "../incurs", version = "0.3.0" }
 serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

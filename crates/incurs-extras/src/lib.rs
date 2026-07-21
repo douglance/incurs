@@ -37,7 +37,8 @@ pub trait CliExtras {
 
 impl CliExtras for incurs::cli::Cli {
     fn default_extra_format(self, format: ExtraFormat) -> Self {
-        self.format(format.core())
+        self.enable_extra_formats([ExtraFormat::Table.core(), ExtraFormat::Csv.core()])
+            .format(format.core())
     }
 }
 
@@ -50,5 +51,30 @@ mod tests {
         let value = serde_json::json!([{ "name": "Ada", "active": true }]);
         assert!(ExtraFormat::Table.format(&value).contains("Ada"));
         assert_eq!(ExtraFormat::Csv.format(&value), "name,active\nAda,true");
+    }
+
+    #[tokio::test]
+    async fn extension_enables_table_and_csv_cli_values() {
+        let cli = incurs::cli::Cli::create("demo").default_extra_format(ExtraFormat::Table);
+        let mut table_output = Vec::new();
+        let table = cli
+            .serve_to(
+                vec!["--format".into(), "table".into()],
+                &mut table_output,
+                false,
+            )
+            .await
+            .expect("table invocation");
+        let mut csv_output = Vec::new();
+        let csv = cli
+            .serve_to(
+                vec!["--format".into(), "csv".into()],
+                &mut csv_output,
+                false,
+            )
+            .await
+            .expect("csv invocation");
+        assert_ne!(table, Some(1), "{}", String::from_utf8_lossy(&table_output));
+        assert_ne!(csv, Some(1), "{}", String::from_utf8_lossy(&csv_output));
     }
 }

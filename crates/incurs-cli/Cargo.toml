@@ -2,6 +2,9 @@
 name = "incurs-cli"
 version = "0.3.0"
 edition = "2024"
+description = "Code generation tools for incurs-based Rust CLIs"
+license = "MIT"
+repository = "https://github.com/douglance/incurs"
 
 [[bin]]
 name = "incurs"
