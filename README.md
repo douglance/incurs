@@ -6,14 +6,16 @@ Define a command once and expose the same validated behavior through CLI, HTTP, 
 
 ## Status
 
-Version 0.3.0 establishes an executable parity gate and a typed Rust authoring path.
+Version 0.4.0 adds the generic Code Mode runtime while preserving the executable
+parity gate and typed Rust authoring path.
 
-| Surface | 0.3 status |
+| Surface | 0.4 status |
 | --- | --- |
 | CLI parsing, help, validation, aliases, output and streaming | Parity-gated |
 | HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
 | MCP 2025-11-25, progressive/direct discovery and calls | Implemented with `rmcp` 2.2 |
 | OpenAPI, skills and shell completions | Generated from the shared command graph |
+| Durable Code Mode | Platform-neutral Rust lifecycle with local sandbox execution |
 | Typed args, options, env and output | `CommandDef::typed` plus derive macros |
 | Rust and JSON generation | `incurs gen` |
 | Rust-only table and CSV formats | Explicit `incurs-extras` opt-in |
@@ -24,7 +26,7 @@ The parity inventory classifies all 1,062 tests in the vendored TypeScript oracl
 
 ```toml
 [dependencies]
-incurs = "0.3"
+incurs = "0.4"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
@@ -107,7 +109,7 @@ Parity-default help and parsing expose only upstream formats. Table and CSV rema
 
 ```toml
 [dependencies]
-incurs-extras = "0.3"
+incurs-extras = "0.4"
 ```
 
 ```rust
@@ -123,10 +125,65 @@ let cli = cli.default_extra_format(ExtraFormat::Table);
 The optional transport features are:
 
 ```toml
-incurs = { version = "0.3", features = ["http", "mcp", "openapi"] }
+incurs = { version = "0.4", features = ["http", "mcp", "openapi"] }
 ```
 
 HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known skill files, and fetch gateways. MCP supports current protocol initialization, filtered progressive discovery, direct discovery, and invocation through the same command graph.
+
+## Code Mode
+
+`Cli::tool_catalog()` exposes every MCP-visible leaf command as a
+transport-neutral Rust API. Calls use the same schemas, middleware, declared
+environment fields, CLI global defaults, command config sections, request
+metadata, streaming results, and structured errors as the shared command
+runtime. `Cli::try_tool_catalog()` reports exposed-name collisions instead of
+silently replacing a command.
+
+The `incurs-codemode` crate owns the generic `CodeMode` lifecycle and executor
+contract. It provides typed connector discovery, search and describe, resolved
+approval policy, immutable capability snapshots, deterministic replay,
+cancellation, ordered events, artifact-backed large values, rollback hooks,
+snippets, and bounded durable history. It can wrap an incurs catalog, a remote
+MCP client, or an authenticated OpenAPI client.
+
+Local incurs annotations are authoritative. A read-only local tool skips
+approval only when it is neither destructive nor open-world. Remote MCP and
+OpenAPI tools require approval and use logged replay unless the host installs an
+explicit `ToolPolicyResolver`.
+
+Code Mode programs use JavaScript for low startup latency and direct access to
+JSON-shaped tool inputs and outputs. `incurs-codemode-local` runs them in a
+resource-limited QuickJS runtime. Remote and provider-specific executors
+implement the same Rust `CodeExecutor` contract in standalone workspaces under
+`extensions/`.
+
+Run the native example with:
+
+```sh
+cargo run -p incurs-codemode-local --example local
+```
+
+The lifecycle, connector policy, dispatch, harness generation, and persistence
+contracts are Rust. The generated JavaScript harness is shared by local and
+remote executors.
+
+`incurs-codemode-mcp` provides a reusable `rmcp::ServerHandler` and stdio
+adapter for the stable provider-neutral lifecycle surface:
+
+| Tool | Purpose |
+| --- | --- |
+| `codemode_search` | Search current tools and snippets with declarations needed to call each match. |
+| `codemode_execute` | Start a JavaScript execution. |
+| `codemode_execution` | Read execution state or an owned artifact. |
+| `codemode_decide` | Approve or reject one pending action. |
+| `codemode_cancel` | Cancel a running or paused execution. |
+
+`codemode_execute` returns a durable running state before the actor drives the
+non-`Send` QuickJS pass. MCP cancellation remains responsive and propagates
+through connector calls. The same handler can be served over stdio or an HTTP
+transport. HTTP method, path, and headers flow into incurs request context when
+the transport provides them. Oversized values remain artifact references in MCP
+execution snapshots and can be fetched with `codemode_execution.artifact_id`.
 
 ## Examples
 
@@ -152,7 +209,7 @@ cargo test --workspace --all-features
 cargo doc --workspace --all-features --no-deps
 ```
 
-See [MIGRATION.md](MIGRATION.md) for the 0.2 to 0.3 transition.
+See [MIGRATION.md](MIGRATION.md) for release migration notes.
 
 ## Architecture
 
@@ -161,12 +218,16 @@ typed command definitions
           |
           v
 shared command graph + schemas
-  |       |       |       |
- CLI     HTTP     MCP   generated artifacts
-                           |-- OpenAPI
-                           |-- skills
-                           |-- completions
-                           `-- Rust/JSON codegen
+  |       |       |       |                  |
+ CLI     HTTP     MCP   tool catalog    generated artifacts
+                           |              |-- OpenAPI
+                           |              |-- skills
+                           |              |-- completions
+                           |              `-- Rust/JSON codegen
+                           v
+                  generic Code Mode
+                    |           |
+              local QuickJS  remote executors
 ```
 
 ## License

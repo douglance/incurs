@@ -52,21 +52,127 @@ enum ObservedOutput {
 
 fn main() {
     let command = env::args().nth(1).unwrap_or_else(|| "parity".to_string());
-    if command != "parity" {
-        eprintln!("unknown xtask: {command}");
-        std::process::exit(2);
-    }
-
-    if let Err(error) = parity() {
-        eprintln!("parity failed: {error}");
+    let result = match command.as_str() {
+        "parity" => parity(),
+        "release-check" => release_check(),
+        _ => {
+            eprintln!("unknown xtask: {command}");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) = result {
+        eprintln!("{command} failed: {error}");
         std::process::exit(1);
     }
 }
 
-fn parity() -> Result<(), Box<dyn std::error::Error>> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn release_check() -> Result<(), Box<dyn std::error::Error>> {
+    let root = workspace_root();
+    let packages = [
+        ("incurs-macros", "0.4.0"),
+        ("incurs", "0.4.0"),
+        ("incurs-cli", "0.4.0"),
+        ("incurs-extras", "0.4.0"),
+        ("incurs-codemode", "0.1.0"),
+        ("incurs-codemode-local", "0.1.0"),
+        ("incurs-codemode-mcp", "0.1.0"),
+    ];
+    run(
+        Command::new("cargo").current_dir(root).args([
+            "package",
+            "--workspace",
+            "--exclude",
+            "xtask",
+            "--allow-dirty",
+            "--no-verify",
+        ]),
+        "package release workspace",
+    )?;
+
+    let temp = env::temp_dir().join(format!("incurs-release-check-{}", std::process::id()));
+    if temp.exists() {
+        fs::remove_dir_all(&temp)?;
+    }
+    fs::create_dir_all(&temp)?;
+    let result = verify_archives(root, &temp, &packages);
+    if result.is_ok() {
+        fs::remove_dir_all(&temp)?;
+    } else {
+        eprintln!("kept unpacked release artifacts at {}", temp.display());
+    }
+    result
+}
+
+fn verify_archives(
+    root: &Path,
+    temp: &Path,
+    packages: &[(&str, &str)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    for (package, version) in packages {
+        let archive = root
+            .join("target/package")
+            .join(format!("{package}-{version}.crate"));
+        if !archive.is_file() {
+            return Err(format!("missing package archive {}", archive.display()).into());
+        }
+        run(
+            Command::new("tar")
+                .args(["-xzf"])
+                .arg(&archive)
+                .arg("-C")
+                .arg(temp),
+            &format!("unpack {package}"),
+        )?;
+    }
+
+    let patch = packages
+        .iter()
+        .map(|(package, version)| {
+            format!(
+                "{package} = {{ path = {:?} }}",
+                temp.join(format!("{package}-{version}"))
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for (package, version) in packages {
+        let manifest = temp.join(format!("{package}-{version}/Cargo.toml"));
+        let mut contents = fs::read_to_string(&manifest)?;
+        contents.push_str("\n[patch.crates-io]\n");
+        contents.push_str(&patch);
+        contents.push('\n');
+        fs::write(&manifest, contents)?;
+        run(
+            Command::new("cargo")
+                .arg("check")
+                .arg("--manifest-path")
+                .arg(&manifest)
+                .arg("--target-dir")
+                .arg(temp.join("target"))
+                .arg("--all-features"),
+            &format!("check packaged {package}"),
+        )?;
+        println!("verified {package} {version}");
+    }
+    Ok(())
+}
+
+fn run(command: &mut Command, label: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let status = command.status()?;
+    if !status.success() {
+        return Err(format!("{label} exited with {status}").into());
+    }
+    Ok(())
+}
+
+fn workspace_root() -> &'static Path {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .expect("xtask must live below the workspace root");
+        .expect("xtask must live below the workspace root")
+}
+
+fn parity() -> Result<(), Box<dyn std::error::Error>> {
+    let root = workspace_root();
     let inventory_count = validate_inventory(root)?;
     println!("classified {inventory_count} TypeScript oracle tests");
     let cases: Vec<Case> =

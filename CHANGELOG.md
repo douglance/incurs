@@ -1,5 +1,19 @@
 # incur
 
+## Rust 0.4.0
+
+- Added `ToolCatalog` as the shared direct and streaming invocation boundary for
+  MCP, Code Mode, and future non-CLI transports.
+- Added the provider-neutral `incurs-codemode` durable lifecycle with approval,
+  replay, cancellation, events, artifact spill, rollback, snippets, and
+  interchangeable executors and stores.
+- Added `incurs-codemode-local` with a resource-limited QuickJS executor and a
+  send-safe actor service.
+- Added `incurs-codemode-mcp` with a real five-tool MCP server handler for stdio
+  and reusable server transports. Search results carry callable declarations,
+  HTTP request metadata reaches incurs tools, and oversized execution values
+  remain retrievable artifact references.
+
 ## 0.4.17
 
 ### Patch Changes

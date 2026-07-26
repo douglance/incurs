@@ -497,7 +497,6 @@ mod server {
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
 
-    use futures::StreamExt;
     use serde_json::Value;
 
     use rmcp::ErrorData as McpError;
@@ -509,19 +508,20 @@ mod server {
     };
     use rmcp::service::{RequestContext, RoleServer};
 
-    use crate::command::{self, CommandDef, ExecuteOptions, ParseMode};
-    use crate::middleware::MiddlewareFn;
-    use crate::output::Format;
+    use crate::cli::ConfigOptions;
     use crate::schema::FieldMeta;
+    use crate::tool::{
+        ConfigSource, EnvironmentSource, ToolCallControl, ToolCallOptions, ToolCallOutcome,
+        ToolCatalog, ToolDefinition, ToolEvent, ToolEventSink,
+    };
 
-    use super::{McpDiscovery, McpServeOptions, McpToolFilter, build_tool_schema};
+    use super::{McpDiscovery, McpServeOptions, McpToolFilter};
 
     // -----------------------------------------------------------------------
     // Tool resolution from the CLI command tree
     // -----------------------------------------------------------------------
 
-    /// A resolved tool with both metadata and the `CommandDef` needed for
-    /// execution. This is the server-side counterpart of `ToolEntry`.
+    /// A resolved tool metadata entry. Execution goes through [`ToolCatalog`].
     struct ResolvedTool {
         /// Tool name (path segments joined with `_`).
         name: String,
@@ -529,10 +529,6 @@ mod server {
         description: String,
         /// Merged JSON Schema for the tool's input (as a JSON Map).
         input_schema: Arc<serde_json::Map<String, Value>>,
-        /// The command definition for execution.
-        command: Arc<CommandDef>,
-        /// Middleware inherited from parent groups.
-        middleware: Vec<MiddlewareFn>,
         /// JSON Schema for structured MCP output when object-shaped.
         output_schema: Option<Arc<serde_json::Map<String, Value>>>,
         /// Behavioral annotations exposed to clients.
@@ -541,78 +537,124 @@ mod server {
         instructions: Option<String>,
     }
 
-    /// Recursively collects leaf commands from the CLI command tree,
-    /// preserving `Arc<CommandDef>` references for execution and inheriting
-    /// group middleware.
-    fn collect_resolved_tools(
+    fn tool_definition(definition: &ToolDefinition) -> ResolvedTool {
+        ResolvedTool {
+            name: definition.name.clone(),
+            description: definition.description.clone(),
+            input_schema: Arc::new(
+                definition
+                    .input_schema
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
+            output_schema: definition
+                .output_schema
+                .as_ref()
+                .and_then(|schema| schema.as_object().cloned().map(Arc::new)),
+            annotations: definition.annotations.as_ref().map(|annotations| {
+                ToolAnnotations::from_raw(
+                    annotations.title.clone(),
+                    annotations.read_only_hint,
+                    annotations.destructive_hint,
+                    annotations.idempotent_hint,
+                    annotations.open_world_hint,
+                )
+            }),
+            instructions: definition.instructions.clone(),
+        }
+    }
+
+    /// Resolves the shared transport-neutral catalog for MCP discovery and calls.
+    fn resolve_catalog(
+        name: String,
+        version: Option<String>,
         commands: &BTreeMap<String, crate::cli::CommandEntry>,
-        prefix: &[String],
-        parent_middleware: &[MiddlewareFn],
-    ) -> Vec<ResolvedTool> {
-        let mut result = Vec::new();
+        root_middleware: &[crate::middleware::MiddlewareFn],
+        env_fields: &[FieldMeta],
+        globals_fields: &[FieldMeta],
+        config: Option<&ConfigOptions>,
+    ) -> Result<ToolCatalog, crate::errors::Error> {
+        ToolCatalog::from_parts(
+            name,
+            version,
+            commands,
+            root_middleware,
+            env_fields,
+            globals_fields,
+            config,
+        )
+        .map_err(|error| {
+            crate::errors::Error::Other(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                error.to_string(),
+            )))
+        })
+    }
 
-        for (name, entry) in commands {
-            let mut path = prefix.to_vec();
-            path.push(name.clone());
+    fn collect_resolved_tools(catalog: &ToolCatalog) -> Vec<ResolvedTool> {
+        catalog
+            .resolved()
+            .map(|tool| tool_definition(&tool.definition))
+            .collect()
+    }
 
-            match entry {
-                crate::cli::CommandEntry::Leaf(def) => {
-                    let mcp = def.handler.mcp_options().cloned().unwrap_or_default();
-                    if !mcp.enabled {
-                        continue;
-                    }
-                    let tool_name = mcp.name.clone().unwrap_or_else(|| path.join("_"));
-                    let schema_value =
-                        def.handler.mcp_input_schema().cloned().unwrap_or_else(|| {
-                            build_tool_schema(&def.args_fields, &def.options_fields)
-                        });
-                    let input_schema = match schema_value {
-                        Value::Object(map) => Arc::new(map),
-                        _ => Arc::new(serde_json::Map::new()),
-                    };
-                    result.push(ResolvedTool {
-                        name: tool_name,
-                        description: mcp
-                            .description
-                            .clone()
-                            .or_else(|| def.description.clone())
-                            .unwrap_or_default(),
-                        input_schema,
-                        command: Arc::clone(def),
-                        middleware: parent_middleware.to_vec(),
-                        output_schema: def
-                            .output_schema
-                            .as_ref()
-                            .and_then(|schema| schema.as_object().cloned().map(Arc::new)),
-                        annotations: mcp.annotations.as_ref().map(|annotations| {
-                            ToolAnnotations::from_raw(
-                                annotations.title.clone(),
-                                annotations.read_only_hint,
-                                annotations.destructive_hint,
-                                annotations.idempotent_hint,
-                                annotations.open_world_hint,
-                            )
-                        }),
-                        instructions: mcp.instructions.clone(),
-                    });
-                }
-                crate::cli::CommandEntry::Group {
-                    commands: sub,
-                    middleware,
-                    ..
-                } => {
-                    let mut merged_mw = parent_middleware.to_vec();
-                    merged_mw.extend(middleware.iter().cloned());
-                    result.extend(collect_resolved_tools(sub, &path, &merged_mw));
-                }
-                crate::cli::CommandEntry::FetchGateway { .. } => {
-                    // Fetch gateways are not exposed as MCP tools.
-                }
+    pub(super) struct ServerSource<'a> {
+        name: &'a str,
+        version: &'a str,
+        commands: &'a BTreeMap<String, crate::cli::CommandEntry>,
+        root_middleware: &'a [crate::middleware::MiddlewareFn],
+        env_fields: &'a [FieldMeta],
+        globals_fields: &'a [FieldMeta],
+        config: Option<&'a ConfigOptions>,
+    }
+
+    impl<'a> ServerSource<'a> {
+        pub(super) fn from_cli(cli: &'a crate::cli::Cli) -> Self {
+            Self {
+                name: &cli.name,
+                version: cli.version.as_deref().unwrap_or("0.0.0"),
+                commands: &cli.commands,
+                root_middleware: &cli.middleware,
+                env_fields: &cli.env_fields,
+                globals_fields: &cli.globals_fields,
+                config: cli.config.as_ref(),
             }
         }
 
-        result.sort_by(|a, b| a.name.cmp(&b.name));
-        result
+        pub(super) fn from_parts(
+            name: &'a str,
+            version: &'a str,
+            commands: &'a BTreeMap<String, crate::cli::CommandEntry>,
+            root_middleware: &'a [crate::middleware::MiddlewareFn],
+            env_fields: &'a [FieldMeta],
+        ) -> Self {
+            Self {
+                name,
+                version,
+                commands,
+                root_middleware,
+                env_fields,
+                globals_fields: &[],
+                config: None,
+            }
+        }
+    }
+
+    fn catalog_and_tools(
+        source: &ServerSource<'_>,
+    ) -> Result<(ToolCatalog, Vec<ResolvedTool>), crate::errors::Error> {
+        let catalog = resolve_catalog(
+            source.name.to_string(),
+            Some(source.version.to_string()),
+            source.commands,
+            source.root_middleware,
+            source.env_fields,
+            source.globals_fields,
+            source.config,
+        )?;
+        let resolved = collect_resolved_tools(&catalog);
+        Ok((catalog, resolved))
     }
 
     fn wildcard_matches(pattern: &str, value: &str) -> bool {
@@ -910,6 +952,76 @@ mod server {
             .with_meta(cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)]))))
     }
 
+    fn field_errors_text(field_errors: Vec<crate::output::FieldErrorOutput>) -> String {
+        serde_json::to_string(
+            &field_errors
+                .into_iter()
+                .map(|error| {
+                    serde_json::json!({
+                        "path": error.path,
+                        "expected": error.expected,
+                        "received": error.received,
+                        "message": error.message,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_default()
+    }
+
+    fn tool_call_result(name: &str, outcome: ToolCallOutcome, structured: bool) -> CallToolResult {
+        match outcome {
+            ToolCallOutcome::Ok { data, cta } => tool_result_success(name, data, cta, structured),
+            ToolCallOutcome::Error {
+                message,
+                field_errors,
+                cta,
+                ..
+            } => {
+                let mut text = if message.is_empty() {
+                    "Command failed".to_string()
+                } else {
+                    message
+                };
+                if let Some(field_errors) = field_errors {
+                    text.push_str("\n\n");
+                    text.push_str(&field_errors_text(field_errors));
+                }
+                tool_result_error(name, text, cta)
+            }
+        }
+    }
+
+    struct McpEventSink {
+        peer: rmcp::service::Peer<RoleServer>,
+        progress_token: Option<rmcp::model::ProgressToken>,
+        count: tokio::sync::Mutex<u64>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolEventSink for McpEventSink {
+        async fn emit(&self, event: ToolEvent) {
+            let Some(progress_token) = self.progress_token.clone() else {
+                return;
+            };
+            let message = match event {
+                ToolEvent::Chunk { data } => {
+                    serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string())
+                }
+                ToolEvent::Progress { message, .. } | ToolEvent::Log { message, .. } => message,
+            };
+            let mut count = self.count.lock().await;
+            *count += 1;
+            let _ = self
+                .peer
+                .notify_progress(
+                    ProgressNotificationParam::new(progress_token, *count as f64)
+                        .with_message(message),
+                )
+                .await;
+        }
+    }
+
     // -----------------------------------------------------------------------
     // ServerHandler implementation
     // -----------------------------------------------------------------------
@@ -918,22 +1030,16 @@ mod server {
     /// to respond to `initialize`, `tools/list`, and `tools/call` requests.
     #[derive(Clone)]
     pub(crate) struct IncurMcpServer {
-        /// CLI name used in command execution context.
-        cli_name: String,
-        /// CLI version used in command execution context.
-        cli_version: Option<String>,
         /// Server name (CLI name).
         server_name: String,
         /// Server version (CLI version).
         server_version: String,
+        /// Transport-neutral command catalog used for execution.
+        catalog: ToolCatalog,
         /// Resolved tools indexed by name for O(1) lookup during `tools/call`.
         tools_by_name: Arc<HashMap<String, Arc<ResolvedTool>>>,
         /// Pre-built list of `rmcp::model::Tool` for `tools/list` responses.
         tool_list: Arc<Vec<Tool>>,
-        /// Root-level middleware from the CLI.
-        root_middleware: Vec<MiddlewareFn>,
-        /// CLI-level env field metadata.
-        env_fields: Vec<FieldMeta>,
         /// Instructions returned during MCP initialization.
         instructions: Option<String>,
         /// Active discovery strategy.
@@ -944,9 +1050,8 @@ mod server {
         fn new(
             name: String,
             version: String,
+            catalog: ToolCatalog,
             resolved_tools: Vec<ResolvedTool>,
-            root_middleware: Vec<MiddlewareFn>,
-            env_fields: Vec<FieldMeta>,
             options: &McpServeOptions,
         ) -> Result<Self, crate::errors::Error> {
             let resolved_tools = filter_tools(resolved_tools, &options.tools);
@@ -972,14 +1077,11 @@ mod server {
             }
 
             Ok(IncurMcpServer {
-                cli_name: name.clone(),
-                cli_version: Some(version.clone()),
                 server_name: name,
                 server_version: version,
+                catalog,
                 tools_by_name: Arc::new(tools_by_name),
                 tool_list: Arc::new(tool_list),
-                root_middleware,
-                env_fields,
                 instructions: options.instructions.clone(),
                 discovery: options.tools.discovery,
             })
@@ -1021,10 +1123,8 @@ mod server {
         ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_
         {
             let tools_by_name = Arc::clone(&self.tools_by_name);
-            let cli_name = self.cli_name.clone();
-            let cli_version = self.cli_version.clone();
-            let root_middleware = self.root_middleware.clone();
-            let env_fields = self.env_fields.clone();
+            let catalog = self.catalog.clone();
+            let server_name = self.server_name.clone();
             let discovery = self.discovery;
             let progress_token = context.meta.get_progress_token();
             #[cfg(feature = "http")]
@@ -1073,162 +1173,33 @@ mod server {
                     McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
                 })?;
 
-                // Convert arguments to BTreeMap<String, Value> for ExecuteOptions.
                 let input_options: BTreeMap<String, Value> =
                     arguments.unwrap_or_default().into_iter().collect();
-
-                // Collect all middleware: root + group + command.
-                let mut all_middleware = root_middleware.clone();
-                all_middleware.extend(tool.middleware.iter().cloned());
-                all_middleware.extend(tool.command.middleware.iter().cloned());
-
-                // Build the environment source from actual env vars.
-                let env_source: HashMap<String, String> = std::env::vars().collect();
-
-                let result = command::execute(
-                    Arc::clone(&tool.command),
-                    ExecuteOptions {
-                        agent: true,
-                        argv: vec![],
-                        defaults: None,
-                        display_name: cli_name.clone(),
-                        env_fields: env_fields.clone(),
-                        env_source,
-                        format: Format::Json,
-                        format_explicit: true,
-                        globals: Value::Object(serde_json::Map::new()),
+                let outcome = catalog
+                    .call(
+                        &tool_name,
                         input_options,
-                        middlewares: all_middleware,
-                        name: cli_name.clone(),
-                        parse_mode: ParseMode::Flat,
-                        path: tool_name.clone(),
-                        request: transport_request,
-                        vars_fields: vec![],
-                        version: cli_version,
-                    },
-                )
-                .await;
-
-                match result {
-                    command::InternalResult::Ok { data, cta } => Ok(tool_result_success(
-                        &cli_name,
-                        data,
-                        cta,
-                        tool.output_schema.is_some(),
-                    )),
-                    command::InternalResult::Error {
-                        message,
-                        field_errors,
-                        cta,
-                        ..
-                    } => {
-                        let mut text = if message.is_empty() {
-                            "Command failed".to_string()
-                        } else {
-                            message
-                        };
-                        if let Some(field_errors) = field_errors {
-                            text.push_str("\n\n");
-                            text.push_str(
-                                &serde_json::to_string(
-                                    &field_errors
-                                        .into_iter()
-                                        .map(|error| {
-                                            serde_json::json!({
-                                                "path": error.path,
-                                                "expected": error.expected,
-                                                "received": error.received,
-                                                "message": error.message,
-                                            })
-                                        })
-                                        .collect::<Vec<_>>(),
-                                )
-                                .unwrap_or_default(),
-                            );
-                        }
-                        Ok(tool_result_error(&cli_name, text, cta))
-                    }
-                    command::InternalResult::Stream(stream) => {
-                        let mut stream = stream;
-                        let mut chunks = Vec::new();
-                        loop {
-                            let chunk = tokio::select! {
-                                _ = cancellation.cancelled() => break,
-                                chunk = stream.next() => chunk,
-                            };
-                            let Some(chunk) = chunk else {
-                                break;
-                            };
-                            chunks.push(chunk.clone());
-                            if let Some(progress_token) = progress_token.clone() {
-                                let message = serde_json::to_string(&chunk)
-                                    .unwrap_or_else(|_| "null".to_string());
-                                let _ = peer
-                                    .notify_progress(
-                                        ProgressNotificationParam::new(
-                                            progress_token,
-                                            chunks.len() as f64,
-                                        )
-                                        .with_message(message),
-                                    )
-                                    .await;
-                            }
-                        }
-                        let text = serde_json::to_string(&chunks).unwrap_or_else(|_| "[]".into());
-                        Ok(CallToolResult::success(vec![ContentBlock::text(text)]))
-                    }
-                    command::InternalResult::RecordStream(stream) => {
-                        let mut stream = stream;
-                        let mut chunks = Vec::new();
-                        let mut terminal = None;
-                        loop {
-                            let record = tokio::select! {
-                                _ = cancellation.cancelled() => break,
-                                record = stream.next() => record,
-                            };
-                            let Some(record) = record else { break };
-                            match record {
-                                crate::output::StreamRecord::Chunk(chunk) => {
-                                    chunks.push(chunk.clone());
-                                    if let Some(progress_token) = progress_token.clone() {
-                                        let message = serde_json::to_string(&chunk)
-                                            .unwrap_or_else(|_| "null".to_string());
-                                        let _ = peer
-                                            .notify_progress(
-                                                ProgressNotificationParam::new(
-                                                    progress_token,
-                                                    chunks.len() as f64,
-                                                )
-                                                .with_message(message),
-                                            )
-                                            .await;
-                                    }
-                                }
-                                record => {
-                                    terminal = Some(record);
-                                    break;
-                                }
-                            }
-                        }
-                        match terminal {
-                            Some(crate::output::StreamRecord::Error { message, cta, .. }) => {
-                                Ok(tool_result_error(&cli_name, message, cta))
-                            }
-                            terminal => {
-                                let cta = match terminal {
-                                    Some(crate::output::StreamRecord::Ok { cta }) => cta,
-                                    _ => None,
-                                };
-                                Ok(tool_result_success(
-                                    &cli_name,
-                                    Value::Array(chunks),
-                                    cta,
-                                    tool.output_schema.is_some(),
-                                ))
-                            }
-                        }
-                    }
-                }
+                        ToolCallOptions {
+                            environment: EnvironmentSource::DeclaredHost,
+                            config: ConfigSource::Auto,
+                            globals: None,
+                            request: transport_request,
+                            control: ToolCallControl {
+                                cancellation,
+                                events: Some(Arc::new(McpEventSink {
+                                    peer,
+                                    progress_token,
+                                    count: tokio::sync::Mutex::new(0),
+                                })),
+                            },
+                        },
+                    )
+                    .await;
+                Ok(tool_call_result(
+                    &server_name,
+                    outcome,
+                    tool.output_schema.is_some(),
+                ))
             }
         }
     }
@@ -1245,27 +1216,22 @@ mod server {
     /// 3. Connects via stdio transport (stdin/stdout).
     /// 4. Blocks until the client disconnects.
     ///
-    /// Each tool call executes the corresponding command via
-    /// `command::execute()` with `ParseMode::Flat`.
-    pub async fn serve(
-        name: &str,
-        version: &str,
-        commands: &BTreeMap<String, crate::cli::CommandEntry>,
-        root_middleware: &[MiddlewareFn],
-        env_fields: &[FieldMeta],
+    /// Each tool call executes through the shared transport-neutral
+    /// [`ToolCatalog`].
+    pub(super) async fn serve(
+        source: ServerSource<'_>,
         options: &McpServeOptions,
     ) -> Result<(), crate::errors::Error> {
         use rmcp::ServiceExt;
         use rmcp::transport::io::stdio;
 
-        let resolved = collect_resolved_tools(commands, &[], &[]);
+        let (catalog, resolved) = catalog_and_tools(&source)?;
 
         let server = IncurMcpServer::new(
-            name.to_string(),
-            version.to_string(),
+            source.name.to_string(),
+            source.version.to_string(),
+            catalog,
             resolved,
-            root_middleware.to_vec(),
-            env_fields.to_vec(),
             options,
         )?;
 
@@ -1289,11 +1255,7 @@ mod server {
 
     #[cfg(feature = "http")]
     pub(crate) fn http_service(
-        name: &str,
-        version: &str,
-        commands: &BTreeMap<String, crate::cli::CommandEntry>,
-        root_middleware: &[MiddlewareFn],
-        env_fields: &[FieldMeta],
+        source: ServerSource<'_>,
         options: &McpServeOptions,
     ) -> Result<
         rmcp::transport::StreamableHttpService<
@@ -1304,13 +1266,12 @@ mod server {
     > {
         use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
-        let resolved = collect_resolved_tools(commands, &[], &[]);
+        let (catalog, resolved) = catalog_and_tools(&source)?;
         let server = IncurMcpServer::new(
-            name.to_string(),
-            version.to_string(),
+            source.name.to_string(),
+            source.version.to_string(),
+            catalog,
             resolved,
-            root_middleware.to_vec(),
-            env_fields.to_vec(),
             options,
         )?;
         let mut config = StreamableHttpServerConfig::default();
@@ -1334,14 +1295,13 @@ pub(crate) fn http_service(
     >,
     crate::errors::Error,
 > {
-    server::http_service(
-        &cli.name,
-        cli.version.as_deref().unwrap_or("0.0.0"),
-        &cli.commands,
-        &cli.middleware,
-        &cli.env_fields,
-        &cli.mcp_options,
-    )
+    server::http_service(server::ServerSource::from_cli(cli), &cli.mcp_options)
+}
+
+/// Starts a stdio MCP server for a complete CLI.
+#[cfg(feature = "mcp")]
+pub async fn serve_cli(cli: &crate::cli::Cli) -> Result<(), crate::errors::Error> {
+    server::serve(server::ServerSource::from_cli(cli), &cli.mcp_options).await
 }
 
 /// Starts a stdio MCP server that exposes commands as tools.
@@ -1362,11 +1322,7 @@ pub async fn serve(
     options: &McpServeOptions,
 ) -> Result<(), crate::errors::Error> {
     server::serve(
-        name,
-        version,
-        commands,
-        root_middleware,
-        env_fields,
+        server::ServerSource::from_parts(name, version, commands, root_middleware, env_fields),
         options,
     )
     .await
@@ -1552,5 +1508,131 @@ mod tests {
             Some("Ping the server")
         );
         assert!(commands["ping"].output_schema.is_some());
+    }
+
+    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[tokio::test]
+    async fn test_mcp_calls_use_tool_catalog_config_defaults() {
+        use rmcp::ServiceExt;
+        use rmcp::transport::StreamableHttpClientTransport;
+
+        struct EchoOptions;
+
+        #[async_trait::async_trait]
+        impl crate::command::CommandHandler for EchoOptions {
+            async fn run(
+                &self,
+                ctx: crate::command::CommandContext,
+            ) -> crate::output::CommandResult {
+                crate::output::CommandResult::Ok {
+                    data: serde_json::json!({ "options": ctx.options }),
+                    cta: None,
+                }
+            }
+        }
+
+        let config_path = std::env::temp_dir().join(format!(
+            "incurs-mcp-catalog-defaults-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &config_path,
+            serde_json::json!({
+                "commands": {
+                    "echo": {
+                        "options": { "profile": "configured" }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        fn cli(discovery: McpDiscovery, config_path: &std::path::Path) -> crate::cli::Cli {
+            let mut command = crate::command::CommandDef::build("echo", EchoOptions).done();
+            command.options_fields = vec![make_field("profile", FieldType::String, false)];
+            command.output_schema = Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "options": {
+                        "type": "object",
+                        "properties": { "profile": { "type": "string" } }
+                    }
+                }
+            }));
+            crate::cli::Cli::create("catalog-test")
+                .config(crate::cli::ConfigOptions {
+                    flag: "config".to_string(),
+                    files: vec![config_path.to_string_lossy().into_owned()],
+                })
+                .mcp(McpServeOptions {
+                    tools: McpToolFilter {
+                        discovery,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .command("echo", command)
+        }
+
+        let direct_cli = cli(McpDiscovery::Direct, &config_path);
+        let direct_app =
+            axum::Router::new().nest_service("/mcp", http_service(&direct_cli).unwrap());
+        let direct_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let direct_addr = direct_listener.local_addr().unwrap();
+        let direct_server =
+            tokio::spawn(async move { axum::serve(direct_listener, direct_app).await.unwrap() });
+        let direct_client = ()
+            .serve(StreamableHttpClientTransport::from_uri(format!(
+                "http://{direct_addr}/mcp"
+            )))
+            .await
+            .unwrap();
+        let direct = direct_client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("echo")
+                    .with_arguments(serde_json::Map::new()),
+            )
+            .await
+            .unwrap();
+        direct_server.abort();
+
+        let progressive_cli = cli(McpDiscovery::Progressive, &config_path);
+        let progressive_app =
+            axum::Router::new().nest_service("/mcp", http_service(&progressive_cli).unwrap());
+        let progressive_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let progressive_addr = progressive_listener.local_addr().unwrap();
+        let progressive_server = tokio::spawn(async move {
+            axum::serve(progressive_listener, progressive_app)
+                .await
+                .unwrap()
+        });
+        let progressive_client = ()
+            .serve(StreamableHttpClientTransport::from_uri(format!(
+                "http://{progressive_addr}/mcp"
+            )))
+            .await
+            .unwrap();
+        let progressive = progressive_client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("call_write_tool").with_arguments(
+                    serde_json::Map::from_iter([
+                        ("name".to_string(), serde_json::json!("echo")),
+                        ("arguments".to_string(), serde_json::json!({})),
+                    ]),
+                ),
+            )
+            .await
+            .unwrap();
+        progressive_server.abort();
+        let _ = std::fs::remove_file(config_path);
+
+        assert_eq!(
+            direct.structured_content.unwrap()["options"]["profile"],
+            "configured"
+        );
+        assert_eq!(
+            progressive.structured_content.unwrap()["options"]["profile"],
+            "configured"
+        );
     }
 }

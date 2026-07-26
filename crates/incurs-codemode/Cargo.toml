@@ -1,0 +1,22 @@
+[package]
+name = "incurs-codemode"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Portable durable Code Mode runtime for incurs tools"
+repository = "https://github.com/douglance/incurs"
+readme = "README.md"
+
+[dependencies]
+async-trait = "0.1"
+base64 = "0.22"
+incurs = { path = "../incurs", version = "0.4.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

@@ -1,4 +1,7 @@
-# Migrating from incurs 0.2 to 0.3
+# Migrating from incurs 0.3 to 0.4
+
+Version 0.4 adds a canonical non-CLI tool catalog and a provider-neutral durable
+Code Mode runtime. Existing 0.3 command definitions remain source-compatible.
 
 Version 0.3 makes TypeScript incur 0.4.17 behavior the default contract and adds typed command authoring without removing the lower-level command API.
 
@@ -8,11 +11,26 @@ Update all incurs workspace crates together:
 
 ```toml
 [dependencies]
-incurs = "0.3"
-incurs-extras = "0.3" # only when using Rust-only formats
+incurs = "0.4"
+incurs-extras = "0.4" # only when using Rust-only formats
 ```
 
-The `incurs`, `incurs-macros`, `incurs-cli`, and `incurs-extras` packages share the 0.3 release line.
+The `incurs`, `incurs-macros`, `incurs-cli`, and `incurs-extras` packages share
+the 0.4 release line. The new `incurs-codemode`, `incurs-codemode-local`, and
+`incurs-codemode-mcp` packages start at 0.1.
+
+## Use the canonical tool catalog
+
+Use `Cli::tool_catalog()` to discover or invoke command leaves outside the CLI
+transport. The catalog preserves canonical config lookup, middleware, request
+metadata, structured errors, streaming events, schemas, and annotations.
+
+## Add Code Mode only when needed
+
+`incurs-codemode` owns the generic durable lifecycle.
+`incurs-codemode-local` embeds QuickJS, and `incurs-codemode-mcp` exposes the
+five lifecycle tools over a reusable MCP server handler. Platform-specific
+executors remain separate extensions.
 
 ## Prefer typed commands
 
@@ -44,7 +62,7 @@ use incurs_extras::{CliExtras, ExtraFormat};
 let cli = cli.default_extra_format(ExtraFormat::Csv);
 ```
 
-This is the only expected user-visible default-surface change in 0.3.
+This remains an explicit opt-in surface.
 
 ## Generate interoperable artifacts
 

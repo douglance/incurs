@@ -7,19 +7,70 @@ on:
 
 jobs:
   check:
-    name: Check & Test
+    name: Workspace
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Check
+        run: cargo check --workspace --all-features
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Test
+        run: cargo test --workspace --all-features
+      - name: Documentation
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps
+      - name: Build examples
+        run: cargo build --examples --workspace --all-features
+
+  parity:
+    name: Behavioral parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.30.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: pnpm install --frozen-lockfile
+      - run: cargo xtask parity
+
+  release:
+    name: Release artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask release-check
+
+  extensions:
+    name: Extension workspaces
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Check
-        run: cargo check --workspace
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
-      - name: Test
-        run: cargo test --workspace
-      - name: Build examples
-        run: cargo build --example todoapp -p incurs
+      - name: Test extension workspaces
+        run: |
+          for manifest in extensions/*/Cargo.toml; do
+            cargo fmt --manifest-path "$manifest" --all --check
+            cargo test --manifest-path "$manifest" --workspace --all-features
+            cargo clippy --manifest-path "$manifest" --workspace --all-targets --all-features -- -D warnings
+            cargo check --manifest-path "$manifest" --workspace --target wasm32-unknown-unknown
+          done

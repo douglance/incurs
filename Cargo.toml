@@ -1,3 +1,12 @@
 [workspace]
-members = ["crates/incurs", "crates/incurs-macros", "crates/incurs-cli", "crates/incurs-extras", "xtask"]
+members = [
+  "crates/incurs",
+  "crates/incurs-codemode",
+  "crates/incurs-codemode-local",
+  "crates/incurs-codemode-mcp",
+  "crates/incurs-macros",
+  "crates/incurs-cli",
+  "crates/incurs-extras",
+  "xtask",
+]
 resolver = "2"

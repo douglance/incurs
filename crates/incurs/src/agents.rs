@@ -352,12 +352,12 @@ pub fn install(source_dir: &Path, options: &InstallOptions) -> InstallResult {
                 // Resolve through existing symlinks in parent directories
                 let real_link_dir = resolve_parent(agent_dir.parent().unwrap_or(Path::new(".")));
                 let real_target = resolve_parent(&canonical_dir);
-                let rel = pathdiff::diff_paths(&real_target, &real_link_dir)
+                let _rel = pathdiff::diff_paths(&real_target, &real_link_dir)
                     .unwrap_or_else(|| real_target.clone());
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&rel, &agent_dir)?;
+                std::os::unix::fs::symlink(&_rel, &agent_dir)?;
                 #[cfg(windows)]
-                std::os::windows::fs::symlink_dir(&rel, &agent_dir)?;
+                std::os::windows::fs::symlink_dir(&_rel, &agent_dir)?;
                 Ok(())
             })();
 

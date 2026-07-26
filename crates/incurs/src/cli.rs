@@ -126,6 +126,7 @@ impl CommandEntry {
 }
 
 /// Config file options for a CLI.
+#[derive(Debug, Clone)]
 pub struct ConfigOptions {
     /// The flag name for specifying a config file (e.g. `"config"` for `--config`).
     pub flag: String,
@@ -175,7 +176,7 @@ pub struct Cli {
     /// Middleware variable fields.
     pub(crate) vars_fields: Vec<FieldMeta>,
     /// Config file options.
-    config: Option<ConfigOptions>,
+    pub(crate) config: Option<ConfigOptions>,
     /// Default output policy.
     output_policy: Option<OutputPolicy>,
     /// Default output format.
@@ -698,16 +699,7 @@ impl Cli {
         if builtin.mcp {
             #[cfg(feature = "mcp")]
             {
-                let version = self.version.as_deref().unwrap_or("0.0.0");
-                crate::mcp::serve(
-                    &self.name,
-                    version,
-                    &self.commands,
-                    &self.middleware,
-                    &self.env_fields,
-                    &self.mcp_options,
-                )
-                .await?;
+                crate::mcp::serve_cli(self).await?;
                 return Ok(());
             }
             #[cfg(not(feature = "mcp"))]
@@ -1832,16 +1824,7 @@ impl Cli {
         if builtin.mcp {
             #[cfg(feature = "mcp")]
             {
-                let version = self.version.as_deref().unwrap_or("0.0.0");
-                crate::mcp::serve(
-                    &self.name,
-                    version,
-                    &self.commands,
-                    &self.middleware,
-                    &self.env_fields,
-                    &self.mcp_options,
-                )
-                .await?;
+                crate::mcp::serve_cli(self).await?;
                 return Ok(None);
             }
             #[cfg(not(feature = "mcp"))]

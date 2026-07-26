@@ -217,7 +217,7 @@ Works with any `(Request) => Response` handler — Hono, Elysia, etc. Specs from
 
 ### Serve CLI as Fetch API
 
-Expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Cloudflare Workers, Deno, Hono, and anything that accepts `(req: Request) => Response`.
+Expose your CLI as a standard Fetch API handler with `cli.fetch`. Works with Bun, Deno, Hono, edge runtimes, and anything that accepts `(req: Request) => Response`.
 
 ```ts
 import { Cli, z } from 'incur'
@@ -235,7 +235,7 @@ const cli = Cli.create('my-cli', { version: '1.0.0' }).command('users', {
 ```ts
 Bun.serve(cli) // Bun
 Deno.serve(cli.fetch) // Deno
-export default cli // Cloudflare Workers
+export default cli // edge runtimes
 app.all('*', (c) => cli.fetch(c.request)) // Elysia
 app.use((c) => cli.fetch(c.req.raw)) // Hono
 export const GET = cli.fetch // Next.js

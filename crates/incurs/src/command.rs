@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use futures::Stream;
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{Mutex as TokioMutex, RwLock};
 
@@ -49,7 +49,7 @@ pub struct Example {
 }
 
 /// Hints describing an MCP tool's behavior to clients.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct McpAnnotations {
     /// A human-readable title for the tool.
     pub title: Option<String>,

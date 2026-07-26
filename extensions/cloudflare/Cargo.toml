@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/incurs-codemode-cloudflare",
+  "examples/codemode-worker",
+]
+resolver = "2"
