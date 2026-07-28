@@ -64,7 +64,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-          components: clippy
+          components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
       - name: Test extension workspaces
         run: |

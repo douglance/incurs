@@ -73,7 +73,7 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         ("incurs", "0.4.0"),
         ("incurs-cli", "0.4.0"),
         ("incurs-extras", "0.4.0"),
-        ("incurs-codemode", "0.1.0"),
+        ("incurs-codemode", "0.1.1"),
         ("incurs-codemode-local", "0.1.0"),
         ("incurs-codemode-mcp", "0.1.0"),
     ];

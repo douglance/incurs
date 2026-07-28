@@ -39,6 +39,11 @@
 - **`ToolCatalog` is the non-CLI invocation boundary** — MCP, Code Mode, and future transports resolve command metadata and execute through `ToolCatalog`. Preserve canonical command paths for config lookup and middleware context. `ParseMode::Flat` does not apply config defaults, so merge resolved command defaults into structured arguments before `command::execute`.
 - **Tool cancellation covers active commands** — race the shared `command::execute` future against `ToolCallControl::cancellation`; a pre-invocation check and stream-only cancellation do not stop an ordinary asynchronous command.
 - **Local Code Mode uses an actor boundary** — QuickJS execution is non-`Send`. Construct and drive it on a dedicated current-thread runtime, return the durable running state before the pass begins, and keep lifecycle requests responsive so cancellation can interrupt active code.
+- **Approval is the only transition out of an approval pause** — a generic resume operation must reject executions with pending actions. Only the atomic approve winner may move that execution back to running before replay.
+- **Code Mode dispatch requires an active pass** — never construct a fallback tool context for public dispatch. Calls and durable steps are valid only while an executor owns the active pass capability.
+- **Terminal transitions are state guarded** — completion and failure only replace a running state. Rejection only applies to a paused pending action, and rollback requires a terminal execution with no unfinished actions.
+- **Detached execution uses the host lifetime primitive** — adapters that return a durable running state before execution completes must register the pass with their host's request-lifetime mechanism.
+- **Streamable HTTP validates before dispatch** — MCP HTTP adapters must enforce method, Origin, Accept, content type, protocol-version, JSON-RPC, and initialization requirements before invoking shared tool dispatch. Partition durable state by an authenticated tenant boundary; a singleton object is only acceptable for an explicitly local fixture.
 
 ## Testing Conventions
 

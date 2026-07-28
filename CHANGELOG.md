@@ -1,5 +1,12 @@
 # incur
 
+## Code Mode 0.1.1
+
+- Prevented generic resume calls from bypassing pending approval decisions.
+- Required an active execution pass for dispatch and serialized concurrent pass drivers.
+- Guarded completion, rejection, cancellation, and rollback against stale lifecycle transitions.
+- Completed connector lifecycle hooks for idle cancellation and host-managed detached execution.
+
 ## Rust 0.4.0
 
 - Added `ToolCatalog` as the shared direct and streaming invocation boundary for

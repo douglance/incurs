@@ -492,6 +492,15 @@ impl CodeModeRuntime {
                 execution.status
             )));
         }
+        if execution
+            .log
+            .iter()
+            .any(|entry| entry.state == LogEntryState::Pending)
+        {
+            return Err(RuntimeError::InvalidState(format!(
+                "Execution \"{id}\" is awaiting approval; use approve or reject"
+            )));
+        }
         execution.status = ExecutionStatus::Running;
         push_event(
             &mut execution,
@@ -733,6 +742,12 @@ impl CodeModeRuntime {
     ) -> Result<(), RuntimeError> {
         let _guard = self.gate.lock().await;
         let mut execution = self.require(id).await?;
+        if execution.status != ExecutionStatus::Running {
+            return Err(RuntimeError::InvalidState(format!(
+                "Execution \"{id}\" is {:?}, not running",
+                execution.status
+            )));
+        }
         let result = self.spill(id, result).await?;
         if execution.status != ExecutionStatus::Running {
             return Err(RuntimeError::InvalidState(format!(
@@ -769,6 +784,12 @@ impl CodeModeRuntime {
     ) -> Result<(), RuntimeError> {
         let _guard = self.gate.lock().await;
         let mut execution = self.require(id).await?;
+        if execution.status != ExecutionStatus::Running {
+            return Err(RuntimeError::InvalidState(format!(
+                "Execution \"{id}\" is {:?}, not running",
+                execution.status
+            )));
+        }
         let result = self.spill(id, result).await?;
         execution.status = ExecutionStatus::Completed;
         push_event(
@@ -794,6 +815,12 @@ impl CodeModeRuntime {
     ) -> Result<(), RuntimeError> {
         let _guard = self.gate.lock().await;
         let mut execution = self.require(id).await?;
+        if execution.status != ExecutionStatus::Running {
+            return Err(RuntimeError::InvalidState(format!(
+                "Execution \"{id}\" is {:?}, not running",
+                execution.status
+            )));
+        }
         execution.status = ExecutionStatus::Error;
         push_event(
             &mut execution,
@@ -833,6 +860,12 @@ impl CodeModeRuntime {
     pub async fn reject(&self, id: &str, seq: u64, now: u64) -> Result<bool, RuntimeError> {
         let _guard = self.gate.lock().await;
         let mut execution = self.require(id).await?;
+        if execution.status != ExecutionStatus::Paused {
+            return Err(RuntimeError::InvalidState(format!(
+                "Execution \"{id}\" is {:?}, not paused",
+                execution.status
+            )));
+        }
         let Some(entry) = execution
             .log
             .iter_mut()
@@ -901,6 +934,7 @@ impl CodeModeRuntime {
     /// Returns applied connector actions in reverse order for compensation.
     pub async fn actions_to_revert(&self, id: &str) -> Result<Vec<LogEntry>, RuntimeError> {
         let execution = self.require(id).await?;
+        validate_rollback_state(&execution)?;
         let mut actions = Vec::new();
         for entry in execution.log.into_iter().filter(|entry| {
             entry.state == LogEntryState::Applied && !entry.ephemeral && entry.connector != "__step"
@@ -927,6 +961,7 @@ impl CodeModeRuntime {
     pub async fn finish_rollback(&self, id: &str, now: u64) -> Result<(), RuntimeError> {
         let _guard = self.gate.lock().await;
         let mut execution = self.require(id).await?;
+        validate_rollback_state(&execution)?;
         execution.status = ExecutionStatus::RolledBack;
         push_event(
             &mut execution,
@@ -1209,6 +1244,27 @@ fn truncate_bytes(mut value: String, limit: usize) -> String {
     value
 }
 
+fn validate_rollback_state(execution: &ExecutionState) -> Result<(), RuntimeError> {
+    if !execution.status.terminal() || execution.status == ExecutionStatus::RolledBack {
+        return Err(RuntimeError::InvalidState(format!(
+            "Execution \"{}\" is {:?}, not rollback eligible",
+            execution.id, execution.status
+        )));
+    }
+    if execution.log.iter().any(|entry| {
+        matches!(
+            entry.state,
+            LogEntryState::Pending | LogEntryState::Executing
+        )
+    }) {
+        return Err(RuntimeError::InvalidState(format!(
+            "Execution \"{}\" has an unfinished action",
+            execution.id
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1294,6 +1350,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn terminal_state_cannot_be_overwritten_by_late_completion() {
+        let runtime = runtime();
+        let id = runtime.begin("async () => 42", vec![], 1).await.unwrap();
+        runtime.cancel(&id, 2).await.unwrap();
+
+        let error = runtime
+            .complete(&id, json!(42), Vec::new(), 3)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, RuntimeError::InvalidState(_)));
+        assert_eq!(
+            runtime.execution(&id).await.unwrap().unwrap().status,
+            ExecutionStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_rejection_cannot_replace_cancellation() {
+        let runtime = runtime();
+        let id = runtime
+            .begin("async () => {}", vec!["db".into()], 1)
+            .await
+            .unwrap();
+        runtime
+            .decide(&id, 0, "db", "write", json!({}), true, false, 2)
+            .await
+            .unwrap();
+        runtime.cancel(&id, 3).await.unwrap();
+
+        let error = runtime.reject(&id, 0, 4).await.unwrap_err();
+
+        assert!(matches!(error, RuntimeError::InvalidState(_)));
+        assert_eq!(
+            runtime.execution(&id).await.unwrap().unwrap().status,
+            ExecutionStatus::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_rejects_running_executions() {
+        let runtime = runtime();
+        let id = runtime.begin("async () => 42", vec![], 1).await.unwrap();
+
+        let error = runtime.actions_to_revert(&id).await.unwrap_err();
+
+        assert!(matches!(error, RuntimeError::InvalidState(_)));
+        assert_eq!(
+            runtime.execution(&id).await.unwrap().unwrap().status,
+            ExecutionStatus::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_cannot_bypass_pending_approval() {
+        let runtime = runtime();
+        let id = runtime
+            .begin("async () => {}", vec!["db".into()], 1)
+            .await
+            .unwrap();
+        runtime
+            .decide(&id, 0, "db", "write", json!({"id": 1}), true, false, 2)
+            .await
+            .unwrap();
+
+        let error = runtime.resume(&id, 3).await.unwrap_err();
+
+        assert!(matches!(error, RuntimeError::InvalidState(_)));
+        let execution = runtime.execution(&id).await.unwrap().unwrap();
+        assert_eq!(execution.status, ExecutionStatus::Paused);
+        assert_eq!(execution.log[0].state, LogEntryState::Pending);
+    }
+
+    #[tokio::test]
     async fn rollback_targets_only_logged_connector_actions() {
         let runtime = runtime();
         let id = runtime
@@ -1310,6 +1440,10 @@ mod tests {
             .await
             .unwrap();
         runtime.record_result(&id, 1, json!(2), 5).await.unwrap();
+        runtime
+            .complete(&id, json!({"ok": true}), Vec::new(), 6)
+            .await
+            .unwrap();
 
         let actions = runtime.actions_to_revert(&id).await.unwrap();
 

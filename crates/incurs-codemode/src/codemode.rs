@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use incurs::command::RequestContext;
 use incurs::tool::{ToolCallControl, ToolEvent, ToolEventSink};
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -53,6 +53,8 @@ pub struct CodeMode {
     connectors: Vec<Arc<dyn Connector>>,
     clock: Arc<dyn Clock>,
     contexts: Mutex<HashMap<String, ToolContext>>,
+    pass_gates: Mutex<HashMap<String, Arc<Semaphore>>>,
+    active_rollbacks: Mutex<HashSet<String>>,
 }
 
 impl CodeMode {
@@ -78,6 +80,8 @@ impl CodeMode {
             connectors,
             clock: Arc::new(SystemClock),
             contexts: Mutex::new(HashMap::new()),
+            pass_gates: Mutex::new(HashMap::new()),
+            active_rollbacks: Mutex::new(HashSet::new()),
         }
     }
 
@@ -94,6 +98,8 @@ impl CodeMode {
             connectors,
             clock: Arc::new(clock),
             contexts: Mutex::new(HashMap::new()),
+            pass_gates: Mutex::new(HashMap::new()),
+            active_rollbacks: Mutex::new(HashSet::new()),
         }
     }
 
@@ -111,6 +117,8 @@ impl CodeMode {
             connectors,
             clock: Arc::new(clock),
             contexts: Mutex::new(HashMap::new()),
+            pass_gates: Mutex::new(HashMap::new()),
+            active_rollbacks: Mutex::new(HashSet::new()),
         }
     }
 
@@ -184,13 +192,18 @@ impl CodeMode {
 
     /// Cancels a running or paused execution.
     pub async fn cancel(&self, execution_id: &str) -> Result<ExecutionState, String> {
+        let pass_active = self.contexts.lock().await.contains_key(execution_id);
         if let Some(context) = self.contexts.lock().await.get(execution_id) {
             context.control.cancellation.cancel();
         }
-        self.runtime
+        let changed = self
+            .runtime
             .cancel(execution_id, self.clock.now_ms())
             .await
             .map_err(|error| error.to_string())?;
+        if changed && !pass_active {
+            self.notify_execution_end(execution_id, "cancelled").await;
+        }
         self.require(execution_id).await
     }
 
@@ -282,6 +295,20 @@ impl CodeMode {
 
     /// Compensates applied connector actions in reverse order.
     pub async fn rollback(&self, execution_id: &str) -> Result<ExecutionState, String> {
+        {
+            let mut active = self.active_rollbacks.lock().await;
+            if !active.insert(execution_id.to_string()) {
+                return Err(format!(
+                    "Execution \"{execution_id}\" is already rolling back"
+                ));
+            }
+        }
+        let result = self.rollback_inner(execution_id).await;
+        self.active_rollbacks.lock().await.remove(execution_id);
+        result
+    }
+
+    async fn rollback_inner(&self, execution_id: &str) -> Result<ExecutionState, String> {
         for action in self
             .runtime
             .actions_to_revert(execution_id)
@@ -382,6 +409,7 @@ impl CodeMode {
                 seq,
                 result,
             } => {
+                let _ = self.active_context(&execution_id).await?;
                 self.runtime
                     .record_result(&execution_id, seq, result, self.clock.now_ms())
                     .await
@@ -393,6 +421,26 @@ impl CodeMode {
 
     /// Drives one running execution pass with transport request context.
     pub async fn drive_with(
+        &self,
+        execution_id: &str,
+        options: CodeModeRunOptions,
+    ) -> Result<ExecutionState, String> {
+        let gate = {
+            let mut gates = self.pass_gates.lock().await;
+            Arc::clone(
+                gates
+                    .entry(execution_id.to_string())
+                    .or_insert_with(|| Arc::new(Semaphore::new(1))),
+            )
+        };
+        let _permit = gate
+            .acquire_owned()
+            .await
+            .map_err(|_| "Code Mode execution gate closed".to_string())?;
+        self.drive_pass(execution_id, options).await
+    }
+
+    async fn drive_pass(
         &self,
         execution_id: &str,
         options: CodeModeRunOptions,
@@ -468,6 +516,11 @@ impl CodeMode {
             session.execution_ended("error").await;
             return Ok(current);
         }
+        if current.status == ExecutionStatus::Cancelled {
+            session.pass_ended("cancelled").await;
+            session.execution_ended("cancelled").await;
+            return Ok(current);
+        }
         if let Some(error) = response.error {
             self.runtime
                 .fail(execution_id, error, response.logs, self.clock.now_ms())
@@ -492,14 +545,17 @@ impl CodeMode {
     }
 
     async fn session(&self, execution_id: &str) -> Result<Arc<DispatchSession>, String> {
-        let context = self
-            .contexts
+        let context = self.active_context(execution_id).await?;
+        self.session_with_context(execution_id, context).await
+    }
+
+    async fn active_context(&self, execution_id: &str) -> Result<ToolContext, String> {
+        self.contexts
             .lock()
             .await
             .get(execution_id)
             .cloned()
-            .unwrap_or_else(|| self.context(execution_id, CodeModeRunOptions::default()));
-        self.session_with_context(execution_id, context).await
+            .ok_or_else(|| format!("Execution \"{execution_id}\" does not have an active pass"))
     }
 
     async fn session_with_context(
@@ -564,5 +620,190 @@ impl CodeMode {
         for connector in &self.connectors {
             connector.execution_ended(execution_id, status).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use serde_json::json;
+    use tokio::sync::Notify;
+
+    use super::*;
+    use crate::{
+        ConnectorDescription, ConnectorTool, ExecuteResult, MemoryStore, ReplayPolicy,
+        ToolAnnotations, ToolPolicy,
+    };
+
+    struct TestConnector {
+        calls: AtomicUsize,
+        ended: Mutex<Vec<String>>,
+        started: Notify,
+        release: Notify,
+        blocked: bool,
+    }
+
+    impl TestConnector {
+        fn new(blocked: bool) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                ended: Mutex::new(Vec::new()),
+                started: Notify::new(),
+                release: Notify::new(),
+                blocked,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Connector for TestConnector {
+        async fn describe(&self) -> Result<ConnectorDescription, String> {
+            Ok(ConnectorDescription {
+                name: "test".to_string(),
+                instructions: None,
+                tools: vec![ConnectorTool {
+                    name: "run".to_string(),
+                    description: None,
+                    input_schema: json!({"type": "object"}),
+                    output_schema: Some(json!({"type": "integer"})),
+                    instructions: None,
+                    examples: Vec::new(),
+                    annotations: ToolAnnotations {
+                        read_only: Some(true),
+                        ..ToolAnnotations::default()
+                    },
+                    policy: ToolPolicy {
+                        requires_approval: false,
+                        replay: ReplayPolicy::Log,
+                    },
+                }],
+            })
+        }
+
+        async fn execute(
+            &self,
+            _method: &str,
+            _arguments: Value,
+            _context: &ToolContext,
+        ) -> Result<Value, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started.notify_one();
+            if self.blocked {
+                self.release.notified().await;
+            }
+            Ok(json!(42))
+        }
+
+        async fn execution_ended(&self, _execution_id: &str, status: &str) {
+            self.ended.lock().await.push(status.to_string());
+        }
+    }
+
+    struct HostExecutor;
+
+    #[async_trait(?Send)]
+    impl CodeExecutor for HostExecutor {
+        async fn execute(
+            &self,
+            _code: &str,
+            _connectors: &[ConnectorDescription],
+            _execution_id: &str,
+            host: Arc<ExecutionHost>,
+        ) -> Result<ExecuteResult, String> {
+            let response = host.call(0, "test", "run", json!({})).await;
+            Ok(ExecuteResult {
+                result: response.result,
+                error: response.message,
+                logs: Vec::new(),
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn dispatch_requires_an_active_pass() {
+        let connector = Arc::new(TestConnector::new(false));
+        let code_mode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            HostExecutor,
+            vec![connector.clone()],
+        );
+        let state = code_mode.start("ignored").await.unwrap();
+
+        let error = code_mode
+            .dispatch(DispatchRequest::Call {
+                execution_id: state.id.clone(),
+                seq: 0,
+                connector: "test".to_string(),
+                method: "run".to_string(),
+                arguments: json!({}),
+            })
+            .await
+            .unwrap_err();
+
+        assert!(error.contains("active pass"));
+        assert_eq!(connector.calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            code_mode.execution(&state.id).await.unwrap().status,
+            ExecutionStatus::Running
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelling_an_idle_execution_ends_connector_lifecycle_once() {
+        let connector = Arc::new(TestConnector::new(false));
+        let code_mode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            HostExecutor,
+            vec![connector.clone()],
+        );
+        let state = code_mode.start("ignored").await.unwrap();
+
+        code_mode.cancel(&state.id).await.unwrap();
+        code_mode.cancel(&state.id).await.unwrap();
+
+        assert_eq!(&*connector.ended.lock().await, &["cancelled"]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn concurrent_drive_calls_execute_one_pass() {
+        let connector = Arc::new(TestConnector::new(true));
+        let code_mode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            HostExecutor,
+            vec![connector.clone()],
+        );
+        let state = code_mode.start("ignored").await.unwrap();
+        let first = code_mode.drive_with(&state.id, CodeModeRunOptions::default());
+        let second = code_mode.drive_with(&state.id, CodeModeRunOptions::default());
+        let release = async {
+            connector.started.notified().await;
+            tokio::task::yield_now().await;
+            connector.release.notify_waiters();
+        };
+
+        let (first, second, ()) = tokio::join!(first, second, release);
+
+        assert_eq!(first.unwrap().status, ExecutionStatus::Completed);
+        assert_eq!(second.unwrap().status, ExecutionStatus::Completed);
+        assert_eq!(connector.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rollback_rejects_live_executions() {
+        let code_mode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            HostExecutor,
+            vec![Arc::new(TestConnector::new(false))],
+        );
+        let state = code_mode.start("ignored").await.unwrap();
+
+        let error = code_mode.rollback(&state.id).await.unwrap_err();
+
+        assert!(error.contains("not rollback eligible"));
+        assert_eq!(
+            code_mode.execution(&state.id).await.unwrap().status,
+            ExecutionStatus::Running
+        );
     }
 }
