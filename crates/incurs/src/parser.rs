@@ -183,6 +183,7 @@ fn coerce(value: Value, field_type: &FieldType) -> Value {
 /// - `-abc` stacked short aliases (all but last must be boolean/count)
 /// - `-vvv` count flag incrementing
 /// - `--tag x --tag y` array collection
+/// - `--` end-of-options; every later token is a positional, never a flag
 /// - Positional arguments assigned to `args_fields` in order
 /// - Coercion from strings to numbers/booleans based on field type
 pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, ParseError> {
@@ -194,6 +195,13 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
     let mut i = 0;
     while i < argv.len() {
         let token = &argv[i];
+
+        if token == "--" {
+            // End of options. Every remaining token is a positional, even when
+            // it looks like a flag, so command argv can be passed through.
+            positionals.extend(argv[i + 1..].iter().cloned());
+            break;
+        }
 
         if token.starts_with("--no-") && token.len() > 5 {
             // --no-flag negation

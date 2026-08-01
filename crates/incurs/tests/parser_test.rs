@@ -924,3 +924,76 @@ fn refined_option_schemas_validate_only_merged_winning_values() {
     assert_eq!(result.options["min"], json!(1));
     assert_eq!(result.options["max"], json!(3));
 }
+
+// ---------------------------------------------------------------------------
+// End-of-options (`--`)
+// ---------------------------------------------------------------------------
+
+/// `ParseOptions` with one leading option and a trailing variadic argv field.
+fn passthrough_opts() -> ParseOptions {
+    ParseOptions {
+        args_fields: vec![make_field(
+            "argv",
+            FieldType::Array(Box::new(FieldType::String)),
+            false,
+            None,
+            None,
+        )],
+        options_fields: vec![
+            make_field("image", FieldType::String, false, None, None),
+            make_field("list", FieldType::Boolean, false, None, Some('l')),
+        ],
+        ..empty_opts()
+    }
+}
+
+#[test]
+fn double_dash_passes_long_flag_lookalikes_through_as_positionals() {
+    let result = parse(
+        &argv(&["--image", "local", "--", "printf", "--image", "--unknown"]),
+        &passthrough_opts(),
+    )
+    .unwrap();
+    assert_eq!(result.options["image"], json!("local"));
+    assert_eq!(result.args["argv"], json!(["printf", "--image", "--unknown"]));
+}
+
+#[test]
+fn double_dash_passes_short_flag_lookalikes_through_as_positionals() {
+    // `-la` would otherwise parse as stacked short aliases.
+    let result = parse(&argv(&["--", "ls", "-la", "-l"]), &passthrough_opts()).unwrap();
+    assert_eq!(result.args["argv"], json!(["ls", "-la", "-l"]));
+    assert!(!result.options.contains_key("list"));
+}
+
+#[test]
+fn double_dash_with_no_following_tokens_collects_nothing() {
+    let result = parse(&argv(&["--image", "local", "--"]), &passthrough_opts()).unwrap();
+    assert_eq!(result.options["image"], json!("local"));
+    // The variadic key is omitted entirely when empty.
+    assert!(!result.args.contains_key("argv"));
+}
+
+#[test]
+fn double_dash_preserves_empty_string_arguments() {
+    let result = parse(&argv(&["--", "printf", "%s", "", "a b"]), &passthrough_opts()).unwrap();
+    assert_eq!(result.args["argv"], json!(["printf", "%s", "", "a b"]));
+}
+
+#[test]
+fn second_double_dash_is_a_literal_positional() {
+    let result = parse(&argv(&["--", "sh", "-c", "--", "x"]), &passthrough_opts()).unwrap();
+    assert_eq!(result.args["argv"], json!(["sh", "-c", "--", "x"]));
+}
+
+#[test]
+fn double_dash_does_not_consume_options_that_precede_it() {
+    let result = parse(
+        &argv(&["-l", "--image", "local", "--", "--image", "other"]),
+        &passthrough_opts(),
+    )
+    .unwrap();
+    assert_eq!(result.options["list"], json!(true));
+    assert_eq!(result.options["image"], json!("local"));
+    assert_eq!(result.args["argv"], json!(["--image", "other"]));
+}
