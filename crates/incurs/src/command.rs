@@ -248,6 +248,10 @@ pub enum TypedResult<Output> {
         data: Output,
         /// Optional follow-up commands.
         cta: Option<CtaBlock>,
+        /// Process exit code to report for an otherwise successful command,
+        /// such as the status of a subprocess the command wrapped. `None`
+        /// leaves the transport's default (success) exit status untouched.
+        exit_code: Option<i32>,
     },
     /// Structured command failure.
     Error {
@@ -267,7 +271,11 @@ pub enum TypedResult<Output> {
 impl<Output> TypedResult<Output> {
     /// Creates a successful typed result.
     pub fn ok(data: Output) -> Self {
-        Self::Ok { data, cta: None }
+        Self::Ok {
+            data,
+            cta: None,
+            exit_code: None,
+        }
     }
 
     /// Creates a successful typed result with CTA metadata.
@@ -275,6 +283,19 @@ impl<Output> TypedResult<Output> {
         Self::Ok {
             data,
             cta: Some(cta),
+            exit_code: None,
+        }
+    }
+
+    /// Creates a successful typed result that reports a process exit code.
+    ///
+    /// Use this when a command wraps a subprocess and must pass its status
+    /// through, without marking the command itself as failed.
+    pub fn ok_with_exit_code(data: Output, exit_code: i32) -> Self {
+        Self::Ok {
+            data,
+            cta: None,
+            exit_code: Some(exit_code),
         }
     }
 
@@ -338,8 +359,16 @@ where
         })
         .await
         {
-            TypedResult::Ok { data, cta } => match serde_json::to_value(data) {
-                Ok(data) => CommandResult::Ok { data, cta },
+            TypedResult::Ok {
+                data,
+                cta,
+                exit_code,
+            } => match serde_json::to_value(data) {
+                Ok(data) => CommandResult::Ok {
+                    data,
+                    cta,
+                    exit_code,
+                },
                 Err(error) => CommandResult::Error {
                     code: "SERIALIZATION_ERROR".to_string(),
                     message: error.to_string(),
@@ -601,7 +630,12 @@ pub struct ExecuteOptions {
 /// HTTP returns a Response, MCP returns tool results).
 pub enum InternalResult {
     /// Successful execution with data.
-    Ok { data: Value, cta: Option<CtaBlock> },
+    Ok {
+        data: Value,
+        cta: Option<CtaBlock>,
+        /// Process exit code to report for an otherwise successful command.
+        exit_code: Option<i32>,
+    },
     /// Failed execution with error details.
     Error {
         code: String,
@@ -778,9 +812,17 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
 
             // --- Step 5: Handle the result ---
             match handler_result {
-                CommandResult::Ok { data, cta } => {
+                CommandResult::Ok {
+                    data,
+                    cta,
+                    exit_code,
+                } => {
                     let mut result_guard = result_inner.lock().await;
-                    *result_guard = Some(InternalResult::Ok { data, cta });
+                    *result_guard = Some(InternalResult::Ok {
+                        data,
+                        cta,
+                        exit_code,
+                    });
                 }
                 CommandResult::Error {
                     code,
@@ -901,11 +943,13 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
             result_guard.take().unwrap_or(InternalResult::Ok {
                 data: Value::Null,
                 cta: None,
+                exit_code: None,
             })
         }
         None => InternalResult::Ok {
             data: Value::Null,
             cta: None,
+            exit_code: None,
         },
     }
 }

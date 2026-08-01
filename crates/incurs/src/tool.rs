@@ -332,7 +332,13 @@ impl ToolCatalog {
         };
 
         match result {
-            command::InternalResult::Ok { data, cta } => ToolCallOutcome::Ok { data, cta },
+            // A wrapped process exit code is part of the command's data for
+            // tool callers; it has no meaning as a transport-level status.
+            command::InternalResult::Ok {
+                data,
+                cta,
+                exit_code: _,
+            } => ToolCallOutcome::Ok { data, cta },
             command::InternalResult::Error {
                 code,
                 message,
@@ -648,6 +654,7 @@ mod tests {
             CommandResult::Ok {
                 data: ctx.options,
                 cta: None,
+                exit_code: None,
             }
         }
     }
@@ -665,6 +672,7 @@ mod tests {
                     "request": ctx.request.map(|request| request.path),
                 }),
                 cta: None,
+                exit_code: None,
             }
         }
     }

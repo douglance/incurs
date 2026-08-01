@@ -90,6 +90,7 @@ impl CommandHandler for StaticHandler {
         CommandResult::Ok {
             data: self.0.clone(),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -103,6 +104,7 @@ impl CommandHandler for VoidHandler {
         CommandResult::Ok {
             data: serde_json::Value::Null,
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -155,6 +157,7 @@ impl CommandHandler for OptionsEchoHandler {
         CommandResult::Ok {
             data: ctx.options.clone(),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -197,6 +200,7 @@ impl CommandHandler for EchoHandler {
         CommandResult::Ok {
             data: serde_json::json!({ "result": result }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -256,6 +260,7 @@ impl CommandHandler for ProjectListHandler {
                 commands: cta_commands,
                 description: None,
             }),
+            exit_code: None,
         }
     }
 }
@@ -279,6 +284,7 @@ impl CommandHandler for ProjectGetHandler {
                 "members": [{"userId": "u1", "role": "admin"}],
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -309,6 +315,7 @@ impl CommandHandler for ProjectCreateHandler {
                 ],
                 description: None,
             }),
+            exit_code: None,
         }
     }
 }
@@ -341,6 +348,7 @@ impl CommandHandler for ProjectDeleteHandler {
         CommandResult::Ok {
             data: serde_json::json!({"deleted": true, "id": id}),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -363,6 +371,7 @@ impl CommandHandler for DeployStatusHandler {
                 "progress": 75,
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -390,6 +399,7 @@ impl CommandHandler for DeployCreateHandler {
                 "status": if dry_run { "dry-run" } else { "pending" },
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -408,6 +418,7 @@ impl CommandHandler for DeployRollbackHandler {
         CommandResult::Ok {
             data: serde_json::json!({"rolledBack": true, "deployId": deploy_id}),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -428,7 +439,11 @@ impl CommandHandler for ConfigHandler {
                 "debug": false,
             })
         };
-        CommandResult::Ok { data, cta: None }
+        CommandResult::Ok {
+            data,
+            cta: None,
+            exit_code: None,
+        }
     }
 }
 
@@ -457,6 +472,7 @@ impl CommandHandler for AuthLoginHandler {
                 commands: vec![CtaEntry::Simple("auth status".to_string())],
                 description: Some("Verify your session:".to_string()),
             }),
+            exit_code: None,
         }
     }
 }
@@ -490,6 +506,7 @@ impl CommandHandler for SlowHandler {
         CommandResult::Ok {
             data: serde_json::json!({"done": true}),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -2190,6 +2207,7 @@ mod root_command_with_subcommands {
             CommandResult::Ok {
                 data: serde_json::json!({"default": true, "query": query}),
                 cta: None,
+                exit_code: None,
             }
         }
     }

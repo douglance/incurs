@@ -441,7 +441,12 @@ async fn execute_http_command(
     let duration = format_duration(start);
 
     match result {
-        InternalResult::Ok { data, cta } => {
+        // HTTP has no process to exit; a wrapped exit code stays in the data.
+        InternalResult::Ok {
+            data,
+            cta,
+            exit_code: _,
+        } => {
             let mut response = serde_json::json!({
                 "ok": true,
                 "data": data,
@@ -743,6 +748,7 @@ mod tests {
             CommandResult::Ok {
                 data: Value::Object(data),
                 cta: None,
+                exit_code: None,
             }
         }
     }

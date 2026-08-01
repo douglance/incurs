@@ -9,7 +9,7 @@ readme = "README.md"
 
 [dependencies]
 http = "1"
-incurs = { path = "../incurs", version = "0.4.0" }
+incurs = { path = "../incurs", version = "0.5.0" }
 incurs-codemode = { path = "../incurs-codemode", version = "0.1.0" }
 rmcp = { version = "2.2", features = ["server", "transport-io"] }
 serde = "1"

@@ -1534,7 +1534,11 @@ impl Cli {
 
         // --- Step 12: Handle result ---
         match result {
-            InternalResult::Ok { data, cta } => {
+            InternalResult::Ok {
+                data,
+                cta,
+                exit_code,
+            } => {
                 // Apply --filter-output
                 let data = if let Some(ref expr) = builtin.filter_output {
                     let paths = filter::parse(expr);
@@ -1606,6 +1610,12 @@ impl Cli {
                         let output = format_value(&data, format);
                         write_with_token_ops(&output, &builtin, writeln_stdout);
                     }
+                }
+
+                // A successful command may still report a wrapped process's
+                // exit status.
+                if let Some(exit_code) = exit_code {
+                    std::process::exit(exit_code);
                 }
             }
             InternalResult::Error {
@@ -2703,7 +2713,11 @@ impl Cli {
 
         // --- Step 12: Handle result ---
         match result {
-            InternalResult::Ok { data, cta } => {
+            InternalResult::Ok {
+                data,
+                cta,
+                exit_code,
+            } => {
                 // Apply --filter-output
                 let data = if let Some(ref expr) = builtin.filter_output {
                     let paths = filter::parse(expr);
@@ -2782,7 +2796,9 @@ impl Cli {
                     let output = format_value(&data, format);
                     wln_tok!(&output);
                 }
-                Ok(None)
+                // A successful command may still report a wrapped process's
+                // exit status.
+                Ok(exit_code)
             }
             InternalResult::Error {
                 code,
@@ -4848,6 +4864,7 @@ mod tests {
             CommandResult::Ok {
                 data: Value::Null,
                 cta: None,
+                exit_code: None,
             }
         }
     }
@@ -4861,6 +4878,7 @@ mod tests {
             CommandResult::Ok {
                 data: Value::Null,
                 cta: None,
+                exit_code: None,
             }
         }
     }

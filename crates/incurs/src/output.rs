@@ -33,7 +33,13 @@ pub enum CtaEntry {
 /// Result of executing a command.
 pub enum CommandResult {
     /// Successful execution with data.
-    Ok { data: Value, cta: Option<CtaBlock> },
+    Ok {
+        data: Value,
+        cta: Option<CtaBlock>,
+        /// Process exit code to report for an otherwise successful command,
+        /// such as the status of a subprocess the command wrapped.
+        exit_code: Option<i32>,
+    },
     /// Failed execution with error details.
     Error {
         code: String,

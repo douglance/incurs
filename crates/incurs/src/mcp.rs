@@ -153,7 +153,11 @@ impl crate::command::CommandHandler for RemoteToolHandler {
                         .and_then(|text| serde_json::from_str(&text.text).ok())
                         .unwrap_or(Value::Null)
                 });
-                crate::output::CommandResult::Ok { data, cta: None }
+                crate::output::CommandResult::Ok {
+                    data,
+                    cta: None,
+                    exit_code: None,
+                }
             }
             Ok(result) => crate::output::CommandResult::Error {
                 code: "REMOTE_MCP_ERROR".to_string(),
@@ -1468,6 +1472,7 @@ mod tests {
                 crate::output::CommandResult::Ok {
                     data: serde_json::json!({ "pong": true }),
                     cta: None,
+                    exit_code: None,
                 }
             }
         }
@@ -1527,6 +1532,7 @@ mod tests {
                 crate::output::CommandResult::Ok {
                     data: serde_json::json!({ "options": ctx.options }),
                     cta: None,
+                    exit_code: None,
                 }
             }
         }

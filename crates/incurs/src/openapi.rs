@@ -652,6 +652,7 @@ impl crate::command::CommandHandler for OpenApiHandler {
         crate::output::CommandResult::Ok {
             data: result,
             cta: None,
+            exit_code: None,
         }
     }
 

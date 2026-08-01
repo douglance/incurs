@@ -1,6 +1,6 @@
 [package]
 name = "incurs"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "A declarative CLI framework for Rust with typed commands, agent discovery, HTTP, and MCP"
 license = "MIT"

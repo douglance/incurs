@@ -20,6 +20,7 @@ impl CommandHandler for Sum {
                     + context.options["right"].as_i64().unwrap_or_default()
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }

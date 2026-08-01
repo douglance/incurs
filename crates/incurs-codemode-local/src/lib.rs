@@ -438,6 +438,7 @@ mod tests {
                         + context.options["right"].as_i64().unwrap()
                 }),
                 cta: None,
+                exit_code: None,
             }
         }
     }

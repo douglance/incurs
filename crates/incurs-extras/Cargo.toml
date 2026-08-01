@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/douglance/incurs"
 
 [dependencies]
-incurs = { path = "../incurs", version = "0.4.0" }
+incurs = { path = "../incurs", version = "0.5.0" }
 serde_json = "1"
 
 [dev-dependencies]

@@ -205,6 +205,7 @@ mod tests {
             CommandResult::Ok {
                 data: serde_json::Value::Null,
                 cta: None,
+                exit_code: None,
             }
         }
     }

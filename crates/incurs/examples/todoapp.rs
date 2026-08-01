@@ -67,6 +67,7 @@ impl CommandHandler for AddHandler {
                 ],
                 description: Some("Next steps:".to_string()),
             }),
+            exit_code: None,
         }
     }
 }
@@ -103,6 +104,7 @@ impl CommandHandler for ListHandler {
         CommandResult::Ok {
             data: Value::Array(filtered),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -137,6 +139,7 @@ impl CommandHandler for GetHandler {
                 "created_at": "2026-03-21T12:00:00Z"
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -156,6 +159,7 @@ impl CommandHandler for CompleteHandler {
                 "completed_at": "2026-03-21T15:30:00Z"
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -178,6 +182,7 @@ impl CommandHandler for StatsHandler {
                 }
             }),
             cta: None,
+            exit_code: None,
         }
     }
 }
