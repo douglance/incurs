@@ -6,11 +6,12 @@ Define a command once and expose the same validated behavior through CLI, HTTP, 
 
 ## Status
 
-Version 0.4.0 adds the generic Code Mode runtime while preserving the executable
-parity gate and typed Rust authoring path. Current main also supports every
-published MCP standard through a provider-neutral protocol layer.
+Version 0.5.0 adds exact multi-era MCP negotiation, standard `--`
+end-of-options parsing, and explicit process exit codes for successful typed
+commands. It preserves the executable parity gate, typed Rust authoring path,
+and provider-neutral Code Mode runtime. Version 0.5 requires Rust 1.88 or newer.
 
-| Surface | 0.4 status |
+| Surface | 0.5 status |
 | --- | --- |
 | CLI parsing, help, validation, aliases, output and streaming | Parity-gated |
 | HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
@@ -27,7 +28,7 @@ The parity inventory classifies all 1,062 tests in the vendored TypeScript oracl
 
 ```toml
 [dependencies]
-incurs = "0.4"
+incurs = "0.5"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
@@ -110,7 +111,7 @@ Parity-default help and parsing expose only upstream formats. Table and CSV rema
 
 ```toml
 [dependencies]
-incurs-extras = "0.4"
+incurs-extras = "0.5"
 ```
 
 ```rust
@@ -126,7 +127,7 @@ let cli = cli.default_extra_format(ExtraFormat::Table);
 The optional transport features are:
 
 ```toml
-incurs = { version = "0.4", features = ["http", "mcp", "openapi"] }
+incurs = { version = "0.5", features = ["http", "mcp", "openapi"] }
 ```
 
 HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known

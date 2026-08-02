@@ -1,6 +1,6 @@
 [package]
 name = "incurs-codemode-mcp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -11,7 +11,7 @@ readme = "README.md"
 [dependencies]
 http = "1"
 incurs = { path = "../incurs", version = "0.5.0" }
-incurs-codemode = { path = "../incurs-codemode", version = "0.1.0" }
+incurs-codemode = { path = "../incurs-codemode", version = "0.2.0" }
 incurs-mcp-protocol = { path = "../incurs-mcp-protocol", version = "0.1.0" }
 rmcp = { version = "=3.0.0-beta.5", features = ["server", "transport-io"] }
 serde = "1"
@@ -20,6 +20,6 @@ tokio = { version = "1", default-features = false, features = ["io-std"] }
 
 [dev-dependencies]
 async-trait = "0.1"
-incurs-codemode-local = { path = "../incurs-codemode-local", version = "0.1.0" }
+incurs-codemode-local = { path = "../incurs-codemode-local", version = "0.2.0" }
 rmcp = { version = "=3.0.0-beta.5", features = ["client"] }
 tokio = { version = "1", features = ["io-util", "macros", "rt", "sync", "time"] }

@@ -1,5 +1,27 @@
 # incur
 
+## Rust 0.5.0
+
+- Added standard `--` end-of-options parsing with exact passthrough argument
+  preservation.
+- Added optional process exit codes to successful typed and lower-level command
+  results, including `TypedResult::ok_with_exit_code`.
+- Added `incurs-mcp-protocol` 0.1.0 with provider-neutral schemas, standard
+  profiles, wire-era codecs, validation, and negotiation.
+- Added exact support for MCP `2024-11-05`, `2025-03-26`, `2025-06-18`,
+  `2025-11-25`, and `2026-07-28`.
+- Updated MCP transports to `rmcp` 3.0.0-beta.5 and added active and draft
+  conformance gates.
+- Set the minimum supported Rust version to 1.88 and packaged the repository
+  README for crates.io.
+
+## Code Mode 0.2.0
+
+- Added exact MCP standard selection to the reusable Code Mode server.
+- Added multi-era initialization, discovery, cache metadata, and fail-closed
+  protocol negotiation to the Cloudflare Streamable HTTP adapter.
+- Updated the Code Mode crate family to the incurs 0.5 public API boundary.
+
 ## Code Mode 0.1.1
 
 - Prevented generic resume calls from bypassing pending approval decisions.

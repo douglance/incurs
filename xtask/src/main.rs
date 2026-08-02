@@ -95,15 +95,17 @@ fn main() {
 
 fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
-    let packages = [
-        ("incurs-macros", "0.4.0"),
-        ("incurs", "0.5.0"),
-        ("incurs-cli", "0.4.0"),
-        ("incurs-extras", "0.4.0"),
-        ("incurs-codemode", "0.1.1"),
-        ("incurs-codemode-local", "0.1.0"),
-        ("incurs-codemode-mcp", "0.1.0"),
-        ("incurs-mcp-protocol", "0.1.0"),
+    let cloudflare = root.join("extensions/cloudflare");
+    let packages = vec![
+        (root, "incurs-macros", "0.4.0"),
+        (root, "incurs", "0.5.0"),
+        (root, "incurs-cli", "0.5.0"),
+        (root, "incurs-extras", "0.5.0"),
+        (root, "incurs-codemode", "0.2.0"),
+        (root, "incurs-codemode-local", "0.2.0"),
+        (root, "incurs-codemode-mcp", "0.2.0"),
+        (root, "incurs-mcp-protocol", "0.1.0"),
+        (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.2.0"),
     ];
     run(
         Command::new("cargo").current_dir(root).args([
@@ -116,13 +118,31 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         ]),
         "package release workspace",
     )?;
+    let mut command = Command::new("cargo");
+    command.current_dir(&cloudflare);
+    for (package_root, package, _) in &packages {
+        if *package_root == root {
+            command.arg("--config").arg(format!(
+                "patch.crates-io.{package}.path={:?}",
+                root.join("crates").join(package)
+            ));
+        }
+    }
+    command.args([
+        "package",
+        "-p",
+        "incurs-codemode-cloudflare",
+        "--allow-dirty",
+        "--no-verify",
+    ]);
+    run(&mut command, "package Cloudflare extension")?;
 
     let temp = env::temp_dir().join(format!("incurs-release-check-{}", std::process::id()));
     if temp.exists() {
         fs::remove_dir_all(&temp)?;
     }
     fs::create_dir_all(&temp)?;
-    let result = verify_archives(root, &temp, &packages);
+    let result = verify_archives(&temp, &packages);
     if result.is_ok() {
         fs::remove_dir_all(&temp)?;
     } else {
@@ -291,11 +311,10 @@ fn is_core_mcp_method(method: &str) -> bool {
 }
 
 fn verify_archives(
-    root: &Path,
     temp: &Path,
-    packages: &[(&str, &str)],
+    packages: &[(&Path, &str, &str)],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for (package, version) in packages {
+    for (root, package, version) in packages {
         let archive = root
             .join("target/package")
             .join(format!("{package}-{version}.crate"));
@@ -314,7 +333,7 @@ fn verify_archives(
 
     let patch = packages
         .iter()
-        .map(|(package, version)| {
+        .map(|(_, package, version)| {
             format!(
                 "{package} = {{ path = {:?} }}",
                 temp.join(format!("{package}-{version}"))
@@ -322,7 +341,7 @@ fn verify_archives(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    for (package, version) in packages {
+    for (_, package, version) in packages {
         let manifest = temp.join(format!("{package}-{version}/Cargo.toml"));
         let mut contents = fs::read_to_string(&manifest)?;
         contents.push_str("\n[patch.crates-io]\n");
