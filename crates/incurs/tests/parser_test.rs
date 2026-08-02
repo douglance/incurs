@@ -955,7 +955,10 @@ fn double_dash_passes_long_flag_lookalikes_through_as_positionals() {
     )
     .unwrap();
     assert_eq!(result.options["image"], json!("local"));
-    assert_eq!(result.args["argv"], json!(["printf", "--image", "--unknown"]));
+    assert_eq!(
+        result.args["argv"],
+        json!(["printf", "--image", "--unknown"])
+    );
 }
 
 #[test]
@@ -976,7 +979,11 @@ fn double_dash_with_no_following_tokens_collects_nothing() {
 
 #[test]
 fn double_dash_preserves_empty_string_arguments() {
-    let result = parse(&argv(&["--", "printf", "%s", "", "a b"]), &passthrough_opts()).unwrap();
+    let result = parse(
+        &argv(&["--", "printf", "%s", "", "a b"]),
+        &passthrough_opts(),
+    )
+    .unwrap();
     assert_eq!(result.args["argv"], json!(["printf", "%s", "", "a b"]));
 }
 

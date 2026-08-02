@@ -7,13 +7,14 @@ Define a command once and expose the same validated behavior through CLI, HTTP, 
 ## Status
 
 Version 0.4.0 adds the generic Code Mode runtime while preserving the executable
-parity gate and typed Rust authoring path.
+parity gate and typed Rust authoring path. Current main also supports every
+published MCP standard through a provider-neutral protocol layer.
 
 | Surface | 0.4 status |
 | --- | --- |
 | CLI parsing, help, validation, aliases, output and streaming | Parity-gated |
 | HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
-| MCP 2025-11-25, progressive/direct discovery and calls | Implemented with `rmcp` 2.2 |
+| MCP 2024-11-05 through 2026-07-28, progressive/direct discovery and calls | Exact standard profiles with `rmcp` 3 |
 | OpenAPI, skills and shell completions | Generated from the shared command graph |
 | Durable Code Mode | Platform-neutral Rust lifecycle with local sandbox execution |
 | Typed args, options, env and output | `CommandDef::typed` plus derive macros |
@@ -128,7 +129,18 @@ The optional transport features are:
 incurs = { version = "0.4", features = ["http", "mcp", "openapi"] }
 ```
 
-HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known skill files, and fetch gateways. MCP supports current protocol initialization, filtered progressive discovery, direct discovery, and invocation through the same command graph.
+HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known
+skill files, and fetch gateways. MCP supports all five official standards at
+once. Modern clients negotiate with `server/discover`; legacy clients continue
+to initialize with their exact standard. HTTP clients fall back only on
+protocol-specific evidence, never on authentication, transport, or server
+failures.
+
+`incurs-mcp-protocol` owns the exact standard registry, lifecycle families,
+wire-era codecs, feature changes, and negotiation policy. Each published
+standard has its own module and embeds its pinned official JSON Schema. Run
+`cargo xtask mcp-schema-sync --check` to verify schema provenance and generated
+method registries.
 
 ## Code Mode
 

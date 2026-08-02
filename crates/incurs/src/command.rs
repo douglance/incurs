@@ -333,15 +333,15 @@ where
     async fn run(&self, ctx: CommandContext) -> CommandResult {
         let args = match typed_input::<Args>(&ctx.args, "args") {
             Ok(value) => value,
-            Err(result) => return result,
+            Err(result) => return *result,
         };
         let options = match typed_input::<Options>(&ctx.options, "options") {
             Ok(value) => value,
-            Err(result) => return result,
+            Err(result) => return *result,
         };
         let env = match typed_input::<Env>(&ctx.env, "env") {
             Ok(value) => value,
-            Err(result) => return result,
+            Err(result) => return *result,
         };
         match (self.handler)(TypedContext {
             agent: ctx.agent,
@@ -397,19 +397,21 @@ where
 fn typed_input<Input: crate::schema::IncurSchema>(
     value: &Value,
     kind: &str,
-) -> std::result::Result<Input, CommandResult> {
+) -> std::result::Result<Input, Box<CommandResult>> {
     let raw = value
         .as_object()
         .into_iter()
         .flatten()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    Input::from_raw(&raw).map_err(|error| CommandResult::Error {
-        code: "VALIDATION_ERROR".to_string(),
-        message: format!("Failed to parse typed {kind}: {error}"),
-        retryable: false,
-        exit_code: Some(1),
-        cta: None,
+    Input::from_raw(&raw).map_err(|error| {
+        Box::new(CommandResult::Error {
+            code: "VALIDATION_ERROR".to_string(),
+            message: format!("Failed to parse typed {kind}: {error}"),
+            retryable: false,
+            exit_code: Some(1),
+            cta: None,
+        })
     })
 }
 

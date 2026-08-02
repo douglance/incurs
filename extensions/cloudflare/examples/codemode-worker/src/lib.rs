@@ -36,6 +36,7 @@ impl CommandHandler for Sum {
         CommandResult::Ok {
             data: serde_json::json!({ "sum": left + right }),
             cta: None,
+            exit_code: None,
         }
     }
 }
@@ -48,6 +49,7 @@ impl CommandHandler for Save {
         CommandResult::Ok {
             data: serde_json::json!({ "saved": context.options["value"] }),
             cta: None,
+            exit_code: None,
         }
     }
 }

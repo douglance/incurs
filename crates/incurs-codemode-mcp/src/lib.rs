@@ -8,9 +8,12 @@ use std::sync::Arc;
 
 use incurs::command::RequestContext as IncurRequestContext;
 use incurs_codemode::{CodeModeRunOptions, CodeModeService};
+use incurs_mcp_protocol::McpStandardSet;
 use rmcp::model::{
-    CallToolRequestMethod, CallToolRequestParams, CallToolResult, Implementation, JsonObject,
-    ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    CacheScope, CallToolRequestMethod, CallToolRequestParams, CallToolResponse, CallToolResult,
+    Implementation, InitializeRequestParams, InitializeResult, JsonObject, ListPromptsResult,
+    ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+    ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
@@ -30,14 +33,21 @@ pub const TOOL_NAMES: [&str; 5] = [
 pub struct CodeModeMcpServer {
     service: Arc<dyn CodeModeService>,
     tools: Arc<Vec<Tool>>,
+    standards: McpStandardSet,
 }
 
 impl CodeModeMcpServer {
     /// Creates an MCP handler over a send-safe Code Mode service.
     pub fn new(service: Arc<dyn CodeModeService>) -> Self {
+        Self::with_standards(service, McpStandardSet::all())
+    }
+
+    /// Creates an MCP handler serving an explicit set of exact standards.
+    pub fn with_standards(service: Arc<dyn CodeModeService>, standards: McpStandardSet) -> Self {
         Self {
             service,
             tools: Arc::new(definitions()),
+            standards,
         }
     }
 
@@ -49,26 +59,137 @@ impl CodeModeMcpServer {
 
 impl ServerHandler for CodeModeMcpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(
-                "incurs-codemode",
-                env!("CARGO_PKG_VERSION"),
-            ))
-            .with_instructions(
-                "Search for available methods, execute JavaScript, then inspect, decide, or cancel by execution ID.",
-            )
+        ServerInfo::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_resources()
+                .build(),
+        )
+        .with_server_info(Implementation::new(
+            "incurs-codemode",
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(
+            "Search for available methods, execute JavaScript, then inspect, decide, or cancel by execution ID.",
+        )
+    }
+
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Owned(
+            self.standards
+                .versions()
+                .iter()
+                .map(|version| match version.as_str() {
+                    "2024-11-05" => ProtocolVersion::V_2024_11_05,
+                    "2025-03-26" => ProtocolVersion::V_2025_03_26,
+                    "2025-06-18" => ProtocolVersion::V_2025_06_18,
+                    "2025-11-25" => ProtocolVersion::V_2025_11_25,
+                    "2026-07-28" => ProtocolVersion::V_2026_07_28,
+                    version => unreachable!("McpStandardSet admitted unknown standard {version}"),
+                })
+                .collect(),
+        )
+    }
+
+    fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<InitializeResult, ErrorData>> + Send + '_ {
+        context.peer.set_peer_info(request.clone());
+        let supported = self.supported_protocol_versions();
+        let selected = supported
+            .iter()
+            .find(|version| {
+                version.as_str() == request.protocol_version.as_str()
+                    && version.as_str() != "2026-07-28"
+            })
+            .cloned();
+        let selected = if selected.is_none()
+            && ProtocolVersion::KNOWN_VERSIONS.contains(&request.protocol_version)
+        {
+            None
+        } else {
+            selected.or_else(|| {
+                supported
+                    .iter()
+                    .find(|version| version.as_str() != "2026-07-28")
+                    .cloned()
+            })
+        };
+        std::future::ready(match selected {
+            Some(selected) => Ok(self.get_info().with_protocol_version(selected)),
+            None => Err(ErrorData::unsupported_protocol_version(
+                request.protocol_version,
+                &supported,
+            )),
+        })
     }
 
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult {
+        let mut result = ListToolsResult {
             tools: self.tools.as_ref().clone(),
             next_cursor: None,
             meta: None,
-        })
+            ..Default::default()
+        };
+        if context
+            .protocol_version()
+            .is_some_and(|version| version.as_str() == "2026-07-28")
+        {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        Ok(result)
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        let mut result = ListPromptsResult::default();
+        if context
+            .protocol_version()
+            .is_some_and(|version| version.as_str() == "2026-07-28")
+        {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        Ok(result)
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        let mut result = ListResourcesResult::default();
+        if context
+            .protocol_version()
+            .is_some_and(|version| version.as_str() == "2026-07-28")
+        {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        Ok(result)
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        let mut result = ListResourceTemplatesResult::default();
+        if context
+            .protocol_version()
+            .is_some_and(|version| version.as_str() == "2026-07-28")
+        {
+            result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+        }
+        Ok(result)
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -79,7 +200,7 @@ impl ServerHandler for CodeModeMcpServer {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.as_ref();
         let arguments = request.arguments.unwrap_or_default();
         let request = incur_request_context(name, context.extensions.get::<http::request::Parts>());
@@ -143,7 +264,8 @@ impl ServerHandler for CodeModeMcpServer {
         Ok(match result {
             Ok(value) => CallToolResult::structured(value),
             Err(error) => CallToolResult::structured_error(json!({ "error": error })),
-        })
+        }
+        .into())
     }
 }
 
@@ -297,7 +419,9 @@ mod tests {
         CodeMode, CodeModeRunOptions, CodeModeService, ExecutionState, MemoryStore, SearchOutput,
     };
     use incurs_codemode_local::{LocalCodeModeService, LocalExecutor};
+    use incurs_mcp_protocol::McpVersion;
     use rmcp::model::{CallToolRequestParams, ClientInfo};
+    use rmcp::{ClientLifecycleMode, ClientServiceExt};
 
     use super::*;
 
@@ -383,6 +507,87 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn discovers_and_uses_the_modern_standard() {
+        let (server_transport, client_transport) = tokio::io::duplex(16 * 1024);
+        let server = CodeModeMcpServer::new(local_service());
+        let task = tokio::spawn(async move {
+            server
+                .serve(server_transport)
+                .await
+                .unwrap()
+                .waiting()
+                .await
+                .unwrap();
+        });
+        let client = ClientInfo::default()
+            .serve_with_lifecycle(
+                client_transport,
+                ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.peer_info().unwrap().protocol_version,
+            ProtocolVersion::V_2026_07_28
+        );
+        assert_eq!(client.list_tools(None).await.unwrap().tools.len(), 5);
+
+        client.cancel().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_initialization_uses_only_the_enabled_exact_standard() {
+        let (server_transport, client_transport) = tokio::io::duplex(16 * 1024);
+        let standards = McpStandardSet::from_versions([McpVersion::from("2024-11-05")]).unwrap();
+        let server = CodeModeMcpServer::with_standards(local_service(), standards);
+        let task = tokio::spawn(async move {
+            server
+                .serve(server_transport)
+                .await
+                .unwrap()
+                .waiting()
+                .await
+                .unwrap();
+        });
+        let client = ClientInfo::default()
+            .with_protocol_version(ProtocolVersion::V_2024_11_05)
+            .serve(client_transport)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.peer_info().unwrap().protocol_version,
+            ProtocolVersion::V_2024_11_05
+        );
+
+        client.cancel().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn modern_only_server_rejects_legacy_initialization() {
+        let (server_transport, client_transport) = tokio::io::duplex(16 * 1024);
+        let server =
+            CodeModeMcpServer::with_standards(local_service(), McpStandardSet::modern_only());
+        let task = tokio::spawn(async move {
+            let _ = server.serve(server_transport).await;
+        });
+
+        assert!(ClientInfo::default().serve(client_transport).await.is_err());
+        task.await.unwrap();
     }
 
     #[tokio::test]

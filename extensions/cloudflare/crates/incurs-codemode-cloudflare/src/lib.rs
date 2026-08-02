@@ -9,8 +9,8 @@ mod lifecycle;
 mod module;
 
 pub use http_mcp::{
-    CODEMODE_MCP_TOOL_NAMES, MCP_PROTOCOL_VERSION, McpHttpOptions, McpHttpRequest, McpHttpResponse,
-    SUPPORTED_MCP_PROTOCOL_VERSIONS, WorkerCodeModeService, handle_mcp_request,
+    CODEMODE_MCP_TOOL_NAMES, MCP_LEGACY_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION, McpHttpOptions,
+    McpHttpRequest, McpHttpResponse, WorkerCodeModeService, handle_mcp_request,
     mcp_tool_definitions, tenant_key,
 };
 pub use lifecycle::{drive_with_terminal_failure, persist_terminal_failure};

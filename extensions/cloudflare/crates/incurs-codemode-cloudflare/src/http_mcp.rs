@@ -2,15 +2,16 @@ use std::collections::BTreeMap;
 
 use incurs::command::RequestContext;
 use incurs_codemode::{CodeModeRunOptions, ExecutionState, SearchOutput};
+use incurs_mcp_protocol::{McpLifecycleFamily, McpVersion, known_standard, known_standards};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 /// Current MCP protocol revision supported by the Worker HTTP adapter.
-pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
 
-/// MCP revisions accepted by the stateless HTTP adapter.
-pub const SUPPORTED_MCP_PROTOCOL_VERSIONS: [&str; 3] =
-    ["2025-03-26", "2025-06-18", MCP_PROTOCOL_VERSION];
+/// Preferred legacy MCP revision used when initialization requests an unknown
+/// revision.
+pub const MCP_LEGACY_PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Stable Code Mode lifecycle tools exposed by the HTTP MCP adapter.
 pub const CODEMODE_MCP_TOOL_NAMES: [&str; 5] = [
@@ -60,6 +61,15 @@ pub struct McpHttpRequest {
     pub headers: BTreeMap<String, String>,
     /// UTF-8 request body, when present.
     pub body: Option<String>,
+}
+
+impl McpHttpRequest {
+    /// Sets the MCP protocol version header.
+    pub fn with_protocol(mut self, protocol: impl Into<String>) -> Self {
+        self.headers
+            .insert("mcp-protocol-version".to_string(), protocol.into());
+        self
+    }
 }
 
 /// Security and resource policy for the stateless HTTP MCP endpoint.
@@ -240,25 +250,38 @@ async fn handle_rpc_request(
     }
     let Some(method) = request.get("method").and_then(Value::as_str) else {
         if valid_client_response(request) {
-            if let Err(message) = validate_protocol_header(&headers) {
-                return http_rpc_error(400, valid_id(id), -32600, message);
+            let protocol = protocol_header(&headers);
+            if !supports_protocol(protocol) {
+                return unsupported_protocol_version(valid_id(id), protocol);
             }
             return accepted();
         }
         return http_rpc_error(400, valid_id(id), -32600, "Invalid Request");
     };
+    let protocol = protocol_header(&headers).to_string();
     if method == "initialize" {
         if id.is_none() {
             return http_rpc_error(400, None, -32600, "initialize must be a request");
         }
-    } else if let Err(message) = validate_protocol_header(&headers) {
-        return http_rpc_error(400, valid_id(id), -32600, message);
+    } else if !supports_protocol(&protocol) {
+        return unsupported_protocol_version(valid_id(id), &protocol);
+    } else if request_protocol(request).is_some_and(|requested| {
+        requested != protocol
+            && (requested == MCP_PROTOCOL_VERSION || protocol == MCP_PROTOCOL_VERSION)
+    }) {
+        let error = RpcFault::header_mismatch();
+        return http_rpc_error(400, valid_id(id), error.code, &error.message);
+    } else if protocol == MCP_PROTOCOL_VERSION
+        && let Err(error) = validate_modern_meta(request, &protocol)
+    {
+        return http_rpc_error(400, valid_id(id), error.code, &error.message);
     }
     if id.is_none() {
         return accepted();
     }
     let result = match method {
         "initialize" => initialize(request),
+        "server/discover" if protocol == MCP_PROTOCOL_VERSION => discover(request),
         "ping" => optional_params(request).map(|_| json!({})),
         "tools/list" => optional_params(request).map(|_| json!({"tools": mcp_tool_definitions()})),
         "tools/call" => match required_params(request) {
@@ -276,10 +299,13 @@ async fn handle_rpc_request(
             }
             Err(error) => Err(error),
         },
+        _ if protocol == MCP_PROTOCOL_VERSION => {
+            return http_rpc_error(404, valid_id(id), -32601, "Method not found");
+        }
         _ => return rpc_error(id, -32601, "Method not found"),
     };
     match result {
-        Ok(result) => rpc_result(id, result),
+        Ok(result) => rpc_result(id, project_result(&protocol, method, result)),
         Err(error) => rpc_error(id, error.code, &error.message),
     }
 }
@@ -291,10 +317,10 @@ fn initialize(request: &Map<String, Value>) -> Result<Value, RpcFault> {
     let client = object(params, "clientInfo")?;
     string(client, "name")?;
     string(client, "version")?;
-    let protocol = if SUPPORTED_MCP_PROTOCOL_VERSIONS.contains(&requested) {
+    let protocol = if supports_legacy_protocol(requested) {
         requested
     } else {
-        MCP_PROTOCOL_VERSION
+        MCP_LEGACY_PROTOCOL_VERSION
     };
     Ok(json!({
         "protocolVersion": protocol,
@@ -304,6 +330,27 @@ fn initialize(request: &Map<String, Value>) -> Result<Value, RpcFault> {
             "version": env!("CARGO_PKG_VERSION")
         },
         "instructions": "Search for available methods, execute JavaScript, then inspect, decide, or cancel by execution ID."
+    }))
+}
+
+fn discover(request: &Map<String, Value>) -> Result<Value, RpcFault> {
+    optional_params(request)?;
+    Ok(json!({
+        "resultType": "complete",
+        "supportedVersions": known_standards()
+            .iter()
+            .map(|standard| standard.version())
+            .collect::<Vec<_>>(),
+        "capabilities": {"tools": {"listChanged": false}},
+        "_meta": {
+            "io.modelcontextprotocol/serverInfo": {
+                "name": "incurs-codemode",
+                "version": env!("CARGO_PKG_VERSION")
+            }
+        },
+        "instructions": "Search for available methods, execute JavaScript, then inspect, decide, or cancel by execution ID.",
+        "ttlMs": 0,
+        "cacheScope": "private"
     }))
 }
 
@@ -498,16 +545,69 @@ fn media_type(headers: &BTreeMap<String, String>, name: &str, expected: &str) ->
     })
 }
 
-fn validate_protocol_header(headers: &BTreeMap<String, String>) -> Result<(), &'static str> {
-    let protocol = headers
+fn protocol_header(headers: &BTreeMap<String, String>) -> &str {
+    headers
         .get("mcp-protocol-version")
         .map(String::as_str)
-        .unwrap_or("2025-03-26");
-    if SUPPORTED_MCP_PROTOCOL_VERSIONS.contains(&protocol) {
-        Ok(())
-    } else {
-        Err("Unsupported MCP-Protocol-Version")
+        .unwrap_or("2025-03-26")
+}
+
+fn supports_protocol(protocol: &str) -> bool {
+    known_standard(&McpVersion::from(protocol)).is_some()
+}
+
+fn supports_legacy_protocol(protocol: &str) -> bool {
+    known_standard(&McpVersion::from(protocol))
+        .is_some_and(|standard| standard.lifecycle() == McpLifecycleFamily::Legacy)
+}
+
+fn request_protocol(request: &Map<String, Value>) -> Option<&str> {
+    request
+        .get("params")
+        .and_then(Value::as_object)
+        .and_then(|params| params.get("_meta"))
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("io.modelcontextprotocol/protocolVersion"))
+        .and_then(Value::as_str)
+}
+
+fn validate_modern_meta(request: &Map<String, Value>, protocol: &str) -> Result<(), RpcFault> {
+    let params = required_params(request)?;
+    let meta = object(params, "_meta")?;
+    let requested = request_protocol(request);
+    if requested.is_none() {
+        return Err(RpcFault::invalid_params(
+            "request _meta is missing the selected protocol version",
+        ));
     }
+    if requested != Some(protocol) {
+        return Err(RpcFault::header_mismatch());
+    }
+    let key = "io.modelcontextprotocol/clientCapabilities";
+    if !meta.get(key).is_some_and(Value::is_object) {
+        return Err(RpcFault::invalid_params(format!(
+            "request _meta is missing {key}"
+        )));
+    }
+    Ok(())
+}
+
+fn project_result(protocol: &str, method: &str, mut result: Value) -> Value {
+    if protocol != MCP_PROTOCOL_VERSION {
+        return result;
+    }
+    if let Some(object) = result.as_object_mut() {
+        object
+            .entry("resultType")
+            .or_insert_with(|| json!("complete"));
+        if method.ends_with("/list") {
+            object.entry("ttlMs").or_insert_with(|| json!(0));
+            object
+                .entry("cacheScope")
+                .or_insert_with(|| json!("private"));
+        }
+    }
+    result
 }
 
 fn valid_client_response(request: &Map<String, Value>) -> bool {
@@ -536,6 +636,27 @@ fn rpc_result(id: Option<Value>, result: Value) -> McpHttpResponse {
 
 fn rpc_error(id: Option<Value>, code: i64, message: &str) -> McpHttpResponse {
     http_rpc_error(200, valid_id(id), code, message)
+}
+
+fn unsupported_protocol_version(id: Option<Value>, requested: &str) -> McpHttpResponse {
+    json_response(
+        400,
+        Some(json!({
+            "jsonrpc": "2.0",
+            "id": id.unwrap_or(Value::Null),
+            "error": {
+                "code": -32022,
+                "message": "Unsupported MCP protocol version",
+                "data": {
+                    "requested": requested,
+                    "supported": known_standards()
+                        .iter()
+                        .map(|standard| standard.version())
+                        .collect::<Vec<_>>()
+                }
+            }
+        })),
+    )
 }
 
 fn http_rpc_error(
@@ -614,6 +735,13 @@ impl RpcFault {
         Self {
             code: -32602,
             message: message.into(),
+        }
+    }
+
+    fn header_mismatch() -> Self {
+        Self {
+            code: -32020,
+            message: "MCP protocol version header does not match request metadata".to_string(),
         }
     }
 }
@@ -730,7 +858,7 @@ mod tests {
                 ),
                 (
                     "mcp-protocol-version".to_string(),
-                    MCP_PROTOCOL_VERSION.to_string(),
+                    MCP_LEGACY_PROTOCOL_VERSION.to_string(),
                 ),
             ]),
             body: Some(serde_json::to_string(&body).unwrap()),
@@ -746,6 +874,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             CODEMODE_MCP_TOOL_NAMES
         );
+    }
+
+    fn modern_request(method: &str) -> McpHttpRequest {
+        mcp_request(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MCP_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "test",
+                        "version": "1.0.0"
+                    },
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }
+            }
+        }))
+        .with_protocol(MCP_PROTOCOL_VERSION)
     }
 
     #[test]
@@ -836,12 +983,9 @@ mod tests {
         request
             .headers
             .insert("mcp-protocol-version".to_string(), "invalid".to_string());
-        assert_eq!(
-            handle_mcp_request(&StubService, request, &McpHttpOptions::default())
-                .await
-                .status,
-            400
-        );
+        let response = handle_mcp_request(&StubService, request, &McpHttpOptions::default()).await;
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body.unwrap()["error"]["code"], -32022);
 
         let request = mcp_request(json!({"jsonrpc": "1.0", "id": 1, "method": "ping"}));
         assert_eq!(
@@ -863,7 +1007,7 @@ mod tests {
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "protocolVersion": MCP_LEGACY_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "test", "version": "1.0.0"}
             }
@@ -872,8 +1016,58 @@ mod tests {
         assert_eq!(response.status, 200);
         assert_eq!(
             response.body.unwrap()["result"]["protocolVersion"],
-            MCP_PROTOCOL_VERSION
+            MCP_LEGACY_PROTOCOL_VERSION
         );
+    }
+
+    #[tokio::test]
+    async fn discovers_modern_standard_and_requires_complete_request_meta() {
+        let response = handle_mcp_request(
+            &StubService,
+            modern_request("server/discover"),
+            &McpHttpOptions::default(),
+        )
+        .await;
+        assert_eq!(response.status, 200);
+        let result = &response.body.unwrap()["result"];
+        assert_eq!(result["resultType"], "complete");
+        assert_eq!(result["supportedVersions"][4], MCP_PROTOCOL_VERSION);
+
+        let invalid = mcp_request(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {}
+        }))
+        .with_protocol(MCP_PROTOCOL_VERSION);
+        let response = handle_mcp_request(&StubService, invalid, &McpHttpOptions::default()).await;
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body.unwrap()["error"]["code"], -32602);
+
+        let mismatch = mcp_request(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2025-11-25",
+                    "io.modelcontextprotocol/clientCapabilities": {}
+                }
+            }
+        }))
+        .with_protocol(MCP_PROTOCOL_VERSION);
+        let response = handle_mcp_request(&StubService, mismatch, &McpHttpOptions::default()).await;
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body.unwrap()["error"]["code"], -32020);
+
+        let response = handle_mcp_request(
+            &StubService,
+            modern_request("removed/method"),
+            &McpHttpOptions::default(),
+        )
+        .await;
+        assert_eq!(response.status, 404);
+        assert_eq!(response.body.unwrap()["error"]["code"], -32601);
     }
 
     #[test]

@@ -77,6 +77,34 @@ pub struct McpServeOptions {
     pub instructions: Option<String>,
     /// Tool discovery and filtering configuration.
     pub tools: McpToolFilter,
+    /// Exact MCP standards served concurrently. Preference order is used for
+    /// legacy fallback and modern discovery.
+    pub standards: incurs_mcp_protocol::McpStandardSet,
+}
+
+/// Options for projecting a remote MCP server as incurs commands.
+#[derive(Debug, Clone, Default)]
+pub struct McpRemoteOptions {
+    /// Exact MCP standards the client accepts, in preference order.
+    pub standards: incurs_mcp_protocol::McpStandardSet,
+}
+
+#[cfg(feature = "mcp")]
+fn rmcp_protocol_versions(
+    standards: &incurs_mcp_protocol::McpStandardSet,
+) -> Vec<rmcp::model::ProtocolVersion> {
+    standards
+        .versions()
+        .iter()
+        .map(|version| match version.as_str() {
+            "2024-11-05" => rmcp::model::ProtocolVersion::V_2024_11_05,
+            "2025-03-26" => rmcp::model::ProtocolVersion::V_2025_03_26,
+            "2025-06-18" => rmcp::model::ProtocolVersion::V_2025_06_18,
+            "2025-11-25" => rmcp::model::ProtocolVersion::V_2025_11_25,
+            "2026-07-28" => rmcp::model::ProtocolVersion::V_2026_07_28,
+            version => unreachable!("McpStandardSet admitted unknown standard {version}"),
+        })
+        .collect()
 }
 
 /// Returns whether a tool name passes MCP include/exclude filters.
@@ -113,7 +141,8 @@ pub fn matches_tool_filter(name: &str, filter: &McpToolFilter) -> bool {
 
 #[cfg(all(feature = "mcp", feature = "http"))]
 struct RemoteToolHandler {
-    client: std::sync::Arc<rmcp::service::RunningService<rmcp::RoleClient, ()>>,
+    client:
+        std::sync::Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>>,
     tool: String,
     wrapper: Option<String>,
 }
@@ -187,15 +216,49 @@ impl crate::command::CommandHandler for RemoteToolHandler {
 pub async fn remote_commands(
     uri: impl Into<String>,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
-    use rmcp::ServiceExt;
-    use rmcp::transport::StreamableHttpClientTransport;
+    remote_commands_with(uri, &McpRemoteOptions::default()).await
+}
 
-    let client =
-        ().serve(StreamableHttpClientTransport::from_uri(uri.into()))
-            .await
-            .map_err(|error| {
-                crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
-            })?;
+/// Connects to a remote MCP-over-HTTP server using explicit exact standards
+/// and projects its tools as commands.
+#[cfg(all(feature = "mcp", feature = "http"))]
+pub async fn remote_commands_with(
+    uri: impl Into<String>,
+    options: &McpRemoteOptions,
+) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
+    use rmcp::model::ClientInfo;
+    use rmcp::transport::StreamableHttpClientTransport;
+    use rmcp::{ClientLifecycleMode, ClientServiceExt};
+
+    let versions = rmcp_protocol_versions(&options.standards);
+    let preferred_versions: Vec<_> = versions
+        .iter()
+        .filter(|version| version.as_str() == "2026-07-28")
+        .cloned()
+        .collect();
+    let legacy_version = versions
+        .into_iter()
+        .find(|version| version.as_str() != "2026-07-28");
+    let lifecycle = if preferred_versions.is_empty() {
+        ClientLifecycleMode::Initialize
+    } else if legacy_version.is_none() {
+        ClientLifecycleMode::Discover { preferred_versions }
+    } else {
+        ClientLifecycleMode::Auto {
+            preferred_versions,
+            legacy_version: legacy_version.clone(),
+        }
+    };
+    let client = ClientInfo::default()
+        .with_protocol_version(legacy_version.unwrap_or(rmcp::model::ProtocolVersion::V_2026_07_28))
+        .serve_with_lifecycle(
+            StreamableHttpClientTransport::from_uri(uri.into()),
+            lifecycle,
+        )
+        .await
+        .map_err(|error| {
+            crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
+        })?;
     let listed = client.list_all_tools().await.map_err(|error| {
         crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
     })?;
@@ -282,7 +345,7 @@ pub async fn remote_commands(
 
 #[cfg(all(feature = "mcp", feature = "http"))]
 async fn discover_remote_tools(
-    client: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
+    client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
 ) -> Result<Vec<rmcp::model::Tool>, crate::errors::Error> {
     let mut tools = Vec::new();
     let mut offset = 0_u64;
@@ -506,9 +569,11 @@ mod server {
     use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
-        CallToolRequestParams, CallToolResult, ContentBlock, Implementation, ListToolsResult, Meta,
-        PaginatedRequestParams, ProgressNotificationParam, ServerCapabilities, ServerInfo, Tool,
-        ToolAnnotations,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, MetaObject,
+        PaginatedRequestParams, ProgressNotificationParam, ProtocolVersion, ServerCapabilities,
+        ServerInfo, Tool, ToolAnnotations,
     };
     use rmcp::service::{RequestContext, RoleServer};
 
@@ -712,7 +777,7 @@ mod server {
         result.output_schema = tool.output_schema.clone();
         result.annotations = tool.annotations.clone();
         if let Some(instructions) = &tool.instructions {
-            result.meta = Some(Meta(serde_json::Map::from_iter([(
+            result.meta = Some(MetaObject(serde_json::Map::from_iter([(
                 "instructions".to_string(),
                 Value::String(instructions.clone()),
             )])));
@@ -938,7 +1003,8 @@ mod server {
             .unwrap_or(text);
         let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
         result.structured_content = structured.then_some(data);
-        result.meta = cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)])));
+        result.meta =
+            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)])));
         result
     }
 
@@ -952,8 +1018,9 @@ mod server {
             .as_ref()
             .map(|cta| format!("{message}\n\n{}", render_cta(cta)))
             .unwrap_or(message);
-        CallToolResult::error(vec![ContentBlock::text(text)])
-            .with_meta(cta.map(|cta| Meta(serde_json::Map::from_iter([("cta".to_string(), cta)]))))
+        CallToolResult::error(vec![ContentBlock::text(text)]).with_meta(
+            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)]))),
+        )
     }
 
     fn field_errors_text(field_errors: Vec<crate::output::FieldErrorOutput>) -> String {
@@ -1048,6 +1115,8 @@ mod server {
         instructions: Option<String>,
         /// Active discovery strategy.
         discovery: McpDiscovery,
+        /// Exact standards enabled for this server.
+        standards: incurs_mcp_protocol::McpStandardSet,
     }
 
     impl IncurMcpServer {
@@ -1088,17 +1157,29 @@ mod server {
                 tool_list: Arc::new(tool_list),
                 instructions: options.instructions.clone(),
                 discovery: options.tools.discovery,
+                standards: options.standards.clone(),
             })
         }
     }
 
     impl ServerHandler for IncurMcpServer {
         fn get_info(&self) -> ServerInfo {
-            let info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-                .with_server_info(Implementation::new(
-                    self.server_name.clone(),
-                    self.server_version.clone(),
-                ));
+            let protocol = super::rmcp_protocol_versions(&self.standards)
+                .into_iter()
+                .find(|version| version.as_str() != "2026-07-28")
+                .unwrap_or(ProtocolVersion::V_2026_07_28);
+            let info = ServerInfo::new(
+                ServerCapabilities::builder()
+                    .enable_tools()
+                    .enable_prompts()
+                    .enable_resources()
+                    .build(),
+            )
+            .with_protocol_version(protocol)
+            .with_server_info(Implementation::new(
+                self.server_name.clone(),
+                self.server_version.clone(),
+            ));
             if let Some(instructions) = &self.instructions {
                 info.with_instructions(instructions.clone())
             } else {
@@ -1106,25 +1187,121 @@ mod server {
             }
         }
 
+        fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+            Cow::Owned(super::rmcp_protocol_versions(&self.standards))
+        }
+
+        fn initialize(
+            &self,
+            request: InitializeRequestParams,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<InitializeResult, McpError>> + Send + '_
+        {
+            context.peer.set_peer_info(request.clone());
+            let supported = super::rmcp_protocol_versions(&self.standards);
+            let selected = supported
+                .iter()
+                .find(|version| {
+                    version.as_str() == request.protocol_version.as_str()
+                        && version.as_str() != "2026-07-28"
+                })
+                .cloned();
+            let selected = if selected.is_none()
+                && ProtocolVersion::KNOWN_VERSIONS.contains(&request.protocol_version)
+            {
+                None
+            } else {
+                selected.or_else(|| {
+                    supported
+                        .iter()
+                        .find(|version| version.as_str() != "2026-07-28")
+                        .cloned()
+                })
+            };
+            std::future::ready(match selected {
+                Some(selected) => Ok(self.get_info().with_protocol_version(selected)),
+                None => Err(McpError::unsupported_protocol_version(
+                    request.protocol_version,
+                    &supported,
+                )),
+            })
+        }
+
         fn list_tools(
             &self,
             _request: Option<PaginatedRequestParams>,
-            _context: RequestContext<RoleServer>,
+            context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_
         {
             let tools = (*self.tool_list).clone();
-            std::future::ready(Ok(ListToolsResult {
+            let mut result = ListToolsResult {
                 tools,
                 next_cursor: None,
                 meta: None,
-            }))
+                ..Default::default()
+            };
+            if context
+                .protocol_version()
+                .is_some_and(|version| version.as_str() == "2026-07-28")
+            {
+                result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+            }
+            std::future::ready(Ok(result))
+        }
+
+        fn list_prompts(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<ListPromptsResult, McpError>> + Send + '_
+        {
+            let mut result = ListPromptsResult::default();
+            if context
+                .protocol_version()
+                .is_some_and(|version| version.as_str() == "2026-07-28")
+            {
+                result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+            }
+            std::future::ready(Ok(result))
+        }
+
+        fn list_resources(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_
+        {
+            let mut result = ListResourcesResult::default();
+            if context
+                .protocol_version()
+                .is_some_and(|version| version.as_str() == "2026-07-28")
+            {
+                result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+            }
+            std::future::ready(Ok(result))
+        }
+
+        fn list_resource_templates(
+            &self,
+            _request: Option<PaginatedRequestParams>,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_
+        {
+            let mut result = ListResourceTemplatesResult::default();
+            if context
+                .protocol_version()
+                .is_some_and(|version| version.as_str() == "2026-07-28")
+            {
+                result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
+            }
+            std::future::ready(Ok(result))
         }
 
         fn call_tool(
             &self,
             request: CallToolRequestParams,
             context: RequestContext<RoleServer>,
-        ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_
+        ) -> impl std::future::Future<Output = Result<CallToolResponse, McpError>> + Send + '_
         {
             let tools_by_name = Arc::clone(&self.tools_by_name);
             let catalog = self.catalog.clone();
@@ -1162,7 +1339,7 @@ mod server {
                     if let Some(result) =
                         discovery_result(&tool_name, arguments.clone(), &tools_by_name)?
                     {
-                        return Ok(result);
+                        return Ok(result.into());
                     }
                     let mut execute = arguments.unwrap_or_default();
                     tool_name = execute
@@ -1199,11 +1376,7 @@ mod server {
                         },
                     )
                     .await;
-                Ok(tool_call_result(
-                    &server_name,
-                    outcome,
-                    tool.output_schema.is_some(),
-                ))
+                Ok(tool_call_result(&server_name, outcome, tool.output_schema.is_some()).into())
             }
         }
     }
@@ -1279,7 +1452,7 @@ mod server {
             options,
         )?;
         let mut config = StreamableHttpServerConfig::default();
-        config.stateful_mode = false;
+        config.legacy_session_mode = false;
         Ok(StreamableHttpService::new(
             move || Ok(server.clone()),
             Default::default(),
@@ -1294,7 +1467,7 @@ pub(crate) fn http_service(
     cli: &crate::cli::Cli,
 ) -> Result<
     rmcp::transport::StreamableHttpService<
-        impl rmcp::Service<rmcp::RoleServer>,
+        impl rmcp::ServerHandler,
         rmcp::transport::streamable_http_server::session::local::LocalSessionManager,
     >,
     crate::errors::Error,
