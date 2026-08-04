@@ -72,6 +72,9 @@ impl OptionNames {
             if kebab != snake {
                 kebab_to_snake.insert(kebab, snake.clone());
             }
+            if field.cli_name != snake {
+                kebab_to_snake.insert(field.cli_name.clone(), snake.clone());
+            }
 
             if let Some(alias_char) = field.alias {
                 alias_to_name.insert(alias_char, snake.clone());
@@ -797,6 +800,22 @@ mod tests {
         };
         let result = parse(&argv(&["-o", "json"]), &opts).unwrap();
         assert_eq!(result.options["output"], Value::String("json".into()));
+    }
+
+    #[test]
+    fn test_custom_cli_name() {
+        let opts = ParseOptions {
+            args_fields: vec![],
+            options_fields: vec![{
+                let mut f = field("format", FieldType::String);
+                f.cli_name = "image-format".to_string();
+                f
+            }],
+            aliases: HashMap::new(),
+            defaults: None,
+        };
+        let result = parse(&argv(&["--image-format", "png"]), &opts).unwrap();
+        assert_eq!(result.options["format"], Value::String("png".into()));
     }
 
     #[test]
