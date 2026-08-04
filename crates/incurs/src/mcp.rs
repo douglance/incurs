@@ -578,6 +578,7 @@ mod server {
     use rmcp::service::{RequestContext, RoleServer};
 
     use crate::cli::ConfigOptions;
+    use crate::command::McpResultContent;
     use crate::schema::FieldMeta;
     use crate::tool::{
         ConfigSource, EnvironmentSource, ToolCallControl, ToolCallOptions, ToolCallOutcome,
@@ -604,6 +605,8 @@ mod server {
         annotations: Option<ToolAnnotations>,
         /// Tool-specific instructions exposed through metadata.
         instructions: Option<String>,
+        /// Rich content derived from the successful structured result.
+        result_content: Vec<McpResultContent>,
     }
 
     fn tool_definition(definition: &ToolDefinition) -> ResolvedTool {
@@ -631,6 +634,7 @@ mod server {
                 )
             }),
             instructions: definition.instructions.clone(),
+            result_content: definition.result_content.clone(),
         }
     }
 
@@ -989,11 +993,12 @@ mod server {
         lines.join("\n")
     }
 
-    fn tool_result_success(
+    pub(super) fn tool_result_success(
         name: &str,
         data: Value,
         cta: Option<crate::output::CtaBlock>,
         structured: bool,
+        presentation: &[McpResultContent],
     ) -> CallToolResult {
         let text = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
         let cta = cta.map(|cta| formatted_cta(name, cta));
@@ -1001,7 +1006,26 @@ mod server {
             .as_ref()
             .map(|cta| format!("{text}\n\n{}", render_cta(cta)))
             .unwrap_or(text);
-        let mut result = CallToolResult::success(vec![ContentBlock::text(text)]);
+        let mut content = vec![ContentBlock::text(text)];
+        for item in presentation {
+            match item {
+                McpResultContent::Image {
+                    data_pointer,
+                    mime_type_pointer,
+                } => {
+                    let Some(image_data) = data.pointer(data_pointer).and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
+                    let Some(mime_type) = data.pointer(mime_type_pointer).and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
+                    content.push(ContentBlock::image(image_data, mime_type));
+                }
+            }
+        }
+        let mut result = CallToolResult::success(content);
         result.structured_content = structured.then_some(data);
         result.meta =
             cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)])));
@@ -1040,9 +1064,16 @@ mod server {
         .unwrap_or_default()
     }
 
-    fn tool_call_result(name: &str, outcome: ToolCallOutcome, structured: bool) -> CallToolResult {
+    fn tool_call_result(
+        name: &str,
+        outcome: ToolCallOutcome,
+        structured: bool,
+        presentation: &[McpResultContent],
+    ) -> CallToolResult {
         match outcome {
-            ToolCallOutcome::Ok { data, cta } => tool_result_success(name, data, cta, structured),
+            ToolCallOutcome::Ok { data, cta } => {
+                tool_result_success(name, data, cta, structured, presentation)
+            }
             ToolCallOutcome::Error {
                 message,
                 field_errors,
@@ -1376,7 +1407,13 @@ mod server {
                         },
                     )
                     .await;
-                Ok(tool_call_result(&server_name, outcome, tool.output_schema.is_some()).into())
+                Ok(tool_call_result(
+                    &server_name,
+                    outcome,
+                    tool.output_schema.is_some(),
+                    &tool.result_content,
+                )
+                .into())
             }
         }
     }
@@ -1513,6 +1550,32 @@ pub async fn serve(
 mod tests {
     use super::*;
     use crate::schema::{FieldType, to_kebab};
+
+    #[cfg(feature = "mcp")]
+    #[test]
+    fn test_tool_result_success_presents_declared_image_content() {
+        use crate::command::McpResultContent;
+
+        let data = serde_json::json!({
+            "preview": {
+                "data": "aW1hZ2U=",
+                "mimeType": "image/png"
+            },
+            "artifactUrl": "https://example.test/artifacts/ui.png"
+        });
+        let presentation = vec![McpResultContent::Image {
+            data_pointer: "/preview/data".to_string(),
+            mime_type_pointer: "/preview/mimeType".to_string(),
+        }];
+
+        let result = server::tool_result_success("visualize", data, None, true, &presentation);
+        let encoded = serde_json::to_value(result.content).expect("content serializes");
+
+        assert_eq!(encoded[0]["type"], "text");
+        assert_eq!(encoded[1]["type"], "image");
+        assert_eq!(encoded[1]["data"], "aW1hZ2U=");
+        assert_eq!(encoded[1]["mimeType"], "image/png");
+    }
 
     fn make_field(name: &'static str, ft: FieldType, required: bool) -> FieldMeta {
         FieldMeta {

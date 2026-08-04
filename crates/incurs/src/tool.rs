@@ -15,7 +15,9 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::cli::{Cli, CommandEntry, ConfigOptions};
-use crate::command::{self, CommandDef, ExecuteOptions, McpAnnotations, ParseMode, RequestContext};
+use crate::command::{
+    self, CommandDef, ExecuteOptions, McpAnnotations, McpResultContent, ParseMode, RequestContext,
+};
 use crate::errors::FieldError;
 use crate::middleware::MiddlewareFn;
 use crate::output::{CtaBlock, FieldErrorOutput, Format, StreamRecord};
@@ -38,6 +40,8 @@ pub struct ToolDefinition {
     pub instructions: Option<String>,
     /// Usage examples copied from the command definition.
     pub examples: Vec<ToolExample>,
+    /// Rich MCP content derived from a successful structured result.
+    pub result_content: Vec<McpResultContent>,
 }
 
 /// One transport-neutral tool usage example.
@@ -559,6 +563,7 @@ fn collect(
                                     description: example.description.clone(),
                                 })
                                 .collect(),
+                            result_content: mcp.result_content.clone(),
                         },
                         command: Arc::clone(command),
                         middleware: parent_middleware.to_vec(),

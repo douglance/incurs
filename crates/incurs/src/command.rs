@@ -63,6 +63,23 @@ pub struct McpAnnotations {
     pub open_world_hint: Option<bool>,
 }
 
+/// Declares rich MCP content derived from a successful structured result.
+///
+/// JSON Pointers use RFC 6901 syntax and are evaluated against the command's
+/// serialized output. Missing or non-string values are ignored so the
+/// structured result remains the source of truth.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpResultContent {
+    /// Present base64-encoded image data as an MCP image content block.
+    Image {
+        /// JSON Pointer to the base64-encoded image bytes.
+        data_pointer: String,
+        /// JSON Pointer to the image MIME type.
+        mime_type_pointer: String,
+    },
+}
+
 /// MCP exposure and metadata overrides for a command.
 #[derive(Debug, Clone)]
 pub struct McpCommandOptions {
@@ -76,6 +93,8 @@ pub struct McpCommandOptions {
     pub instructions: Option<String>,
     /// Behavioral annotations exposed to MCP clients.
     pub annotations: Option<McpAnnotations>,
+    /// Rich MCP content derived from successful command output.
+    pub result_content: Vec<McpResultContent>,
     /// Whether skill output should require user confirmation before execution.
     pub destructive: bool,
 }
@@ -88,6 +107,7 @@ impl Default for McpCommandOptions {
             description: None,
             instructions: None,
             annotations: None,
+            result_content: Vec::new(),
             destructive: false,
         }
     }

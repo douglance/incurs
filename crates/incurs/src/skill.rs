@@ -410,7 +410,12 @@ fn render_command_body(cli: &str, cmd: &CommandInfo, level: usize) -> String {
             if let Some(desc) = &ex.description {
                 lines.push(format!("# {}", desc));
             }
-            lines.push(format!("{} {}", cli, ex.command));
+            let command = if cmd.name.is_empty() {
+                format!("{} {}", cli, ex.command)
+            } else {
+                format!("{} {} {}", cli, cmd.name, ex.command)
+            };
+            lines.push(command);
             lines.push(String::new());
         }
         // Remove trailing empty line
@@ -680,6 +685,19 @@ mod tests {
         };
         let sig = build_signature("mycli", &cmd);
         assert_eq!(sig, "mycli deploy <target> [env]");
+    }
+
+    #[test]
+    fn test_command_example_includes_full_command_path() {
+        let mut cmd = make_cmd("generate");
+        cmd.examples.push(Example {
+            command: "\"A settings screen\" --quality pro".to_string(),
+            description: None,
+        });
+
+        let rendered = render_command_body("visualize", &cmd, 1);
+
+        assert!(rendered.contains("visualize generate \"A settings screen\" --quality pro"));
     }
 
     #[test]
