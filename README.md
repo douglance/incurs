@@ -137,6 +137,25 @@ to initialize with their exact standard. HTTP clients fall back only on
 protocol-specific evidence, never on authentication, transport, or server
 failures.
 
+Applications with a richer result algebra can refine MCP's `isError`
+classification after incurs renders the default content and structured output:
+
+```rust
+use incurs::mcp::{McpResultMapper, McpResultMapping, McpServeOptions};
+
+let options = McpServeOptions {
+    result_mapper: Some(McpResultMapper::new(|context| match context.outcome {
+        incurs::tool::ToolCallOutcome::Ok { data, .. }
+            if data["status"] == "failed" => McpResultMapping::error(),
+        _ => McpResultMapping::unchanged(),
+    })),
+    ..Default::default()
+};
+```
+
+The mapper also receives the resolved `ToolDefinition`. Leaving the mapping
+unchanged preserves incurs' default success and error behavior.
+
 `incurs-mcp-protocol` owns the exact standard registry, lifecycle families,
 wire-era codecs, feature changes, and negotiation policy. Each published
 standard has its own module and embeds its pinned official JSON Schema. Run
