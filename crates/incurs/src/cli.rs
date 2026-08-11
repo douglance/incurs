@@ -3410,6 +3410,11 @@ fn extract_builtin_flags(
     while i < argv.len() {
         let token = &argv[i];
 
+        if token == "--" {
+            rest.extend_from_slice(&argv[i..]);
+            break;
+        }
+
         if token == "--full-output" {
             verbose = true;
         } else if token == "--llms" {
@@ -4967,6 +4972,40 @@ mod tests {
         let result = extract_builtin_flags(&argv, None, &[]).unwrap();
         assert!(result.help);
         assert!(result.rest.is_empty());
+    }
+
+    #[test]
+    fn test_extract_builtin_flags_preserves_the_separator_tail() {
+        let argv = [
+            "run",
+            "--",
+            "--help",
+            "-h",
+            "--version",
+            "--json",
+            "--format",
+            "child-format",
+            "--schema",
+            "--llms",
+            "--mcp",
+            "--token-limit",
+            "child-limit",
+            "--",
+            "path",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+        let result = extract_builtin_flags(&argv, None, &[]).unwrap();
+
+        assert!(!result.help);
+        assert!(!result.version);
+        assert!(!result.format_explicit);
+        assert!(!result.schema);
+        assert!(!result.llms);
+        assert!(!result.mcp);
+        assert_eq!(result.rest, argv);
     }
 
     #[test]
