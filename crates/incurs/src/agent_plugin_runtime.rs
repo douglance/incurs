@@ -302,9 +302,9 @@ fn same_environment_name(left: &OsStr, right: &OsStr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_plugin::loader::{
-        AgentPluginHttpMcpServer, AgentPluginManifest, AgentPluginStdioMcpServer,
-    };
+    use crate::agent_plugin::loader::AgentPluginStdioMcpServer;
+    #[cfg(feature = "http")]
+    use crate::agent_plugin::loader::{AgentPluginHttpMcpServer, AgentPluginManifest};
 
     #[cfg(feature = "http")]
     type LegacySseSender =
