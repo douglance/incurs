@@ -780,6 +780,46 @@ impl Cli {
             return Ok(());
         }
 
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "plugin") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "plugin")
+                .expect("plugin builtin must exist");
+            let plugin_sub = builtin.rest.get(index + 1).map(|token| token.as_str());
+
+            if plugin_sub != Some("build") {
+                writeln_stdout(&format_builtin_help(&self.name, builtin_def));
+                return Ok(());
+            }
+
+            if builtin.help {
+                writeln_stdout(&format_builtin_subcommand_help(
+                    &self.name,
+                    builtin_def,
+                    "build",
+                ));
+                return Ok(());
+            }
+
+            match publish_agent_plugin(
+                &self.name,
+                self.description.as_deref(),
+                self.version.as_deref(),
+                self.root_command.as_ref(),
+                &self.commands,
+                &builtin.rest[(index + 2)..],
+            ) {
+                Ok(result) => {
+                    writeln_stdout(&format!("Built Agent Plugin at {}", result.root.display()))
+                }
+                Err(error) => {
+                    writeln_stdout(&format_human_error("PLUGIN_BUILD_FAILED", &error));
+                    std::process::exit(1);
+                }
+            }
+            return Ok(());
+        }
+
         if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "skills") {
             let builtin_def = builtins
                 .iter()
@@ -1912,6 +1952,44 @@ impl Cli {
                 .collect::<Vec<_>>()
                 .join("\n");
             wln!(&output);
+            return Ok(None);
+        }
+
+        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "plugin") {
+            let builtin_def = builtins
+                .iter()
+                .find(|item| item.name == "plugin")
+                .expect("plugin builtin must exist");
+            let plugin_sub = builtin.rest.get(index + 1).map(|token| token.as_str());
+
+            if plugin_sub != Some("build") {
+                wln!(&format_builtin_help(&self.name, builtin_def));
+                return Ok(None);
+            }
+
+            if builtin.help {
+                wln!(&format_builtin_subcommand_help(
+                    &self.name,
+                    builtin_def,
+                    "build",
+                ));
+                return Ok(None);
+            }
+
+            match publish_agent_plugin(
+                &self.name,
+                self.description.as_deref(),
+                self.version.as_deref(),
+                self.root_command.as_ref(),
+                &self.commands,
+                &builtin.rest[(index + 2)..],
+            ) {
+                Ok(result) => wln!(&format!("Built Agent Plugin at {}", result.root.display())),
+                Err(error) => {
+                    wln!(&format_human_error("PLUGIN_BUILD_FAILED", &error));
+                    return Ok(Some(1));
+                }
+            }
             return Ok(None);
         }
 
@@ -3928,6 +4006,132 @@ struct BuiltinSubcommand {
     aliases: Vec<&'static str>,
 }
 
+struct PluginBuildOptions {
+    output: std::path::PathBuf,
+    depth: usize,
+    include_mcp: bool,
+    bundle_cli: bool,
+    overwrite: bool,
+}
+
+fn publish_agent_plugin(
+    name: &str,
+    description: Option<&str>,
+    version: Option<&str>,
+    root_command: Option<&Arc<CommandDef>>,
+    commands: &BTreeMap<String, CommandEntry>,
+    rest: &[String],
+) -> Result<crate::agent_plugin::PublishedAgentPlugin, String> {
+    let options = parse_plugin_build_options(rest)?;
+    let command_info = collect_all_command_info(root_command, commands);
+    let groups = collect_group_descriptions(commands, &[]);
+    let executable = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    };
+    let plugin_options = crate::agent_plugin::AgentPluginPublisherOptions {
+        manifest: crate::agent_plugin::AgentPluginManifestMetadata {
+            name: name.to_string(),
+            version: version.map(ToString::to_string),
+            description: description.map(ToString::to_string),
+            author: None,
+            homepage: None,
+            repository: None,
+            license: None,
+            keywords: Vec::new(),
+            extensions: BTreeMap::new(),
+        },
+        skills: crate::agent_plugin::AgentPluginSkillOptions {
+            cli_name: name.to_string(),
+            depth: options.depth,
+            additional_skills: Vec::new(),
+        },
+        tools: crate::agent_plugin::AgentPluginToolBindingOptions {
+            mcp_server: options
+                .include_mcp
+                .then(|| crate::agent_plugin::AgentPluginMcpServer {
+                    command: if options.bundle_cli {
+                        format!("./bin/{executable}")
+                    } else {
+                        name.to_string()
+                    },
+                    args: vec!["--mcp".to_string()],
+                }),
+            mcp_servers: BTreeMap::new(),
+        },
+        tool_runtime: options
+            .bundle_cli
+            .then(|| -> Result<_, String> {
+                Ok(crate::agent_plugin::AgentPluginToolRuntimeOptions {
+                    source: std::env::current_exe()
+                        .map_err(|error| format!("cannot resolve current executable: {error}"))?,
+                    shell_command: name.to_string(),
+                    target_os: std::env::consts::OS.to_string(),
+                    target_arch: std::env::consts::ARCH.to_string(),
+                })
+            })
+            .transpose()?,
+        policy: crate::agent_plugin::AgentPluginPublicationPolicy {
+            overwrite: options.overwrite,
+        },
+    };
+    crate::agent_plugin::publish(&options.output, &command_info, &groups, &plugin_options)
+        .map_err(|error| error.to_string())
+}
+
+fn parse_plugin_build_options(rest: &[String]) -> Result<PluginBuildOptions, String> {
+    let mut output = None;
+    let mut depth = 1;
+    let mut include_mcp = cfg!(feature = "mcp");
+    let mut bundle_cli = false;
+    let mut overwrite = false;
+    let mut index = 0;
+    while index < rest.len() {
+        match rest[index].as_str() {
+            "--output" => {
+                index += 1;
+                output = rest.get(index).map(std::path::PathBuf::from);
+            }
+            token if token.starts_with("--output=") => {
+                output = token
+                    .split_once('=')
+                    .map(|(_, value)| std::path::PathBuf::from(value));
+            }
+            "--depth" => {
+                index += 1;
+                let value = rest
+                    .get(index)
+                    .ok_or_else(|| "missing value for --depth".to_string())?;
+                depth = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid value for --depth: {value}"))?;
+            }
+            token if token.starts_with("--depth=") => {
+                let value = token
+                    .split_once('=')
+                    .map(|(_, value)| value)
+                    .expect("starts_with checked");
+                depth = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid value for --depth: {value}"))?;
+            }
+            "--bundle-cli" => bundle_cli = true,
+            "--no-mcp" => include_mcp = false,
+            "--force" => overwrite = true,
+            token => return Err(format!("unknown option: {token}")),
+        }
+        index += 1;
+    }
+    Ok(PluginBuildOptions {
+        output: output.ok_or_else(|| "plugin build requires --output <dir>".to_string())?,
+        depth,
+        include_mcp,
+        bundle_cli,
+        overwrite,
+    })
+}
+
 fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
     let completions_rows = [
         (
@@ -4051,6 +4255,75 @@ fn builtin_commands(cli_name: &str) -> Vec<BuiltinCommand> {
                     aliases: Vec::new(),
                 },
             ],
+        },
+        BuiltinCommand {
+            name: "plugin",
+            description: "Build an Agent Plugins 1.0 directory",
+            args_fields: Vec::new(),
+            hint: None,
+            subcommands: vec![BuiltinSubcommand {
+                name: "build",
+                description: "Build an Agent Plugins 1.0 directory",
+                options_fields: vec![
+                    FieldMeta {
+                        name: "output",
+                        cli_name: "output".to_string(),
+                        description: Some("Output directory for the plugin"),
+                        field_type: crate::schema::FieldType::String,
+                        required: false,
+                        default: None,
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "depth",
+                        cli_name: "depth".to_string(),
+                        description: Some("Grouping depth for skill files (default: 1)"),
+                        field_type: crate::schema::FieldType::Number,
+                        required: false,
+                        default: Some(Value::Number(serde_json::Number::from(1))),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "bundle_cli",
+                        cli_name: "bundle-cli".to_string(),
+                        description: Some("Bundle this CLI as the plugin Tool Runtime"),
+                        field_type: crate::schema::FieldType::Boolean,
+                        required: false,
+                        default: Some(Value::Bool(false)),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "no_mcp",
+                        cli_name: "no-mcp".to_string(),
+                        description: Some("Skip mcp.json generation"),
+                        field_type: crate::schema::FieldType::Boolean,
+                        required: false,
+                        default: Some(Value::Bool(false)),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                    FieldMeta {
+                        name: "force",
+                        cli_name: "force".to_string(),
+                        description: Some("Replace existing owned plugin artifacts"),
+                        field_type: crate::schema::FieldType::Boolean,
+                        required: false,
+                        default: Some(Value::Bool(false)),
+                        alias: None,
+                        deprecated: false,
+                        env_name: None,
+                    },
+                ],
+                option_aliases: HashMap::new(),
+                aliases: Vec::new(),
+            }],
         },
         BuiltinCommand {
             name: "skills",
@@ -4672,6 +4945,7 @@ fn write_with_token_ops(output: &str, builtin: &BuiltinFlags, write_fn: fn(&str)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_extract_builtin_flags_basic() {
@@ -5084,6 +5358,15 @@ mod tests {
             .command("ping", make_leaf_command("ping", Some("Ping the server")))
     }
 
+    fn temp_plugin_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "incurs-plugin-build-test-{}-{name}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        root
+    }
+
     #[test]
     fn test_format_human_error() {
         assert_eq!(
@@ -5144,6 +5427,20 @@ mod tests {
         .unwrap();
 
         assert!(output.contains("add"));
+    }
+
+    #[test]
+    fn test_parse_plugin_build_options_defaults_mcp_to_feature_flag() {
+        let options = parse_plugin_build_options(&[
+            "--output".to_string(),
+            "dist/plugin".to_string(),
+            "--force".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.output, std::path::PathBuf::from("dist/plugin"));
+        assert_eq!(options.include_mcp, cfg!(feature = "mcp"));
+        assert!(options.overwrite);
     }
 
     #[tokio::test]
@@ -5224,6 +5521,196 @@ mod tests {
         assert!(output.contains("test skills add"));
         assert!(output.contains("--depth"));
         assert!(output.contains("--no-global"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_plugin_build_help() {
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "plugin".to_string(),
+                    "build".to_string(),
+                    "--help".to_string(),
+                ],
+                &mut output,
+                true,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("test plugin build"));
+        assert!(output.contains("--output"));
+        assert!(output.contains("--bundle-cli"));
+        assert!(output.contains("--no-mcp"));
+        assert!(output.contains("--force"));
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_plugin_build_bundles_current_executable() {
+        let root = temp_plugin_root("bundle-cli");
+        let cli = Cli::create("demo-tools")
+            .description("Demo tools.")
+            .version("2.3.4")
+            .command("run", make_leaf_command("run", Some("Run demo")));
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "plugin".to_string(),
+                    "build".to_string(),
+                    "--output".to_string(),
+                    root.to_string_lossy().to_string(),
+                    "--bundle-cli".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        let executable = if cfg!(windows) {
+            "bin/demo-tools.exe"
+        } else {
+            "bin/demo-tools"
+        };
+        assert!(root.join(executable).is_file());
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join("plugin.json")).unwrap()).unwrap();
+        assert_eq!(
+            manifest["extensions"]["io.github.douglance.incurs"]["toolRuntime"]["shellCommand"],
+            "demo-tools"
+        );
+        let mcp = fs::read_to_string(root.join("mcp.json")).unwrap();
+        assert!(mcp.contains(&format!("\"command\": \"./{executable}\"")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_plugin_build_writes_agent_plugin() {
+        let root = temp_plugin_root("write");
+        let project = Cli::create("project")
+            .description("Project workflows")
+            .command("list", make_leaf_command("list", Some("List projects")));
+        let cli = Cli::create("demo-tools")
+            .description("Demo tools.")
+            .version("2.3.4")
+            .group(project);
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "plugin".to_string(),
+                    "build".to_string(),
+                    "--output".to_string(),
+                    root.to_string_lossy().to_string(),
+                    "--no-mcp".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("Built Agent Plugin at")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("plugin.json")).unwrap(),
+            "{\n  \"$schema\": \"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json\",\n  \"description\": \"Demo tools.\",\n  \"name\": \"demo-tools\",\n  \"version\": \"2.3.4\"\n}\n"
+        );
+        assert!(!root.join("mcp.json").exists());
+        assert!(
+            fs::read_to_string(root.join("skills/project/SKILL.md"))
+                .unwrap()
+                .contains(
+                    "description: \"Project workflows. List projects. Run `demo-tools project --help` for usage details.\""
+                )
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_plugin_build_rejects_existing_output_without_force() {
+        let root = temp_plugin_root("exists");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("plugin.json"), "stale").unwrap();
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "plugin".to_string(),
+                    "build".to_string(),
+                    "--output".to_string(),
+                    root.to_string_lossy().to_string(),
+                    "--no-mcp".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, Some(1));
+        assert!(
+            String::from_utf8(output)
+                .unwrap()
+                .contains("PLUGIN_BUILD_FAILED")
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("plugin.json")).unwrap(),
+            "stale"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn test_serve_to_builtin_plugin_build_force_removes_owned_artifacts() {
+        let root = temp_plugin_root("force");
+        fs::create_dir_all(root.join("skills/stale")).unwrap();
+        fs::write(root.join("skills/stale/SKILL.md"), "stale").unwrap();
+        fs::write(root.join("mcp.json"), "stale").unwrap();
+        fs::write(root.join("keep.txt"), "keep").unwrap();
+        let cli = make_test_cli();
+        let mut output = Vec::new();
+
+        let result = cli
+            .serve_to(
+                vec![
+                    "plugin".to_string(),
+                    "build".to_string(),
+                    "--output".to_string(),
+                    root.to_string_lossy().to_string(),
+                    "--no-mcp".to_string(),
+                    "--force".to_string(),
+                ],
+                &mut output,
+                false,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result, None);
+        assert!(!root.join("mcp.json").exists());
+        assert!(!root.join("skills/stale/SKILL.md").exists());
+        assert_eq!(fs::read_to_string(root.join("keep.txt")).unwrap(), "keep");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[tokio::test]

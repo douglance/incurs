@@ -1,8 +1,9 @@
 [package]
 name = "incurs-cli"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
-description = "Code generation tools for incurs-based Rust CLIs"
+description = "Code generation and Agent Plugins client tools for incurs-based Rust CLIs"
+readme = "../../README.md"
 license = "MIT"
 repository = "https://github.com/douglance/incurs"
 
@@ -12,8 +13,11 @@ path = "src/main.rs"
 doc = false
 
 [dependencies]
-incurs = { path = "../incurs", version = "0.5.0", features = ["cli"] }
+dirs = "6"
+incurs = { path = "../incurs", version = "0.5.2", features = ["cli", "agent-plugins-mcp"] }
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]

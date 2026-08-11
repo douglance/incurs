@@ -35,6 +35,9 @@
 
 ## Architecture Conventions
 
+- **Prompt and tool taxonomy is explicit** — classify concepts by consumer and effect, not by whether they are stored as text. Use the preferred terms and rules in `CONTEXT.md`: target-neutral meaning is a Capability; model-directed content is a Prompt Guide or Prompt Artifact; machine invocation belongs to Tool Contracts, Tool Bindings, and Tool Runtimes; human-only material is Documentation. Adapters convert representations, and Publishers install compiled artifacts.
+- **Prompt and tool seams stay one-way** — Prompt modules may reference `CapabilityId` but never receive handlers. Tool modules must not contain prompt programs, selection heuristics, or few-shot demonstrations. Prompt changes must not alter Tool identity, policy, or contract digests, and deleting all Prompt modules must leave every Tool directly callable. Split any type that spans these kinds.
+- **Agent Plugins is a publication target** — compile root `plugin.json` metadata, Agent Skills prompt artifacts, and `mcp.json` tool bindings from distinct typed inputs. Keep the Agent Plugins portable manifest closed, put client-specific behavior under reverse-domain extension namespaces, and never use a client-native plugin layout as the portable format.
 - **Code Mode is platform-neutral** — `incurs-codemode` owns the lifecycle, dispatch, replay, approval, rollback, and shared JavaScript program contract. Executors supply isolation and host bridging. Keep provider names, dependencies, configuration, documentation, tests, and runtime assumptions inside standalone workspaces under `extensions/`.
 - **`ToolCatalog` is the non-CLI invocation boundary** — MCP, Code Mode, and future transports resolve command metadata and execute through `ToolCatalog`. Preserve canonical command paths for config lookup and middleware context. `ParseMode::Flat` does not apply config defaults, so merge resolved command defaults into structured arguments before `command::execute`.
 - **Tool cancellation covers active commands** — race the shared `command::execute` future against `ToolCallControl::cancellation`; a pre-invocation check and stream-only cancellation do not stop an ordinary asynchronous command.
@@ -54,3 +57,4 @@
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
+- **Release archives are fresh, locked, and version-aligned** — bump publishable package manifests, their internal dependency requirements, lockfiles, and `xtask release-check` together. The release checker must remove each expected archive before packaging and package with `--locked` so stale archives cannot satisfy verification and release checks cannot rewrite tracked lockfiles.

@@ -1,3 +1,8 @@
+pub mod agent_plugin;
+#[cfg(feature = "agent-plugins-mcp")]
+pub mod agent_plugin_runtime;
+#[cfg(feature = "agent-plugins-mcp")]
+mod agent_plugin_sse;
 pub mod agents;
 pub mod cli;
 pub mod command;

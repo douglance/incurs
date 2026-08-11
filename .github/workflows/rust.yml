@@ -49,6 +49,19 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: cargo xtask parity
 
+  plugin-installers:
+    name: Plugin installers (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p incurs-cli
+
   mcp-conformance:
     name: MCP conformance
     runs-on: ubuntu-latest

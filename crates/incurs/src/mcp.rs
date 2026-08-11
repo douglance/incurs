@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::schema::FieldMeta;
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ pub fn matches_tool_filter(name: &str, filter: &McpToolFilter) -> bool {
     included && !excluded
 }
 
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 struct RemoteToolHandler {
     client:
         std::sync::Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>>,
@@ -147,7 +147,7 @@ struct RemoteToolHandler {
     wrapper: Option<String>,
 }
 
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 #[async_trait::async_trait]
 impl crate::command::CommandHandler for RemoteToolHandler {
     async fn run(&self, ctx: crate::command::CommandContext) -> crate::output::CommandResult {
@@ -226,8 +226,22 @@ pub async fn remote_commands_with(
     uri: impl Into<String>,
     options: &McpRemoteOptions,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
-    use rmcp::model::ClientInfo;
     use rmcp::transport::StreamableHttpClientTransport;
+
+    remote_commands_from_transport(StreamableHttpClientTransport::from_uri(uri.into()), options)
+        .await
+}
+
+#[cfg(feature = "mcp")]
+pub(crate) async fn remote_commands_from_transport<T, E, A>(
+    transport: T,
+    options: &McpRemoteOptions,
+) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error>
+where
+    T: rmcp::transport::IntoTransport<rmcp::RoleClient, E, A>,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    use rmcp::model::ClientInfo;
     use rmcp::{ClientLifecycleMode, ClientServiceExt};
 
     let versions = rmcp_protocol_versions(&options.standards);
@@ -251,14 +265,18 @@ pub async fn remote_commands_with(
     };
     let client = ClientInfo::default()
         .with_protocol_version(legacy_version.unwrap_or(rmcp::model::ProtocolVersion::V_2026_07_28))
-        .serve_with_lifecycle(
-            StreamableHttpClientTransport::from_uri(uri.into()),
-            lifecycle,
-        )
+        .serve_with_lifecycle(transport, lifecycle)
         .await
         .map_err(|error| {
             crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
         })?;
+    project_remote_commands(client).await
+}
+
+#[cfg(feature = "mcp")]
+async fn project_remote_commands(
+    client: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
+) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
     let listed = client.list_all_tools().await.map_err(|error| {
         crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
     })?;
@@ -343,7 +361,7 @@ pub async fn remote_commands_with(
     Ok(commands)
 }
 
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 async fn discover_remote_tools(
     client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
 ) -> Result<Vec<rmcp::model::Tool>, crate::errors::Error> {
@@ -396,7 +414,7 @@ async fn discover_remote_tools(
     Ok(tools)
 }
 
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, crate::errors::Error> {
     if result.is_error == Some(true) {
         return Err(remote_error(std::io::Error::other(
@@ -418,12 +436,12 @@ fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, cra
     }))
 }
 
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 fn remote_error(error: impl std::fmt::Display) -> crate::errors::Error {
     crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
 }
 
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "mcp")]
 fn remote_field(name: &str, schema: &Value, required: bool) -> FieldMeta {
     let field_type = match schema.get("type").and_then(Value::as_str) {
         Some("boolean") => crate::schema::FieldType::Boolean,

@@ -98,8 +98,8 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     let cloudflare = root.join("extensions/cloudflare");
     let packages = vec![
         (root, "incurs-macros", "0.4.0"),
-        (root, "incurs", "0.5.0"),
-        (root, "incurs-cli", "0.5.0"),
+        (root, "incurs", "0.5.2"),
+        (root, "incurs-cli", "0.5.1"),
         (root, "incurs-extras", "0.5.0"),
         (root, "incurs-codemode", "0.2.0"),
         (root, "incurs-codemode-local", "0.2.0"),
@@ -107,6 +107,12 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         (root, "incurs-mcp-protocol", "0.1.0"),
         (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.2.0"),
     ];
+    for (package_root, package, version) in &packages {
+        let archive = package_archive(package_root, package, version);
+        if archive.is_file() {
+            fs::remove_file(archive)?;
+        }
+    }
     run(
         Command::new("cargo").current_dir(root).args([
             "package",
@@ -115,25 +121,19 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
             "xtask",
             "--allow-dirty",
             "--no-verify",
+            "--locked",
         ]),
         "package release workspace",
     )?;
     let mut command = Command::new("cargo");
     command.current_dir(&cloudflare);
-    for (package_root, package, _) in &packages {
-        if *package_root == root {
-            command.arg("--config").arg(format!(
-                "patch.crates-io.{package}.path={:?}",
-                root.join("crates").join(package)
-            ));
-        }
-    }
     command.args([
         "package",
         "-p",
         "incurs-codemode-cloudflare",
         "--allow-dirty",
         "--no-verify",
+        "--locked",
     ]);
     run(&mut command, "package Cloudflare extension")?;
 
@@ -315,9 +315,7 @@ fn verify_archives(
     packages: &[(&Path, &str, &str)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     for (root, package, version) in packages {
-        let archive = root
-            .join("target/package")
-            .join(format!("{package}-{version}.crate"));
+        let archive = package_archive(root, package, version);
         if !archive.is_file() {
             return Err(format!("missing package archive {}", archive.display()).into());
         }
@@ -361,6 +359,11 @@ fn verify_archives(
         println!("verified {package} {version}");
     }
     Ok(())
+}
+
+fn package_archive(root: &Path, package: &str, version: &str) -> PathBuf {
+    root.join("target/package")
+        .join(format!("{package}-{version}.crate"))
 }
 
 fn run(command: &mut Command, label: &str) -> Result<(), Box<dyn std::error::Error>> {

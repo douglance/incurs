@@ -2,7 +2,7 @@
 
 A Rust implementation of [wevm/incur](https://github.com/wevm/incur), the CLI framework for humans and agents.
 
-Define a command once and expose the same validated behavior through CLI, HTTP, MCP, OpenAPI, skill files, and shell completions. The vendored TypeScript 0.4.17 implementation is the behavioral oracle; Rust-only extensions are opt-in.
+Define a command once and expose the same validated behavior through CLI, HTTP, MCP, OpenAPI, Agent Plugin packages, skill files, and shell completions. The vendored TypeScript 0.4.17 implementation is the behavioral oracle; Rust-only extensions are opt-in.
 
 ## Status
 
@@ -17,6 +17,7 @@ and provider-neutral Code Mode runtime. Version 0.5 requires Rust 1.88 or newer.
 | HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
 | MCP 2024-11-05 through 2026-07-28, progressive/direct discovery and calls | Exact standard profiles with `rmcp` 3 |
 | OpenAPI, skills and shell completions | Generated from the shared command graph |
+| Agent Plugins 1.0 | Portable `plugin.json`, Agent Skills, and optional `mcp.json` output |
 | Durable Code Mode | Platform-neutral Rust lifecycle with local sandbox execution |
 | Typed args, options, env and output | `CommandDef::typed` plus derive macros |
 | Rust and JSON generation | `incurs gen` |
@@ -104,6 +105,67 @@ The command writes deterministic artifacts:
 - `config.schema.json`: optional configuration schema
 
 Use `--output` and `--json-output` to override the first two paths. `--entry` accepts a Cargo binary name or an executable path.
+
+### Agent Plugin packages
+
+Build an [Agent Plugins 1.0](https://agent-plugins.org/specification) directory from the same complete command graph:
+
+```bash
+my-cli plugin build --bundle-cli --output ./dist/my-cli-plugin
+```
+
+Or add it to the normal code-generation pass:
+
+```bash
+cargo run -p incurs-cli -- gen \
+  --dir ./my-cli \
+  --entry my-cli \
+  --plugin-output ./dist/my-cli-plugin \
+  --plugin-bundle-cli
+```
+
+The publisher keeps each layer explicit: `skills/<name>/SKILL.md` files are Prompt Artifacts, root `mcp.json` is the Tool Binding, and `bin/my-cli` is the target-specific Tool Runtime. The root `plugin.json` declares all three. Use `--plugin-no-mcp` for a skills-only package. Regeneration refuses to replace existing plugin artifacts unless you pass `--plugin-force`; the target command uses the equivalent `--force` option.
+
+Install the CLI, MCP server, and skills from that one directory:
+
+```bash
+incurs plugin install ./dist/my-cli-plugin
+```
+
+The installer validates the full package, checks its operating system and architecture, copies it into the user data directory, and installs its command into the user executable directory. It reports when that directory is not on `PATH` but never edits a shell profile. Native agent clients still control how they discover Agent Plugin directories; Incurs does not rewrite legacy agent configuration files.
+
+Remove the managed package and command while preserving its persistent data, or explicitly purge the data:
+
+```bash
+incurs plugin uninstall my-cli
+incurs plugin uninstall my-cli --purge
+```
+
+The standalone `incurs` binary also acts as an Agent Plugins 1.0 client. Validation is offline and reports fatal manifest failures separately from skipped skills and MCP servers:
+
+```bash
+incurs plugin validate ./dist/my-cli-plugin \
+  --data-dir "$HOME/.local/share/my-cli-plugin"
+```
+
+Connect valid stdio, Streamable HTTP, and legacy HTTP+SSE servers and inspect the resulting namespaced `ToolCatalog`:
+
+```bash
+incurs plugin tools ./dist/my-cli-plugin \
+  --data-dir "$HOME/.local/share/my-cli-plugin"
+```
+
+Call any discovered namespaced tool with a flat JSON object:
+
+```bash
+incurs plugin call ./dist/my-cli-plugin my-server_my-tool \
+  --arguments '{"name":"Ada"}' \
+  --data-dir "$HOME/.local/share/my-cli-plugin"
+```
+
+Each MCP server connects independently, so one connection, authentication, or handshake failure does not hide tools from other servers. The explicit data directory is created before launch, persists across runs, and is never removed by the runtime. Configured HTTP headers are visible configuration rather than a secret store. The stdio runtime launches exact argv without a shell and does not claim to sandbox the subprocess.
+
+Library consumers can enable `agent-plugins` for offline loading or `agent-plugins-mcp` for loading plus all three MCP transports. See [Agent Plugins compatibility](docs/agent-plugins.md) for the complete behavior and failure-boundary matrix.
 
 ## Rust-only extensions
 

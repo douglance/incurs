@@ -1,9 +1,12 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::{Map, Value, json};
+
+mod plugin_install;
 
 #[derive(Debug)]
 struct GenOptions {
@@ -12,12 +15,48 @@ struct GenOptions {
     output: Option<PathBuf>,
     json_output: Option<PathBuf>,
     config_schema: bool,
+    plugin_output: Option<PathBuf>,
+    plugin_skill_depth: usize,
+    plugin_mcp: bool,
+    plugin_bundle_cli: bool,
+    plugin_force: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PluginAction {
+    Validate,
+    Tools,
+    Call,
+}
+
+#[derive(Debug)]
+struct PluginOptions {
+    action: PluginAction,
+    root: PathBuf,
+    data_dir: PathBuf,
+    tool: Option<String>,
+    arguments: BTreeMap<String, Value>,
 }
 
 fn main() {
     let args = env::args().skip(1).collect::<Vec<_>>();
     let result = match args.first().map(String::as_str) {
         Some("gen") => parse_gen(&args[1..]).and_then(generate),
+        Some("plugin")
+            if args
+                .get(1)
+                .is_none_or(|arg| matches!(arg.as_str(), "--help" | "-h")) =>
+        {
+            print_plugin_help();
+            Ok(())
+        }
+        Some("plugin") if args.get(1).is_some_and(|arg| arg == "install") => {
+            run_plugin_install_command(&args[2..])
+        }
+        Some("plugin") if args.get(1).is_some_and(|arg| arg == "uninstall") => {
+            run_plugin_uninstall_command(&args[2..])
+        }
+        Some("plugin") => parse_plugin(&args[1..]).and_then(run_plugin),
         Some("--help" | "-h") | None => {
             print_help();
             Ok(())
@@ -33,8 +72,328 @@ fn main() {
 
 fn print_help() {
     println!(
-        "incurs - CLI for incurs\n\nUsage: incurs <command>\n\nCommands:\n  gen  Generate Rust command types and JSON manifests\n"
+        "incurs - CLI for incurs\n\nUsage: incurs <command>\n\nCommands:\n  gen     Generate Rust command types and JSON manifests\n  plugin  Validate or connect an Agent Plugins 1.0 directory\n"
     );
+}
+
+fn print_plugin_help() {
+    println!(
+        "Install, validate, connect, or call an Agent Plugins 1.0 directory.\n\nUsage:\n  incurs plugin install <path> [--bin-dir <path>] [--force]\n  incurs plugin uninstall <name> [--purge]\n  incurs plugin validate <path> --data-dir <path>\n  incurs plugin tools <path> --data-dir <path>\n  incurs plugin call <path> <tool> [--arguments <json>] --data-dir <path>\n\nCommands:\n  install    Install a portable plugin and its declared shell command\n  uninstall  Remove installer-owned plugin and command artifacts\n  validate   Load all fixed components and print diagnostics\n  tools      Connect every valid MCP server and print namespaced tools\n  call       Invoke one namespaced tool with flat JSON arguments\n\nOptions:\n  --arguments <json>  Flat JSON object passed to the selected tool\n  --bin-dir <path>    Managed user command directory\n  --data-dir <path>   Dedicated persistent writable directory for this plugin instance\n  --force             Replace artifacts owned by the same installed plugin\n  --purge             Remove persistent plugin data during uninstall\n"
+    );
+}
+
+fn run_plugin_install_command(args: &[String]) -> Result<(), String> {
+    let options = parse_plugin_install(
+        args,
+        plugin_install::default_data_home()?,
+        plugin_install::default_bin_dir()?,
+    )?;
+    let result = plugin_install::install(options)?;
+    if let Some(warning) = &result.warning {
+        eprintln!("Warning: {warning}");
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn run_plugin_uninstall_command(args: &[String]) -> Result<(), String> {
+    let options = parse_plugin_uninstall(args, plugin_install::default_data_home()?)?;
+    let result = plugin_install::uninstall(options)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn parse_plugin_install(
+    args: &[String],
+    data_home: PathBuf,
+    default_bin_dir: PathBuf,
+) -> Result<plugin_install::InstallOptions, String> {
+    let source = args
+        .first()
+        .filter(|value| !value.starts_with('-'))
+        .map(PathBuf::from)
+        .ok_or_else(|| "missing Agent Plugin path".to_string())?;
+    let mut bin_dir = default_bin_dir;
+    let mut force = false;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--bin-dir" => {
+                index += 1;
+                bin_dir = PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --bin-dir".to_string())?,
+                );
+            }
+            "--force" => force = true,
+            flag => return Err(format!("unknown plugin install option: {flag}")),
+        }
+        index += 1;
+    }
+    Ok(plugin_install::InstallOptions {
+        source,
+        data_home,
+        bin_dir,
+        force,
+    })
+}
+
+fn parse_plugin_uninstall(
+    args: &[String],
+    data_home: PathBuf,
+) -> Result<plugin_install::UninstallOptions, String> {
+    let name = args
+        .first()
+        .filter(|value| !value.starts_with('-'))
+        .cloned()
+        .ok_or_else(|| "missing installed plugin name".to_string())?;
+    let mut purge = false;
+    for flag in &args[1..] {
+        match flag.as_str() {
+            "--purge" => purge = true,
+            flag => return Err(format!("unknown plugin uninstall option: {flag}")),
+        }
+    }
+    Ok(plugin_install::UninstallOptions {
+        name,
+        data_home,
+        purge,
+    })
+}
+
+fn parse_plugin(args: &[String]) -> Result<PluginOptions, String> {
+    let action = match args.first().map(String::as_str) {
+        Some("validate") => PluginAction::Validate,
+        Some("tools") => PluginAction::Tools,
+        Some("call") => PluginAction::Call,
+        Some(action) => return Err(format!("unknown plugin action: {action}")),
+        None => return Err("missing plugin action: validate or tools".to_string()),
+    };
+    let root = args
+        .get(1)
+        .filter(|value| !value.starts_with('-'))
+        .map(PathBuf::from)
+        .ok_or_else(|| "missing Agent Plugin path".to_string())?;
+    let tool = if action == PluginAction::Call {
+        Some(
+            args.get(2)
+                .filter(|value| !value.starts_with('-'))
+                .cloned()
+                .ok_or_else(|| "missing namespaced tool name".to_string())?,
+        )
+    } else {
+        None
+    };
+    let mut data_dir = None;
+    let mut arguments = BTreeMap::new();
+    let mut index = if tool.is_some() { 3 } else { 2 };
+    while index < args.len() {
+        match args[index].as_str() {
+            "--data-dir" => {
+                index += 1;
+                data_dir = Some(PathBuf::from(
+                    args.get(index)
+                        .ok_or_else(|| "missing value for --data-dir".to_string())?,
+                ));
+            }
+            "--arguments" => {
+                index += 1;
+                let value = args
+                    .get(index)
+                    .ok_or_else(|| "missing value for --arguments".to_string())?;
+                arguments = serde_json::from_str(value)
+                    .map_err(|error| format!("invalid --arguments JSON object: {error}"))?;
+            }
+            flag => return Err(format!("unknown plugin option: {flag}")),
+        }
+        index += 1;
+    }
+    Ok(PluginOptions {
+        action,
+        root,
+        data_dir: data_dir.ok_or_else(|| "missing required --data-dir <path>".to_string())?,
+        tool,
+        arguments,
+    })
+}
+
+fn run_plugin(options: PluginOptions) -> Result<(), String> {
+    let load_options = incurs::agent_plugin::loader::AgentPluginLoadOptions {
+        plugin_data_root: options.data_dir,
+        ..Default::default()
+    };
+    let report = incurs::agent_plugin::loader::load_agent_plugin(&options.root, &load_options);
+    match options.action {
+        PluginAction::Validate => print_plugin_validation(report),
+        PluginAction::Tools => print_plugin_tools(report),
+        PluginAction::Call => print_plugin_call(
+            report,
+            options.tool.expect("call parser requires a tool"),
+            options.arguments,
+        ),
+    }
+}
+
+fn print_plugin_validation(
+    report: incurs::agent_plugin::loader::AgentPluginLoadReport,
+) -> Result<(), String> {
+    let diagnostics = report
+        .diagnostics
+        .iter()
+        .map(plugin_diagnostic_json)
+        .collect::<Vec<_>>();
+    let plugin = report.plugin.as_ref().map(|plugin| {
+        json!({
+            "dataDir": plugin.data_root,
+            "extensions": plugin.extensions.keys().collect::<Vec<_>>(),
+            "mcpServers": plugin.mcp_servers.keys().collect::<Vec<_>>(),
+            "name": plugin.manifest.name,
+            "root": plugin.root,
+            "skills": plugin.skills.iter().map(|skill| &skill.name).collect::<Vec<_>>(),
+            "version": plugin.manifest.version,
+        })
+    });
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "diagnostics": diagnostics,
+            "plugin": plugin,
+            "valid": report.plugin.is_some(),
+        }))
+        .map_err(|error| error.to_string())?
+    );
+    if report.plugin.is_none() {
+        return Err("Agent Plugin manifest is invalid".to_string());
+    }
+    Ok(())
+}
+
+fn print_plugin_tools(
+    report: incurs::agent_plugin::loader::AgentPluginLoadReport,
+) -> Result<(), String> {
+    let plugin = report
+        .plugin
+        .ok_or_else(|| format_plugin_diagnostics(&report.diagnostics))?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let connected = runtime
+        .block_on(incurs::agent_plugin_runtime::connect_agent_plugin(
+            &plugin,
+            &incurs::agent_plugin_runtime::AgentPluginRuntimeOptions::default(),
+        ))
+        .map_err(|error| error.to_string())?;
+    let servers = connected
+        .servers
+        .iter()
+        .map(|server| {
+            json!({
+                "error": server.error,
+                "name": server.name,
+                "toolCount": server.tool_count,
+                "transport": plugin_transport_name(server.transport),
+            })
+        })
+        .collect::<Vec<_>>();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "diagnostics": report.diagnostics.iter().map(plugin_diagnostic_json).collect::<Vec<_>>(),
+            "name": plugin.manifest.name,
+            "servers": servers,
+            "tools": connected.catalog.definitions(),
+        }))
+        .map_err(|error| error.to_string())?
+    );
+    Ok(())
+}
+
+fn print_plugin_call(
+    report: incurs::agent_plugin::loader::AgentPluginLoadReport,
+    tool: String,
+    arguments: BTreeMap<String, Value>,
+) -> Result<(), String> {
+    let plugin = report
+        .plugin
+        .ok_or_else(|| format_plugin_diagnostics(&report.diagnostics))?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let outcome = runtime.block_on(async {
+        let connected = incurs::agent_plugin_runtime::connect_agent_plugin(
+            &plugin,
+            &incurs::agent_plugin_runtime::AgentPluginRuntimeOptions::default(),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        if connected
+            .servers
+            .iter()
+            .all(|server| server.error.is_some())
+        {
+            return Err(connected
+                .servers
+                .iter()
+                .filter_map(|server| server.error.as_deref())
+                .collect::<Vec<_>>()
+                .join("; "));
+        }
+        Ok(connected
+            .catalog
+            .call(&tool, arguments, incurs::tool::ToolCallOptions::isolated())
+            .await)
+    })?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&outcome).map_err(|error| error.to_string())?
+    );
+    match outcome {
+        incurs::tool::ToolCallOutcome::Ok { .. } => Ok(()),
+        incurs::tool::ToolCallOutcome::Error { message, .. } => Err(message),
+    }
+}
+
+fn plugin_diagnostic_json(
+    diagnostic: &incurs::agent_plugin::loader::AgentPluginDiagnostic,
+) -> Value {
+    json!({
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "path": diagnostic.path,
+        "severity": match diagnostic.severity {
+            incurs::agent_plugin::loader::AgentPluginDiagnosticSeverity::Info => "info",
+            incurs::agent_plugin::loader::AgentPluginDiagnosticSeverity::Warning => "warning",
+            incurs::agent_plugin::loader::AgentPluginDiagnosticSeverity::Error => "error",
+        },
+    })
+}
+
+fn format_plugin_diagnostics(
+    diagnostics: &[incurs::agent_plugin::loader::AgentPluginDiagnostic],
+) -> String {
+    diagnostics
+        .iter()
+        .map(|diagnostic| format!("{}: {}", diagnostic.path, diagnostic.message))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn plugin_transport_name(
+    transport: incurs::agent_plugin::loader::AgentPluginMcpTransport,
+) -> &'static str {
+    match transport {
+        incurs::agent_plugin::loader::AgentPluginMcpTransport::Stdio => "stdio",
+        incurs::agent_plugin::loader::AgentPluginMcpTransport::StreamableHttp => "streamable-http",
+        incurs::agent_plugin::loader::AgentPluginMcpTransport::Sse => "sse",
+    }
 }
 
 fn parse_gen(args: &[String]) -> Result<GenOptions, String> {
@@ -44,18 +403,31 @@ fn parse_gen(args: &[String]) -> Result<GenOptions, String> {
         output: None,
         json_output: None,
         config_schema: false,
+        plugin_output: None,
+        plugin_skill_depth: 1,
+        plugin_mcp: true,
+        plugin_bundle_cli: false,
+        plugin_force: false,
     };
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--help" | "-h" => {
                 println!(
-                    "Generate Rust command types and JSON manifests.\n\nUsage: incurs gen [options]\n\nOptions:\n  --dir <path>          Cargo project root (default: .)\n  --entry <name|path>   Cargo binary name or executable path\n  --output <path>       Rust output (default: src/incurs_generated.rs)\n  --json-output <path>  JSON output (default: incurs.manifest.json)\n  --config-schema       Also generate config.schema.json\n"
+                    "Generate Rust command types and JSON manifests.\n\nUsage: incurs gen [options]\n\nOptions:\n  --dir <path>                   Cargo project root (default: .)\n  --entry <name|path>            Cargo binary name or executable path\n  --output <path>                Rust output (default: src/incurs_generated.rs)\n  --json-output <path>           JSON output (default: incurs.manifest.json)\n  --config-schema                Also generate config.schema.json\n  --plugin-output <path>         Also build an Agent Plugins 1.0 directory through the target CLI\n  --plugin-skill-depth <n>       Skill grouping depth (default: 1)\n  --plugin-bundle-cli            Bundle the target CLI as the plugin Tool Runtime\n  --plugin-no-mcp                Skip mcp.json generation\n  --plugin-force                 Replace existing owned plugin artifacts\n"
                 );
                 return Ok(options);
             }
             "--config-schema" => options.config_schema = true,
-            "--dir" | "--entry" | "--output" | "--json-output" => {
+            "--plugin-bundle-cli" => options.plugin_bundle_cli = true,
+            "--plugin-no-mcp" => options.plugin_mcp = false,
+            "--plugin-force" => options.plugin_force = true,
+            "--dir"
+            | "--entry"
+            | "--output"
+            | "--json-output"
+            | "--plugin-output"
+            | "--plugin-skill-depth" => {
                 let flag = args[index].clone();
                 index += 1;
                 let value = args
@@ -66,6 +438,12 @@ fn parse_gen(args: &[String]) -> Result<GenOptions, String> {
                     "--entry" => options.entry = Some(value.clone()),
                     "--output" => options.output = Some(PathBuf::from(value)),
                     "--json-output" => options.json_output = Some(PathBuf::from(value)),
+                    "--plugin-output" => options.plugin_output = Some(PathBuf::from(value)),
+                    "--plugin-skill-depth" => {
+                        options.plugin_skill_depth = value
+                            .parse::<usize>()
+                            .map_err(|_| format!("invalid value for {flag}: {value}"))?
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -129,6 +507,36 @@ fn generate(options: GenOptions) -> Result<(), String> {
                 + "\n"),
         )?;
         result.insert("configSchema".to_string(), json!(schema_output));
+    }
+
+    if let Some(plugin_output) = options.plugin_output {
+        let plugin_root = resolve_output(&dir, Some(plugin_output), PathBuf::from("agent-plugin"));
+        let mut args = vec![
+            "plugin".to_string(),
+            "build".to_string(),
+            "--output".to_string(),
+            plugin_root.to_string_lossy().to_string(),
+            "--depth".to_string(),
+            options.plugin_skill_depth.to_string(),
+        ];
+        if !options.plugin_mcp {
+            args.push("--no-mcp".to_string());
+        }
+        if options.plugin_bundle_cli {
+            args.push("--bundle-cli".to_string());
+        }
+        if options.plugin_force {
+            args.push("--force".to_string());
+        }
+        let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+        let output = run_target(&dir, options.entry.as_deref(), &arg_refs)?;
+        if !output.status.success() {
+            return Err(format!(
+                "target could not build Agent Plugin: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        result.insert("plugin".to_string(), json!(plugin_root));
     }
 
     println!(
@@ -506,5 +914,113 @@ mod tests {
             serde_json::to_string(&value).unwrap(),
             r#"{"a":{"a":3,"z":2},"z":1}"#
         );
+    }
+
+    #[test]
+    fn parse_gen_accepts_agent_plugin_options() {
+        let args = vec![
+            "--plugin-output".to_string(),
+            "dist/plugin".to_string(),
+            "--plugin-skill-depth".to_string(),
+            "2".to_string(),
+            "--plugin-no-mcp".to_string(),
+            "--plugin-bundle-cli".to_string(),
+            "--plugin-force".to_string(),
+        ];
+
+        let options = parse_gen(&args).unwrap();
+
+        assert_eq!(options.plugin_output, Some(PathBuf::from("dist/plugin")));
+        assert_eq!(options.plugin_skill_depth, 2);
+        assert!(!options.plugin_mcp);
+        assert!(options.plugin_bundle_cli);
+        assert!(options.plugin_force);
+    }
+
+    #[test]
+    fn parse_gen_rejects_removed_agent_plugin_metadata_options() {
+        let error = parse_gen(&["--plugin-name".to_string(), "demo".to_string()]).unwrap_err();
+
+        assert_eq!(error, "unknown option: --plugin-name");
+    }
+
+    #[test]
+    fn parse_plugin_requires_a_dedicated_data_directory() {
+        let error = parse_plugin(&["validate".to_string(), "./demo".to_string()]).unwrap_err();
+
+        assert_eq!(error, "missing required --data-dir <path>");
+    }
+
+    #[test]
+    fn parse_plugin_accepts_validate_and_tools_actions() {
+        for (action, expected) in [
+            ("validate", PluginAction::Validate),
+            ("tools", PluginAction::Tools),
+        ] {
+            let options = parse_plugin(&[
+                action.to_string(),
+                "./demo".to_string(),
+                "--data-dir".to_string(),
+                "./data".to_string(),
+            ])
+            .unwrap();
+
+            assert_eq!(options.root, PathBuf::from("./demo"));
+            assert_eq!(options.data_dir, PathBuf::from("./data"));
+            assert_eq!(options.action, expected);
+            assert!(options.tool.is_none());
+            assert!(options.arguments.is_empty());
+        }
+    }
+
+    #[test]
+    fn parse_plugin_accepts_call_arguments() {
+        let options = parse_plugin(&[
+            "call".to_string(),
+            "./demo".to_string(),
+            "server_ping".to_string(),
+            "--arguments".to_string(),
+            r#"{"message":"hello"}"#.to_string(),
+            "--data-dir".to_string(),
+            "./data".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(options.action, PluginAction::Call);
+        assert_eq!(options.tool.as_deref(), Some("server_ping"));
+        assert_eq!(options.arguments["message"], "hello");
+    }
+
+    #[test]
+    fn parse_plugin_install_accepts_managed_locations_and_force() {
+        let options = parse_plugin_install(
+            &[
+                "./demo".to_string(),
+                "--bin-dir".to_string(),
+                "./commands".to_string(),
+                "--force".to_string(),
+            ],
+            PathBuf::from("./data-home"),
+            PathBuf::from("./default-bin"),
+        )
+        .unwrap();
+
+        assert_eq!(options.source, PathBuf::from("./demo"));
+        assert_eq!(options.data_home, PathBuf::from("./data-home"));
+        assert_eq!(options.bin_dir, PathBuf::from("./commands"));
+        assert!(options.force);
+    }
+
+    #[test]
+    fn parse_plugin_uninstall_accepts_purge() {
+        let options = parse_plugin_uninstall(
+            &["demo-tools".to_string(), "--purge".to_string()],
+            PathBuf::from("./data-home"),
+        )
+        .unwrap();
+
+        assert_eq!(options.name, "demo-tools");
+        assert_eq!(options.data_home, PathBuf::from("./data-home"));
+        assert!(options.purge);
     }
 }
