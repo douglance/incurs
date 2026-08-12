@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use incurs::cli::Cli;
 use incurs::command::{CommandDef, TypedContext, TypedResult};
@@ -59,6 +60,28 @@ fn runtime(sender: Option<mpsc::Sender<()>>) -> ToolCatalogRemoteRuntime {
         Cli::create("fixture")
             .version("1.2.3")
             .command("echo", command)
+            .tool_catalog(),
+    )
+}
+
+fn blocking_runtime(sender: mpsc::Sender<()>) -> ToolCatalogRemoteRuntime {
+    let command = CommandDef::typed::<(), (), (), EchoOutput, _, _>("block", move |_| {
+        let sender = sender.clone();
+        async move {
+            sender.send(()).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            TypedResult::ok(EchoOutput {
+                message: "done".to_string(),
+                method: String::new(),
+                path: String::new(),
+            })
+        }
+    })
+    .description("Block until cancelled")
+    .done();
+    ToolCatalogRemoteRuntime::new(
+        Cli::create("fixture")
+            .command("block", command)
             .tool_catalog(),
     )
 }
@@ -182,6 +205,59 @@ async fn expired_deadline_prevents_catalog_invocation() {
     assert!(receiver.try_recv().is_err());
 }
 
+#[tokio::test]
+async fn active_deadline_cancels_catalog_invocation() {
+    let (sender, mut receiver) = mpsc::channel(1);
+    let mut call = RemoteToolCall::new("call-5", "block");
+    call.deadline_ms = Some(now_unix_ms() + 20);
+    let runtime = blocking_runtime(sender);
+
+    let result = runtime.call(call, RemoteToolControl::default()).await;
+
+    receiver.try_recv().unwrap();
+    match result {
+        RemoteToolResult::Error {
+            call_id,
+            error,
+            duration_ms,
+            ..
+        } => {
+            assert_eq!(call_id, "call-5");
+            assert_eq!(error.code, "DEADLINE_EXCEEDED");
+            assert!(duration_ms < 1_000);
+        }
+        other => panic!("expected deadline error, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn caller_cancellation_still_cancels_active_catalog_invocation() {
+    let (sender, mut receiver) = mpsc::channel(1);
+    let cancellation = CancellationToken::new();
+    let runtime = blocking_runtime(sender);
+    let control = RemoteToolControl {
+        cancellation: cancellation.clone(),
+        events: None,
+    };
+
+    let task = tokio::spawn(async move {
+        runtime
+            .call(RemoteToolCall::new("call-6", "block"), control)
+            .await
+    });
+    receiver.recv().await.unwrap();
+    cancellation.cancel();
+    let result = task.await.unwrap();
+
+    match result {
+        RemoteToolResult::Error { call_id, error, .. } => {
+            assert_eq!(call_id, "call-6");
+            assert_eq!(error.code, "CANCELLED");
+        }
+        other => panic!("expected cancellation error, got {other:?}"),
+    }
+}
+
 #[test]
 fn remote_call_and_result_serialize_artifact_handles() {
     let artifact = ArtifactHandle {
@@ -212,4 +288,11 @@ fn remote_call_and_result_serialize_artifact_handles() {
     assert_eq!(encoded["status"], "ok");
     assert_eq!(encoded["duration_ms"], 7);
     assert_eq!(encoded["artifacts"][0]["media_type"], "application/json");
+}
+
+fn now_unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }

@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use incurs::command::{McpAnnotations, McpResultContent, RequestContext};
@@ -388,6 +388,7 @@ impl RemoteToolRuntime for ToolCatalogRemoteRuntime {
         let RemoteToolCall {
             call_id,
             capability,
+            deadline_ms,
             arguments,
             request,
             artifacts,
@@ -401,23 +402,43 @@ impl RemoteToolRuntime for ToolCatalogRemoteRuntime {
                 artifacts,
             );
         };
-        let outcome = self
-            .catalog
-            .call(
-                &capability,
-                arguments,
-                ToolCallOptions {
-                    environment: self.options.environment.clone(),
-                    config: self.options.config.clone(),
-                    globals: self.options.globals.clone(),
-                    request: Some(request.to_request_context()),
-                    control: ToolCallControl {
-                        cancellation: control.cancellation,
-                        events: control.events,
-                    },
+        let cancellation = control.cancellation.child_token();
+        let outcome = self.catalog.call(
+            &capability,
+            arguments,
+            ToolCallOptions {
+                environment: self.options.environment.clone(),
+                config: self.options.config.clone(),
+                globals: self.options.globals.clone(),
+                request: Some(request.to_request_context()),
+                control: ToolCallControl {
+                    cancellation: cancellation.clone(),
+                    events: control.events,
                 },
-            )
-            .await;
+            },
+        );
+        tokio::pin!(outcome);
+        let outcome = if let Some(deadline_ms) = deadline_ms {
+            tokio::select! {
+                _ = control.cancellation.cancelled() => {
+                    cancellation.cancel();
+                    return remote_error(call_id, cancelled_error(), elapsed_ms(started_at), artifacts);
+                }
+                _ = sleep_until(deadline_ms) => {
+                    cancellation.cancel();
+                    return remote_error(call_id, deadline_error(), elapsed_ms(started_at), artifacts);
+                }
+                outcome = &mut outcome => outcome,
+            }
+        } else {
+            tokio::select! {
+                _ = control.cancellation.cancelled() => {
+                    cancellation.cancel();
+                    return remote_error(call_id, cancelled_error(), elapsed_ms(started_at), artifacts);
+                }
+                outcome = &mut outcome => outcome,
+            }
+        };
         match outcome {
             ToolCallOutcome::Ok { data, cta } => RemoteToolResult::Ok {
                 call_id,
@@ -490,6 +511,13 @@ fn now_unix_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+async fn sleep_until(deadline_ms: u64) {
+    tokio::time::sleep(Duration::from_millis(
+        deadline_ms.saturating_sub(now_unix_ms()),
+    ))
+    .await;
 }
 
 fn elapsed_ms(started_at: u64) -> u64 {
