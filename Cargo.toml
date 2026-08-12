@@ -4,6 +4,7 @@ members = [
   "crates/incurs-codemode",
   "crates/incurs-codemode-local",
   "crates/incurs-codemode-mcp",
+  "crates/incurs-remote",
   "crates/incurs-mcp-protocol",
   "crates/incurs-macros",
   "crates/incurs-cli",
