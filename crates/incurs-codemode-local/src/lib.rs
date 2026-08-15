@@ -1,7 +1,8 @@
 //! Native QuickJS execution adapter for incurs Code Mode.
 
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use incurs_codemode::{
@@ -14,6 +15,9 @@ use rquickjs::{AsyncContext, AsyncRuntime, Function, Promise};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
+
+const CODE_EXECUTION_TIMEOUT: &str =
+    "CODE_EXECUTION_TIMEOUT: maximum uninterrupted JavaScript execution interval exceeded";
 
 /// Resource limits for one local QuickJS execution pass.
 #[derive(Debug, Clone)]
@@ -301,9 +305,19 @@ impl CodeExecutor for LocalExecutor {
         let runtime = AsyncRuntime::new().map_err(js_error)?;
         runtime.set_memory_limit(self.options.memory_limit).await;
         runtime.set_max_stack_size(self.options.stack_size).await;
-        let deadline = Instant::now() + self.options.timeout;
+        let timeout = self.options.timeout;
+        let deadline = Arc::new(Mutex::new(Instant::now() + timeout));
+        let timed_out = Arc::new(AtomicBool::new(false));
+        let interrupt_deadline = Arc::clone(&deadline);
+        let interrupt_timed_out = Arc::clone(&timed_out);
         runtime
-            .set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)))
+            .set_interrupt_handler(Some(Box::new(move || {
+                if Instant::now() < *interrupt_deadline.lock().unwrap() {
+                    return false;
+                }
+                interrupt_timed_out.store(true, Ordering::SeqCst);
+                true
+            })))
             .await;
         let context = AsyncContext::full(&runtime).await.map_err(js_error)?;
         let program = build_program_source(
@@ -323,11 +337,18 @@ impl CodeExecutor for LocalExecutor {
         context
             .async_with(async move |context| {
                 let dispatch_host = Arc::clone(&host);
+                let dispatch_deadline = Arc::clone(&deadline);
                 let dispatch = Function::new(
                     context.clone(),
                     Async(move |payload: String| {
                         let host = Arc::clone(&dispatch_host);
-                        async move { dispatch(&host, &payload).await }
+                        let deadline = Arc::clone(&dispatch_deadline);
+                        async move {
+                            renew_deadline(&deadline, timeout);
+                            let response = dispatch(&host, &payload).await;
+                            renew_deadline(&deadline, timeout);
+                            response
+                        }
                     }),
                 )
                 .map_err(js_error)?;
@@ -335,12 +356,21 @@ impl CodeExecutor for LocalExecutor {
                     .globals()
                     .set("__incursDispatch", dispatch)
                     .map_err(js_error)?;
-                let promise = context.eval::<Promise<'_>, _>(source).map_err(js_error)?;
-                let output = promise.into_future::<String>().await.map_err(js_error)?;
+                let promise = context
+                    .eval::<Promise<'_>, _>(source)
+                    .map_err(|error| js_execution_error(error, &timed_out))?;
+                let output = promise
+                    .into_future::<String>()
+                    .await
+                    .map_err(|error| js_execution_error(error, &timed_out))?;
                 serde_json::from_str(&output).map_err(|error| error.to_string())
             })
             .await
     }
+}
+
+fn renew_deadline(deadline: &Mutex<Instant>, timeout: Duration) {
+    *deadline.lock().unwrap() = Instant::now() + timeout;
 }
 
 #[derive(Deserialize)]
@@ -399,6 +429,14 @@ fn js_error(error: rquickjs::Error) -> String {
     error.to_string()
 }
 
+fn js_execution_error(error: rquickjs::Error, timed_out: &AtomicBool) -> String {
+    if timed_out.load(Ordering::SeqCst) {
+        CODE_EXECUTION_TIMEOUT.to_string()
+    } else {
+        error.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -428,6 +466,8 @@ mod tests {
     struct IncurSum;
 
     struct ContextConnector;
+
+    struct DelayConnector;
 
     #[async_trait::async_trait]
     impl CommandHandler for IncurSum {
@@ -601,6 +641,47 @@ mod tests {
         }
     }
 
+    #[async_trait::async_trait]
+    impl Connector for DelayConnector {
+        async fn describe(&self) -> Result<ConnectorDescription, String> {
+            Ok(ConnectorDescription {
+                name: "delay".to_string(),
+                instructions: None,
+                tools: vec![ConnectorTool {
+                    name: "sleep".to_string(),
+                    description: None,
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": {"ms": {"type": "integer"}},
+                        "required": ["ms"]
+                    }),
+                    output_schema: None,
+                    instructions: None,
+                    examples: Vec::new(),
+                    annotations: ToolAnnotations {
+                        read_only: Some(true),
+                        ..ToolAnnotations::default()
+                    },
+                    policy: incurs_codemode::ToolPolicy {
+                        requires_approval: false,
+                        replay: ReplayPolicy::Reexecute,
+                    },
+                }],
+            })
+        }
+
+        async fn execute(
+            &self,
+            _method: &str,
+            arguments: Value,
+            _context: &ToolContext,
+        ) -> Result<Value, String> {
+            let ms = arguments["ms"].as_u64().unwrap();
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            Ok(json!({"slept": ms}))
+        }
+    }
+
     struct WaitingConnector;
 
     #[async_trait::async_trait]
@@ -751,6 +832,46 @@ mod tests {
         let execution = codemode.execute("while (true) {}").await.unwrap();
 
         assert_eq!(execution.status, ExecutionStatus::Error);
+        assert_eq!(
+            execution.error.as_deref(),
+            Some(
+                "CODE_EXECUTION_TIMEOUT: maximum uninterrupted JavaScript execution interval exceeded"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn host_calls_renew_local_execution_timeout() {
+        let codemode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            LocalExecutor::new(LocalExecutorOptions {
+                timeout: Duration::from_millis(25),
+                ..LocalExecutorOptions::default()
+            }),
+            vec![Arc::new(DelayConnector)],
+        );
+        let execution = codemode
+            .execute(
+                "const result = await delay.sleep({ ms: 75 }); \
+                 let total = 0; \
+                 for (let i = 0; i < 10_000; i++) total += i; \
+                 return { result, total };",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            execution.status,
+            ExecutionStatus::Completed,
+            "{execution:?}"
+        );
+        assert_eq!(
+            execution.result,
+            Some(json!({
+                "result": {"slept": 75},
+                "total": 49_995_000
+            }))
+        );
     }
 
     #[tokio::test]

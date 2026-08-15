@@ -29,6 +29,12 @@ Run the complete local example:
 cargo run -p incurs-codemode-local --example local
 ```
 
-`LocalExecutorOptions` bounds execution time, QuickJS heap usage, and stack
-size. Replace `MemoryStore` with another `RuntimeStore` when local executions
-must survive process restarts.
+`LocalExecutorOptions` bounds uninterrupted JavaScript execution time, QuickJS
+heap usage, and stack size. The local executor renews the JavaScript timeout
+immediately before a host dispatch and after every host completion, so slow
+connector work does not consume the QuickJS runaway-loop budget. Replace
+`MemoryStore` with another `RuntimeStore` when local executions must survive
+process restarts.
+
+Runaway JavaScript terminates the pass with this stable error contract:
+`CODE_EXECUTION_TIMEOUT: maximum uninterrupted JavaScript execution interval exceeded`.
