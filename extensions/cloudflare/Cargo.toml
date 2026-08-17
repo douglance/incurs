@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "crates/incurs-mcp-cloudflare",
   "crates/incurs-codemode-cloudflare",
   "examples/codemode-worker",
 ]

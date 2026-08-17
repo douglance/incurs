@@ -1,0 +1,18 @@
+[package]
+name = "incurs-mcp-cloudflare"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Stateless Cloudflare Streamable HTTP MCP adapter for incurs ToolCatalog"
+repository = "https://github.com/douglance/incurs"
+readme = "README.md"
+
+[dependencies]
+incurs = { path = "../../../../crates/incurs", version = "0.5.0", default-features = false }
+incurs-mcp-protocol = { path = "../../../../crates/incurs-mcp-protocol", version = "0.1.0" }
+serde_json = "1"
+
+[dev-dependencies]
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt"] }

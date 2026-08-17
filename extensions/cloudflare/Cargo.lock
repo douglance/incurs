@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "incurs"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1066,6 +1066,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "incurs-mcp-cloudflare"
+version = "0.1.0"
+dependencies = [
+ "incurs",
+ "incurs-mcp-protocol",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
