@@ -69,6 +69,7 @@ pub async fn connect_agent_plugin(
     std::fs::create_dir_all(&plugin.data_root)?;
     let remote = McpRemoteOptions {
         standards: options.standards.clone(),
+        ..McpRemoteOptions::default()
     };
     let mut cli = Cli::create(plugin.manifest.name.clone());
     let mut servers = Vec::with_capacity(plugin.mcp_servers.len());

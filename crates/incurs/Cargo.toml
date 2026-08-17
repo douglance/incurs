@@ -1,6 +1,6 @@
 [package]
 name = "incurs"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 rust-version = "1.88"
 description = "A declarative CLI framework for Rust with typed commands, agent discovery, HTTP, and MCP"
@@ -47,7 +47,7 @@ tokens = ["tiktoken-rs"]
 yaml = ["serde_yaml_ng"]
 agent-plugins = ["yaml", "dep:url", "dep:http"]
 agent-plugins-mcp = ["agent-plugins", "mcp", "dep:reqwest", "dep:sse-stream", "rmcp/transport-child-process", "tokio/process", "tokio/rt-multi-thread", "tokio/time"]
-http = ["axum", "axum-streams", "tower", "tower-http", "hyper", "yaml", "tokio/net"]
+http = ["axum", "axum-streams", "tower", "tower-http", "hyper", "yaml", "tokio/net", "dep:http"]
 mcp = ["rmcp", "tokio/io-std", "tokio/io-util"]
 openapi = ["oas3", "openapiv3", "dep:reqwest", "yaml"]
 

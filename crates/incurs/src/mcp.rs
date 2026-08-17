@@ -87,6 +87,24 @@ pub struct McpServeOptions {
 pub struct McpRemoteOptions {
     /// Exact MCP standards the client accepts, in preference order.
     pub standards: incurs_mcp_protocol::McpStandardSet,
+    /// Bearer token sent as `Authorization: Bearer <token>`.
+    ///
+    /// Supply the token alone, without the `Bearer ` prefix. Most private remote
+    /// servers need nothing more than this.
+    pub auth_token: Option<String>,
+    /// Additional headers sent with every request, as `(name, value)` pairs.
+    ///
+    /// Plain strings rather than `http` types so this stays usable without
+    /// taking a dependency on a specific `http` version. Malformed names or
+    /// values are reported when the transport is built.
+    pub headers: Vec<(String, String)>,
+}
+
+impl McpRemoteOptions {
+    /// Options carrying only a bearer token.
+    pub fn bearer(token: impl Into<String>) -> Self {
+        Self { auth_token: Some(token.into()), ..Self::default() }
+    }
 }
 
 #[cfg(feature = "mcp")]
@@ -227,9 +245,52 @@ pub async fn remote_commands_with(
     options: &McpRemoteOptions,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
     use rmcp::transport::StreamableHttpClientTransport;
+    use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 
-    remote_commands_from_transport(StreamableHttpClientTransport::from_uri(uri.into()), options)
-        .await
+    let mut config = StreamableHttpClientTransportConfig::with_uri(uri.into());
+    if let Some(token) = &options.auth_token {
+        config = config.auth_header(token.clone());
+    }
+    if !options.headers.is_empty() {
+        config = config.custom_headers(remote_header_map(&options.headers)?);
+    }
+
+    remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options).await
+}
+
+/// Converts plain `(name, value)` pairs into the transport's header map.
+///
+/// Reports the offending header by name, since a rejected header is otherwise
+/// indistinguishable from an authentication failure at the far end.
+#[cfg(all(feature = "mcp", feature = "http"))]
+fn remote_header_map(
+    headers: &[(String, String)],
+) -> Result<std::collections::HashMap<http::HeaderName, http::HeaderValue>, crate::errors::Error> {
+    let mut map = std::collections::HashMap::with_capacity(headers.len());
+    for (name, value) in headers {
+        let header = http::HeaderName::try_from(name.as_str()).map_err(|error| {
+            crate::errors::Error::Incur(crate::errors::IncurError {
+                message: format!("`{name}` is not a valid header name"),
+                code: "INVALID_HEADER".to_string(),
+                hint: None,
+                retryable: false,
+                exit_code: None,
+                cause: Some(Box::new(error)),
+            })
+        })?;
+        let parsed = http::HeaderValue::from_str(value).map_err(|error| {
+            crate::errors::Error::Incur(crate::errors::IncurError {
+                message: format!("the value for header `{name}` is not valid"),
+                code: "INVALID_HEADER".to_string(),
+                hint: None,
+                retryable: false,
+                exit_code: None,
+                cause: Some(Box::new(error)),
+            })
+        })?;
+        map.insert(header, parsed);
+    }
+    Ok(map)
 }
 
 #[cfg(feature = "mcp")]
@@ -1894,5 +1955,43 @@ mod tests {
             progressive.structured_content.unwrap()["options"]["profile"],
             "configured"
         );
+    }
+
+    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[test]
+    fn remote_header_map_converts_valid_pairs() {
+        let headers = vec![
+            ("x-temper-machine".to_string(), "mac-1".to_string()),
+            ("x-trace".to_string(), "abc123".to_string()),
+        ];
+        let map = super::remote_header_map(&headers).expect("valid headers convert");
+        assert_eq!(map.len(), 2);
+        assert_eq!(
+            map.get(&http::HeaderName::from_static("x-temper-machine"))
+                .map(|value| value.to_str().unwrap()),
+            Some("mac-1"),
+        );
+    }
+
+    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[test]
+    fn remote_header_map_names_the_offending_header() {
+        // A rejected header would otherwise be indistinguishable from an auth
+        // failure at the far end, so the error has to say which one.
+        let error = super::remote_header_map(&[("bad name".to_string(), "v".to_string())])
+            .expect_err("a space is not valid in a header name");
+        assert!(error.to_string().contains("bad name"), "got: {error}");
+
+        let error = super::remote_header_map(&[("x-ok".to_string(), "bad\nvalue".to_string())])
+            .expect_err("a newline is not valid in a header value");
+        assert!(error.to_string().contains("x-ok"), "got: {error}");
+    }
+
+    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[test]
+    fn bearer_options_carry_only_a_token() {
+        let options = super::McpRemoteOptions::bearer("secret-token");
+        assert_eq!(options.auth_token.as_deref(), Some("secret-token"));
+        assert!(options.headers.is_empty());
     }
 }

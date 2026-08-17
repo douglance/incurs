@@ -98,14 +98,15 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     let cloudflare = root.join("extensions/cloudflare");
     let packages = vec![
         (root, "incurs-macros", "0.4.0"),
-        (root, "incurs", "0.5.2"),
+        (root, "incurs", "0.5.3"),
         (root, "incurs-cli", "0.5.1"),
         (root, "incurs-extras", "0.5.0"),
         (root, "incurs-codemode", "0.2.0"),
-        (root, "incurs-codemode-local", "0.2.0"),
+        (root, "incurs-codemode-local", "0.2.1"),
         (root, "incurs-codemode-mcp", "0.2.0"),
         (root, "incurs-mcp-protocol", "0.1.0"),
         (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.2.0"),
+        (cloudflare.as_path(), "incurs-mcp-cloudflare", "0.1.0"),
     ];
     for (package_root, package, version) in &packages {
         let archive = package_archive(package_root, package, version);
@@ -125,17 +126,21 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         ]),
         "package release workspace",
     )?;
-    let mut command = Command::new("cargo");
-    command.current_dir(&cloudflare);
-    command.args([
-        "package",
-        "-p",
-        "incurs-codemode-cloudflare",
-        "--allow-dirty",
-        "--no-verify",
-        "--locked",
-    ]);
-    run(&mut command, "package Cloudflare extension")?;
+    // The Cloudflare extension is its own workspace, so its members are packaged
+    // separately from the root `cargo package --workspace` above.
+    for package in ["incurs-codemode-cloudflare", "incurs-mcp-cloudflare"] {
+        let mut command = Command::new("cargo");
+        command.current_dir(&cloudflare);
+        command.args([
+            "package",
+            "-p",
+            package,
+            "--allow-dirty",
+            "--no-verify",
+            "--locked",
+        ]);
+        run(&mut command, &format!("package {package}"))?;
+    }
 
     let temp = env::temp_dir().join(format!("incurs-release-check-{}", std::process::id()));
     if temp.exists() {

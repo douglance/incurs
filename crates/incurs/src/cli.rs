@@ -455,12 +455,29 @@ impl Cli {
     /// Mounts tools from a remote MCP-over-HTTP server as a command group.
     #[cfg(all(feature = "mcp", feature = "http"))]
     pub async fn remote_mcp(
-        mut self,
+        self,
         name: impl Into<String>,
         uri: impl Into<String>,
         description: Option<String>,
     ) -> Result<Self, crate::errors::Error> {
-        let commands = crate::mcp::remote_commands(uri).await?;
+        self.remote_mcp_with(name, uri, description, &crate::mcp::McpRemoteOptions::default())
+            .await
+    }
+
+    /// Mounts tools from a remote MCP-over-HTTP server, with explicit standards
+    /// and authentication.
+    ///
+    /// Use this for a server behind a bearer token or custom headers; a private
+    /// remote ledger is the usual case.
+    #[cfg(all(feature = "mcp", feature = "http"))]
+    pub async fn remote_mcp_with(
+        mut self,
+        name: impl Into<String>,
+        uri: impl Into<String>,
+        description: Option<String>,
+        options: &crate::mcp::McpRemoteOptions,
+    ) -> Result<Self, crate::errors::Error> {
+        let commands = crate::mcp::remote_commands_with(uri, options).await?;
         let commands = commands
             .into_iter()
             .map(|(name, command)| (name, CommandEntry::Leaf(Arc::new(command))))
