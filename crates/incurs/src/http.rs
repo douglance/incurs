@@ -1037,6 +1037,70 @@ mod tests {
         assert_eq!(content["options"], serde_json::json!({}));
     }
 
+    #[cfg(feature = "mcp")]
+    #[tokio::test]
+    async fn test_mcp_result_mapper_preserves_structured_error_content() {
+        use crate::mcp::{
+            McpDiscovery, McpResultMapper, McpResultMapping, McpServeOptions, McpToolFilter,
+        };
+
+        async fn call(discovery: McpDiscovery) -> Value {
+            let mapper = McpResultMapper::new(|context| {
+                if context.tool.name == "echo"
+                    && matches!(context.outcome, crate::tool::ToolCallOutcome::Ok { .. })
+                {
+                    McpResultMapping::error()
+                } else {
+                    McpResultMapping::unchanged()
+                }
+            });
+            let mut command = make_echo_command("echo");
+            command.output_schema = Some(serde_json::json!({
+                "type": "object",
+                "properties": { "options": { "type": "object" } }
+            }));
+            let cli = Cli::create("test")
+                .mcp(McpServeOptions {
+                    tools: McpToolFilter {
+                        discovery,
+                        ..Default::default()
+                    },
+                    result_mapper: Some(mapper),
+                    ..Default::default()
+                })
+                .command("echo", command);
+            let params = if discovery == McpDiscovery::Direct {
+                serde_json::json!({ "name": "echo", "arguments": {} })
+            } else {
+                serde_json::json!({
+                    "name": "call_write_tool",
+                    "arguments": { "name": "echo", "arguments": {} }
+                })
+            };
+            let (_, called) = mcp_request(
+                &cli,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": params
+                }),
+            )
+            .await;
+            called["result"].clone()
+        }
+
+        for discovery in [McpDiscovery::Direct, McpDiscovery::Progressive] {
+            let result = call(discovery).await;
+            assert_eq!(result["isError"], true);
+            assert_eq!(
+                result["structuredContent"]["options"],
+                serde_json::json!({})
+            );
+            assert!(!result["content"].as_array().unwrap().is_empty());
+        }
+    }
+
     #[tokio::test]
     async fn test_get_command_with_query_params() {
         let state = make_test_state();

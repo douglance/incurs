@@ -5,6 +5,8 @@
 //! gated behind the `mcp` feature flag.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "mcp")]
+use std::sync::Arc;
 
 use crate::schema::FieldMeta;
 #[cfg(feature = "mcp")]
@@ -77,9 +79,84 @@ pub struct McpServeOptions {
     pub instructions: Option<String>,
     /// Tool discovery and filtering configuration.
     pub tools: McpToolFilter,
+    /// Optional application mapping applied after the default MCP result is rendered.
+    #[cfg(feature = "mcp")]
+    pub result_mapper: Option<McpResultMapper>,
     /// Exact MCP standards served concurrently. Preference order is used for
     /// legacy fallback and modern discovery.
     pub standards: incurs_mcp_protocol::McpStandardSet,
+}
+
+/// Context supplied when mapping a tool outcome to MCP result semantics.
+#[cfg(feature = "mcp")]
+#[derive(Debug, Clone, Copy)]
+pub struct McpResultContext<'a> {
+    /// Metadata for the tool that produced the outcome.
+    pub tool: &'a crate::tool::ToolDefinition,
+    /// Transport-neutral result returned by the tool catalog.
+    pub outcome: &'a crate::tool::ToolCallOutcome,
+}
+
+/// Overrides applied to the default MCP tool result.
+#[cfg(feature = "mcp")]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct McpResultMapping {
+    /// Overrides the MCP `isError` classification when present.
+    pub is_error: Option<bool>,
+}
+
+#[cfg(feature = "mcp")]
+impl McpResultMapping {
+    /// Preserves the framework's default MCP result classification.
+    pub fn unchanged() -> Self {
+        Self::default()
+    }
+
+    /// Classifies the MCP result as successful.
+    pub fn success() -> Self {
+        Self {
+            is_error: Some(false),
+        }
+    }
+
+    /// Classifies the MCP result as an error.
+    pub fn error() -> Self {
+        Self {
+            is_error: Some(true),
+        }
+    }
+}
+
+#[cfg(feature = "mcp")]
+type McpResultMapFn =
+    dyn for<'a> Fn(McpResultContext<'a>) -> McpResultMapping + Send + Sync + 'static;
+
+/// Application hook for refining MCP result semantics without replacing rendering.
+#[cfg(feature = "mcp")]
+#[derive(Clone)]
+pub struct McpResultMapper(Arc<McpResultMapFn>);
+
+#[cfg(feature = "mcp")]
+impl McpResultMapper {
+    /// Creates a mapper from a synchronous callback.
+    pub fn new(
+        mapper: impl for<'a> Fn(McpResultContext<'a>) -> McpResultMapping + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(mapper))
+    }
+
+    fn map(&self, context: McpResultContext<'_>) -> McpResultMapping {
+        (self.0)(context)
+    }
+}
+
+#[cfg(feature = "mcp")]
+impl std::fmt::Debug for McpResultMapper {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("McpResultMapper")
+            .finish_non_exhaustive()
+    }
 }
 
 /// Options for projecting a remote MCP server as incurs commands.
@@ -664,7 +741,7 @@ mod server {
         ToolCatalog, ToolDefinition, ToolEvent, ToolEventSink,
     };
 
-    use super::{McpDiscovery, McpServeOptions, McpToolFilter};
+    use super::{McpDiscovery, McpResultContext, McpServeOptions, McpToolFilter};
 
     // -----------------------------------------------------------------------
     // Tool resolution from the CLI command tree
@@ -672,6 +749,8 @@ mod server {
 
     /// A resolved tool metadata entry. Execution goes through [`ToolCatalog`].
     struct ResolvedTool {
+        /// Transport-neutral tool metadata supplied to result mappers.
+        definition: ToolDefinition,
         /// Tool name (path segments joined with `_`).
         name: String,
         /// Human-readable description.
@@ -690,6 +769,7 @@ mod server {
 
     fn tool_definition(definition: &ToolDefinition) -> ResolvedTool {
         ResolvedTool {
+            definition: definition.clone(),
             name: definition.name.clone(),
             description: definition.description.clone(),
             input_schema: Arc::new(
@@ -1148,8 +1228,9 @@ mod server {
         outcome: ToolCallOutcome,
         structured: bool,
         presentation: &[McpResultContent],
+        mapping: super::McpResultMapping,
     ) -> CallToolResult {
-        match outcome {
+        let mut result = match outcome {
             ToolCallOutcome::Ok { data, cta } => {
                 tool_result_success(name, data, cta, structured, presentation)
             }
@@ -1170,7 +1251,11 @@ mod server {
                 }
                 tool_result_error(name, text, cta)
             }
+        };
+        if let Some(is_error) = mapping.is_error {
+            result.is_error = Some(is_error);
         }
+        result
     }
 
     struct McpEventSink {
@@ -1227,6 +1312,8 @@ mod server {
         discovery: McpDiscovery,
         /// Exact standards enabled for this server.
         standards: incurs_mcp_protocol::McpStandardSet,
+        /// Optional application mapping for final MCP result semantics.
+        result_mapper: Option<super::McpResultMapper>,
     }
 
     impl IncurMcpServer {
@@ -1268,6 +1355,7 @@ mod server {
                 instructions: options.instructions.clone(),
                 discovery: options.tools.discovery,
                 standards: options.standards.clone(),
+                result_mapper: options.result_mapper.clone(),
             })
         }
     }
@@ -1417,6 +1505,7 @@ mod server {
             let catalog = self.catalog.clone();
             let server_name = self.server_name.clone();
             let discovery = self.discovery;
+            let result_mapper = self.result_mapper.clone();
             let progress_token = context.meta.get_progress_token();
             #[cfg(feature = "http")]
             let transport_request =
@@ -1486,11 +1575,21 @@ mod server {
                         },
                     )
                     .await;
+                let mapping = result_mapper
+                    .as_ref()
+                    .map(|mapper| {
+                        mapper.map(McpResultContext {
+                            tool: &tool.definition,
+                            outcome: &outcome,
+                        })
+                    })
+                    .unwrap_or_default();
                 Ok(tool_call_result(
                     &server_name,
                     outcome,
                     tool.output_schema.is_some(),
                     &tool.result_content,
+                    mapping,
                 )
                 .into())
             }
