@@ -25,6 +25,13 @@ than being served under rules the handler does not honour.
 
 Implementing the modern family here is real work, not a version bump.
 
+Tool annotations use MCP camelCase hints and omit unspecified values. Output
+schemas and structured results follow the shared `incurs-mcp-protocol::structured`
+projection: object outputs remain direct; other outputs use a marked `data`
+envelope. JSON text content retains the original value. Incurs clients restore
+the original contract when importing these tools; ordinary MCP clients consume
+the advertised object schema.
+
 ## Transport requirements
 
 A request must be a `POST` with `Content-Type: application/json` and an `Accept`

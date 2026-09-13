@@ -4,6 +4,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use incurs::command::{McpAnnotations, RequestContext};
 use incurs::tool::{ToolCallOptions, ToolCallOutcome, ToolCatalog, ToolDefinition};
+use incurs_mcp_protocol::structured::{
+    McpStructuredShape, project_output_schema, project_structured_content, projection_metadata,
+};
 use incurs_mcp_protocol::{McpLifecycleFamily, McpVersion, known_standard, known_standards};
 use serde_json::{Map, Value, json};
 
@@ -210,7 +213,11 @@ fn tool_definition(definition: ToolDefinition) -> Value {
     });
     let object = value.as_object_mut().expect("tool definition is an object");
     if let Some(schema) = definition.output_schema {
-        object.insert("outputSchema".to_string(), schema);
+        let projection = project_output_schema(&schema);
+        object.insert("outputSchema".to_string(), projection.schema);
+        if let Some(meta) = projection_metadata(projection.shape) {
+            object.insert("_meta".to_string(), Value::Object(meta));
+        }
     }
     if let Some(annotations) = definition.annotations {
         object.insert("annotations".to_string(), tool_annotations(annotations));
@@ -244,9 +251,13 @@ async fn call_tool(
     let params = params?;
     only_keys(params, &["name", "arguments", "_meta"])?;
     let name = string(params, "name")?;
-    if catalog.get(name).is_none() {
-        return Err(RpcFault::invalid_params(format!("Unknown tool: {name}")));
-    }
+    let definition = catalog
+        .get(name)
+        .ok_or_else(|| RpcFault::invalid_params(format!("Unknown tool: {name}")))?;
+    let shape = definition
+        .output_schema
+        .as_ref()
+        .map(|schema| project_output_schema(schema).shape);
     let arguments = match params.get("arguments") {
         Some(value) => value
             .as_object()
@@ -267,19 +278,41 @@ async fn call_tool(
         )
         .await;
     Ok(match outcome {
-        ToolCallOutcome::Ok { data, .. } => tool_result(data, false),
-        ToolCallOutcome::Error { code, message, .. } => {
-            tool_result(json!({"code": code, "message": message}), true)
-        }
+        ToolCallOutcome::Ok { data, .. } => tool_result(data, false, shape),
+        ToolCallOutcome::Error { code, message, .. } => tool_result(
+            json!({"code": code, "message": message}),
+            true,
+            Some(McpStructuredShape::Object),
+        ),
     })
 }
 
-fn tool_result(value: Value, is_error: bool) -> Value {
-    json!({
-        "content": [{"type": "text", "text": serde_json::to_string(&value).unwrap_or_default()}],
-        "structuredContent": value,
+fn tool_result(value: Value, is_error: bool, shape: Option<McpStructuredShape>) -> Value {
+    let text = serde_json::to_string(&value).unwrap_or_default();
+    let structured = match shape {
+        Some(shape) => match project_structured_content(value, shape) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                return tool_result(
+                    json!({"code":"INVALID_TOOL_OUTPUT", "message":error.to_string()}),
+                    true,
+                    Some(McpStructuredShape::Object),
+                );
+            }
+        },
+        None => value.is_object().then_some(value),
+    };
+    let mut result = json!({
+        "content": [{"type": "text", "text": text}],
         "isError": is_error
-    })
+    });
+    if let Some(value) = structured {
+        result["structuredContent"] = value;
+    }
+    if let Some(meta) = shape.and_then(projection_metadata) {
+        result["_meta"] = Value::Object(meta);
+    }
+    result
 }
 
 fn required_params(request: &Map<String, Value>) -> Result<&Map<String, Value>, RpcFault> {
@@ -540,6 +573,13 @@ mod tests {
         Cli::create("fixture")
             .version("1.2.3")
             .command("echo", command)
+            .command(
+                "values",
+                CommandDef::typed::<(), (), (), Vec<String>, _, _>("values", |_| async {
+                    TypedResult::ok(vec!["record".to_string()])
+                })
+                .done(),
+            )
             .tool_catalog()
     }
 
@@ -819,6 +859,56 @@ mod tests {
         assert_eq!(
             response.body.expect("body")["result"]["tools"][0]["annotations"],
             json!({})
+        );
+    }
+
+    #[tokio::test]
+    async fn array_output_has_object_schema_and_marked_structured_envelope() {
+        let catalog = catalog();
+        let listed = handle_mcp_request(
+            &catalog,
+            request(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})),
+            &McpHttpOptions::default(),
+        )
+        .await
+        .body
+        .expect("list body");
+        let definition = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "values")
+            .unwrap();
+        assert_eq!(definition["outputSchema"]["type"], "object");
+        assert_eq!(
+            definition["outputSchema"]["properties"]["data"]["type"],
+            "array"
+        );
+        assert!(definition["_meta"]["io.incurs.outputProjection"].is_object());
+        let response = handle_mcp_request(
+            &catalog,
+            request(
+                json!({"jsonrpc":"2.0","id":2,"method":"tools/call", "params":{"name":"values"}}),
+            ),
+            &McpHttpOptions::default(),
+        )
+        .await
+        .body
+        .expect("call body");
+        assert_eq!(
+            response["result"]["structuredContent"],
+            json!({"data":["record"]})
+        );
+        assert_eq!(response["result"]["content"][0]["text"], "[\"record\"]");
+        assert_eq!(response["result"]["_meta"], definition["_meta"]);
+        assert_eq!(
+            catalog
+                .get("values")
+                .unwrap()
+                .output_schema
+                .as_ref()
+                .unwrap()["type"],
+            "array"
         );
     }
 

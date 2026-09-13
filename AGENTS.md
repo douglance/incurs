@@ -55,6 +55,7 @@
 - **Builtin CLI behavior uses one active runtime path** — `serve()` and `serve_with()` are process adapters over `run_to()`. Implement and test built-in behavior through `run_to()`/`serve_to()` so process execution and integration tests cannot drift.
 - **MCP HTTP tests need a valid Host** — current `rmcp` validates hosts before request dispatch. Direct requests to the Rust MCP HTTP service must include a loopback `Host` header (for example, `localhost`) unless the test is specifically exercising DNS-rebinding rejection.
 - **MCP annotations use protocol field names** — serialize `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`, omitting unset hints. Internal Rust field names and null optional values are not the MCP wire contract.
+- **MCP output projection stays at the transport boundary** — use `incurs-mcp-protocol::structured` for object-root schemas/results and marked restoration. Keep ToolCatalog values unchanged, preserve JSON Schema references and resource boundaries, and test direct/progressive remote import round trips.
 
 ## Git Conventions
 

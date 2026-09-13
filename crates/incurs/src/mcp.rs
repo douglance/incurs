@@ -103,7 +103,10 @@ pub struct McpRemoteOptions {
 impl McpRemoteOptions {
     /// Options carrying only a bearer token.
     pub fn bearer(token: impl Into<String>) -> Self {
-        Self { auth_token: Some(token.into()), ..Self::default() }
+        Self {
+            auth_token: Some(token.into()),
+            ..Self::default()
+        }
     }
 }
 
@@ -192,14 +195,7 @@ impl crate::command::CommandHandler for RemoteToolHandler {
             .await;
         match result {
             Ok(result) if result.is_error != Some(true) => {
-                let data = result.structured_content.unwrap_or_else(|| {
-                    result
-                        .content
-                        .first()
-                        .and_then(|content| content.as_text())
-                        .and_then(|text| serde_json::from_str(&text.text).ok())
-                        .unwrap_or(Value::Null)
-                });
+                let data = remote_success_value(result);
                 crate::output::CommandResult::Ok {
                     data,
                     cta: None,
@@ -255,7 +251,8 @@ pub async fn remote_commands_with(
         config = config.custom_headers(remote_header_map(&options.headers)?);
     }
 
-    remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options).await
+    remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options)
+        .await
 }
 
 /// Converts plain `(name, value)` pairs into the transport's header map.
@@ -413,9 +410,12 @@ async fn project_remote_commands(
                     tool: name,
                 }),
                 middleware: Vec::new(),
-                output_schema: tool
-                    .output_schema
-                    .map(|schema| Value::Object((*schema).clone())),
+                output_schema: tool.output_schema.map(|schema| {
+                    incurs_mcp_protocol::structured::restore_output_schema(
+                        Value::Object((*schema).clone()),
+                        tool.meta.as_ref().map(|meta| &meta.0),
+                    )
+                }),
             },
         );
     }
@@ -487,14 +487,23 @@ fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, cra
                 .unwrap_or_else(|| "Remote MCP tool failed".to_string()),
         )));
     }
-    Ok(result.structured_content.unwrap_or_else(|| {
+    Ok(remote_success_value(result))
+}
+
+#[cfg(feature = "mcp")]
+fn remote_success_value(result: rmcp::model::CallToolResult) -> Value {
+    let value = result.structured_content.unwrap_or_else(|| {
         result
             .content
             .first()
             .and_then(|content| content.as_text())
             .and_then(|text| serde_json::from_str(&text.text).ok())
             .unwrap_or(Value::Null)
-    }))
+    });
+    incurs_mcp_protocol::structured::restore_structured_content(
+        value,
+        result.meta.as_ref().map(|meta| &meta.0),
+    )
 }
 
 #[cfg(feature = "mcp")]
@@ -643,6 +652,9 @@ mod server {
     use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
 
+    use incurs_mcp_protocol::structured::{
+        McpStructuredShape, project_output_schema, project_structured_content, projection_metadata,
+    };
     use serde_json::Value;
 
     use rmcp::ErrorData as McpError;
@@ -680,6 +692,8 @@ mod server {
         input_schema: Arc<serde_json::Map<String, Value>>,
         /// JSON Schema for structured MCP output when object-shaped.
         output_schema: Option<Arc<serde_json::Map<String, Value>>>,
+        /// MCP-only representation; the source catalog retains its original schema.
+        output_shape: Option<McpStructuredShape>,
         /// Behavioral annotations exposed to clients.
         annotations: Option<ToolAnnotations>,
         /// Tool-specific instructions exposed through metadata.
@@ -689,6 +703,7 @@ mod server {
     }
 
     fn tool_definition(definition: &ToolDefinition) -> ResolvedTool {
+        let projection = definition.output_schema.as_ref().map(project_output_schema);
         ResolvedTool {
             name: definition.name.clone(),
             description: definition.description.clone(),
@@ -699,10 +714,10 @@ mod server {
                     .cloned()
                     .unwrap_or_default(),
             ),
-            output_schema: definition
-                .output_schema
+            output_schema: projection
                 .as_ref()
-                .and_then(|schema| schema.as_object().cloned().map(Arc::new)),
+                .and_then(|projection| projection.schema.as_object().cloned().map(Arc::new)),
+            output_shape: projection.as_ref().map(|projection| projection.shape),
             annotations: definition.annotations.as_ref().map(|annotations| {
                 ToolAnnotations::from_raw(
                     annotations.title.clone(),
@@ -859,13 +874,19 @@ mod server {
         );
         result.output_schema = tool.output_schema.clone();
         result.annotations = tool.annotations.clone();
+        result.meta = tool_metadata(tool);
+        result
+    }
+
+    fn tool_metadata(tool: &ResolvedTool) -> Option<MetaObject> {
+        let mut meta = tool.output_shape.and_then(projection_metadata);
         if let Some(instructions) = &tool.instructions {
-            result.meta = Some(MetaObject(serde_json::Map::from_iter([(
+            meta.get_or_insert_default().insert(
                 "instructions".to_string(),
                 Value::String(instructions.clone()),
-            )])));
+            );
         }
-        result
+        meta.map(MetaObject)
     }
 
     fn progressive_tools() -> Vec<Tool> {
@@ -992,6 +1013,7 @@ mod server {
                     "outputSchema": tool.output_schema.as_ref().map(|schema| Value::Object((**schema).clone())),
                     "annotations": tool.annotations,
                     "instructions": tool.instructions,
+                    "_meta": tool_metadata(tool),
                 }))))
             }
             "call_read_tool" | "call_write_tool" => {
@@ -1076,7 +1098,7 @@ mod server {
         name: &str,
         data: Value,
         cta: Option<crate::output::CtaBlock>,
-        structured: bool,
+        structured: Option<McpStructuredShape>,
         presentation: &[McpResultContent],
     ) -> CallToolResult {
         let text = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
@@ -1105,9 +1127,19 @@ mod server {
             }
         }
         let mut result = CallToolResult::success(content);
-        result.structured_content = structured.then_some(data);
-        result.meta =
-            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)])));
+        if let Some(shape) = structured {
+            result.structured_content = match project_structured_content(data, shape) {
+                Ok(data) => Some(data),
+                Err(error) => {
+                    return CallToolResult::error(vec![ContentBlock::text(error.to_string())]);
+                }
+            };
+        }
+        let mut meta = structured.and_then(projection_metadata);
+        if let Some(cta) = cta {
+            meta.get_or_insert_default().insert("cta".to_string(), cta);
+        }
+        result.meta = meta.map(MetaObject);
         result
     }
 
@@ -1146,7 +1178,7 @@ mod server {
     fn tool_call_result(
         name: &str,
         outcome: ToolCallOutcome,
-        structured: bool,
+        structured: Option<McpStructuredShape>,
         presentation: &[McpResultContent],
     ) -> CallToolResult {
         match outcome {
@@ -1489,7 +1521,7 @@ mod server {
                 Ok(tool_call_result(
                     &server_name,
                     outcome,
-                    tool.output_schema.is_some(),
+                    tool.output_shape,
                     &tool.result_content,
                 )
                 .into())
@@ -1625,6 +1657,10 @@ pub async fn serve(
 // Tests
 // ---------------------------------------------------------------------------
 
+#[cfg(all(test, feature = "mcp", feature = "http"))]
+#[path = "mcp_projection_tests.rs"]
+mod projection_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1647,7 +1683,13 @@ mod tests {
             mime_type_pointer: "/preview/mimeType".to_string(),
         }];
 
-        let result = server::tool_result_success("visualize", data, None, true, &presentation);
+        let result = server::tool_result_success(
+            "visualize",
+            data,
+            None,
+            Some(incurs_mcp_protocol::structured::McpStructuredShape::Object),
+            &presentation,
+        );
         let encoded = serde_json::to_value(result.content).expect("content serializes");
 
         assert_eq!(encoded[0]["type"], "text");
