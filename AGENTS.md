@@ -54,6 +54,7 @@
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
 - **Builtin CLI behavior uses one active runtime path** — `serve()` and `serve_with()` are process adapters over `run_to()`. Implement and test built-in behavior through `run_to()`/`serve_to()` so process execution and integration tests cannot drift.
 - **MCP HTTP tests need a valid Host** — current `rmcp` validates hosts before request dispatch. Direct requests to the Rust MCP HTTP service must include a loopback `Host` header (for example, `localhost`) unless the test is specifically exercising DNS-rebinding rejection.
+- **MCP annotations use protocol field names** — serialize `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`, omitting unset hints. Internal Rust field names and null optional values are not the MCP wire contract.
 
 ## Git Conventions
 

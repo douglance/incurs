@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use incurs::command::RequestContext;
+use incurs::command::{McpAnnotations, RequestContext};
 use incurs::tool::{ToolCallOptions, ToolCallOutcome, ToolCatalog, ToolDefinition};
 use incurs_mcp_protocol::{McpLifecycleFamily, McpVersion, known_standard, known_standards};
 use serde_json::{Map, Value, json};
@@ -148,7 +148,7 @@ async fn handle_rpc(
     let result = match method {
         "initialize" => initialize(catalog, request),
         "ping" => optional_params(request).map(|_| json!({})),
-        "tools/list" => optional_params(request).and_then(|_| definitions(catalog)),
+        "tools/list" => optional_params(request).map(|_| definitions(catalog)),
         "tools/call" => {
             call_tool(
                 catalog,
@@ -193,16 +193,16 @@ fn initialize(catalog: &ToolCatalog, request: &Map<String, Value>) -> Result<Val
     }))
 }
 
-fn definitions(catalog: &ToolCatalog) -> Result<Value, RpcFault> {
+fn definitions(catalog: &ToolCatalog) -> Value {
     let tools = catalog
         .definitions()
         .into_iter()
         .map(tool_definition)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(json!({"tools": tools}))
+        .collect::<Vec<_>>();
+    json!({"tools": tools})
 }
 
-fn tool_definition(definition: ToolDefinition) -> Result<Value, RpcFault> {
+fn tool_definition(definition: ToolDefinition) -> Value {
     let mut value = json!({
         "name": definition.name,
         "description": definition.description,
@@ -213,12 +213,27 @@ fn tool_definition(definition: ToolDefinition) -> Result<Value, RpcFault> {
         object.insert("outputSchema".to_string(), schema);
     }
     if let Some(annotations) = definition.annotations {
-        object.insert(
-            "annotations".to_string(),
-            serde_json::to_value(annotations).map_err(RpcFault::serialization)?,
-        );
+        object.insert("annotations".to_string(), tool_annotations(annotations));
     }
-    Ok(value)
+    value
+}
+
+fn tool_annotations(annotations: McpAnnotations) -> Value {
+    let mut values = Map::new();
+    if let Some(title) = annotations.title {
+        values.insert("title".to_string(), Value::String(title));
+    }
+    for (name, value) in [
+        ("readOnlyHint", annotations.read_only_hint),
+        ("destructiveHint", annotations.destructive_hint),
+        ("idempotentHint", annotations.idempotent_hint),
+        ("openWorldHint", annotations.open_world_hint),
+    ] {
+        if let Some(value) = value {
+            values.insert(name.to_string(), Value::Bool(value));
+        }
+    }
+    Value::Object(values)
 }
 
 async fn call_tool(
@@ -472,19 +487,14 @@ impl RpcFault {
             message: message.into(),
         }
     }
-
-    fn serialization(error: serde_json::Error) -> Self {
-        Self {
-            code: -32603,
-            message: error.to_string(),
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use incurs::cli::Cli;
-    use incurs::command::{CommandDef, TypedContext, TypedResult};
+    use incurs::command::{
+        CommandDef, McpAnnotations, McpCommandOptions, TypedContext, TypedResult,
+    };
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
@@ -502,6 +512,16 @@ mod tests {
     }
 
     fn catalog() -> ToolCatalog {
+        catalog_with_annotations(McpAnnotations {
+            title: Some("Echo".to_string()),
+            read_only_hint: Some(true),
+            destructive_hint: Some(false),
+            idempotent_hint: Some(true),
+            open_world_hint: Some(false),
+        })
+    }
+
+    fn catalog_with_annotations(annotations: McpAnnotations) -> ToolCatalog {
         let command = CommandDef::typed::<EchoArgs, (), (), EchoOutput, _, _>(
             "echo",
             |ctx: TypedContext<EchoArgs, (), ()>| async move {
@@ -512,6 +532,10 @@ mod tests {
             },
         )
         .description("Echo text")
+        .mcp(McpCommandOptions {
+            annotations: Some(annotations),
+            ..McpCommandOptions::default()
+        })
         .done();
         Cli::create("fixture")
             .version("1.2.3")
@@ -566,9 +590,12 @@ mod tests {
     #[tokio::test]
     async fn initialize_echoes_a_supported_legacy_revision() {
         for version in supported_versions() {
-            let response =
-                handle_mcp_request(&catalog(), request(initialize_body(version)), &McpHttpOptions::default())
-                    .await;
+            let response = handle_mcp_request(
+                &catalog(),
+                request(initialize_body(version)),
+                &McpHttpOptions::default(),
+            )
+            .await;
             let body = response.body.expect("body");
             assert_eq!(
                 body["result"]["protocolVersion"], version,
@@ -698,7 +725,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_oversized_body_is_refused() {
-        let options = McpHttpOptions { max_body_bytes: 8, ..McpHttpOptions::default() };
+        let options = McpHttpOptions {
+            max_body_bytes: 8,
+            ..McpHttpOptions::default()
+        };
         let response = handle_mcp_request(
             &catalog(),
             request(json!({"jsonrpc": "2.0", "id": 7, "method": "ping"})),
@@ -726,7 +756,10 @@ mod tests {
             &McpHttpOptions::default(),
         )
         .await;
-        assert_eq!(response.status, 403, "an empty allowlist must reject a browser origin");
+        assert_eq!(
+            response.status, 403,
+            "an empty allowlist must reject a browser origin"
+        );
     }
 
     #[tokio::test]
@@ -752,6 +785,41 @@ mod tests {
         .await;
         assert_eq!(response.status, 200);
         assert_eq!(response.body.unwrap()["result"]["tools"][0]["name"], "echo");
+    }
+
+    #[tokio::test]
+    async fn annotation_hints_use_mcp_wire_names() {
+        let response = handle_mcp_request(
+            &catalog(),
+            request(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})),
+            &McpHttpOptions::default(),
+        )
+        .await;
+        let body = response.body.expect("body");
+        assert_eq!(
+            body["result"]["tools"][0]["annotations"],
+            json!({
+                "title": "Echo",
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn unspecified_annotation_hints_are_omitted() {
+        let response = handle_mcp_request(
+            &catalog_with_annotations(McpAnnotations::default()),
+            request(json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})),
+            &McpHttpOptions::default(),
+        )
+        .await;
+        assert_eq!(
+            response.body.expect("body")["result"]["tools"][0]["annotations"],
+            json!({})
+        );
     }
 
     #[tokio::test]
