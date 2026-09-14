@@ -3653,7 +3653,6 @@ checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
 name = "xtask"
 version = "0.0.0"
 dependencies = [
- "regex-lite",
  "serde",
  "serde_json",
  "sha2",

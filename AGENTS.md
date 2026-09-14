@@ -52,6 +52,7 @@
 ## Testing Conventions
 
 - **Snapshot tests for deterministic output** — prefer `toMatchInlineSnapshot()` for deterministic string outputs (TOON, JSON, etc.). If output is mostly deterministic with a few dynamic properties (e.g. `duration`), extract and assert those separately, then snapshot the rest.
+- **The CLI surface is pinned by full-observation goldens** — `crates/incurs/tests/cli_surface.rs` records exit code and stdout together, not selected fields. Regenerate with `UPDATE_GOLDEN=1` and review the diff as the wire-format change it is.
 - **Builtin CLI behavior uses one active runtime path** — `serve()` and `serve_with()` are process adapters over `run_to()`. Implement and test built-in behavior through `run_to()`/`serve_to()` so process execution and integration tests cannot drift.
 - **MCP HTTP tests need a valid Host** — current `rmcp` validates hosts before request dispatch. Direct requests to the Rust MCP HTTP service must include a loopback `Host` header (for example, `localhost`) unless the test is specifically exercising DNS-rebinding rejection.
 

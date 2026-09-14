@@ -8,22 +8,23 @@ Define a command once and expose the same validated behavior through CLI, HTTP, 
 
 Version 0.5.0 adds exact multi-era MCP negotiation, standard `--`
 end-of-options parsing, and explicit process exit codes for successful typed
-commands. It preserves the executable parity gate, typed Rust authoring path,
-and provider-neutral Code Mode runtime. Version 0.5 requires Rust 1.88 or newer.
+commands. It preserves the typed Rust authoring path and provider-neutral Code
+Mode runtime. Version 0.5 requires Rust 1.88 or newer.
 
 | Surface | 0.5 status |
 | --- | --- |
-| CLI parsing, help, validation, aliases, output and streaming | Parity-gated |
+| CLI parsing, help, validation, aliases, output and streaming | Golden-tested |
 | HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
 | MCP 2024-11-05 through 2026-07-28, progressive/direct discovery and calls | Exact standard profiles with `rmcp` 3 |
 | OpenAPI, skills and shell completions | Generated from the shared command graph |
 | Agent Plugins 1.0 | Portable `plugin.json`, Agent Skills, and optional `mcp.json` output |
+| Native desktop application | GPUI window over the shared tool catalog, in `extensions/gpui` |
 | Durable Code Mode | Platform-neutral Rust lifecycle with local sandbox execution |
 | Typed args, options, env and output | `CommandDef::typed` plus derive macros |
 | Rust and JSON generation | `incurs gen` |
 | Rust-only table and CSV formats | Explicit `incurs-extras` opt-in |
 
-The parity inventory classifies all 1,062 tests in the vendored TypeScript oracle. `cargo xtask parity` also runs shared CLI observations against both implementations and compares structured JSON/JSONL or normalized text.
+`crates/incurs/tests/cli_surface.rs` pins the observable CLI surface — exit code and stdout together — with golden files covering every documented output format, error envelope, and streaming mode.
 
 ## Quick start
 
@@ -271,13 +272,29 @@ cargo run -p incurs --example todoapp -- list --json
 cargo run -p incurs --example todoapp -- stream
 ```
 
+## Native desktop applications
+
+`extensions/gpui` ships the same command graph as a double-clickable
+application, for people who will never open a terminal. Commands are listed in
+a window, each command's inputs are collected from its Tool Contract schema,
+and every call goes through `ToolCatalog`, so validation, middleware, config
+defaults, streaming, and cancellation behave as they do on the CLI.
+
+```rust
+use incurs_app_gpui::DesktopApp;
+
+DesktopApp::from_cli(&cli)?.title("Todo").run()
+```
+
+`bundle::MacBundle` wraps the built executable in a macOS `.app` so it can be
+installed by dragging it. GPUI is a large platform-specific dependency, so the
+extension is a standalone workspace and the root workspace does not depend on
+it. See [extensions/gpui/README.md](extensions/gpui/README.md).
+
 ## Verification
 
 ```bash
-# TypeScript oracle inventory plus executable cross-language cases
-cargo xtask parity
-
-# Rust contracts across every feature
+# Rust contracts across every feature, including the CLI surface goldens
 cargo test --workspace --all-features
 
 # Public documentation
@@ -299,10 +316,12 @@ shared command graph + schemas
                            |              |-- skills
                            |              |-- completions
                            |              `-- Rust/JSON codegen
-                           v
-                  generic Code Mode
-                    |           |
-              local QuickJS  remote executors
+                           |
+                           |-- generic Code Mode
+                           |     |           |
+                           |  local QuickJS  remote executors
+                           |
+                           `-- native desktop window (extensions/gpui)
 ```
 
 ## License

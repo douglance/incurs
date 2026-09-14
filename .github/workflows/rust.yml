@@ -32,23 +32,6 @@ jobs:
       - name: Build examples
         run: cargo build --examples --workspace --all-features
 
-  parity:
-    name: Behavioral parity
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.30.2
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: pnpm install --frozen-lockfile
-      - run: cargo xtask parity
-
   plugin-installers:
     name: Plugin installers (${{ matrix.os }})
     strategy:
