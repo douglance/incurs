@@ -103,7 +103,10 @@ pub struct McpRemoteOptions {
 impl McpRemoteOptions {
     /// Options carrying only a bearer token.
     pub fn bearer(token: impl Into<String>) -> Self {
-        Self { auth_token: Some(token.into()), ..Self::default() }
+        Self {
+            auth_token: Some(token.into()),
+            ..Self::default()
+        }
     }
 }
 
@@ -255,7 +258,8 @@ pub async fn remote_commands_with(
         config = config.custom_headers(remote_header_map(&options.headers)?);
     }
 
-    remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options).await
+    remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options)
+        .await
 }
 
 /// Converts plain `(name, value)` pairs into the transport's header map.
@@ -579,6 +583,17 @@ pub(crate) fn build_tool_schema(
             "type".to_string(),
             serde_json::Value::String(field_type_to_json_type(&field.field_type)),
         );
+        if let crate::schema::FieldType::Enum(values) = &field.field_type {
+            prop.insert(
+                "enum".to_string(),
+                serde_json::Value::Array(
+                    values
+                        .iter()
+                        .map(|value| serde_json::Value::String(value.clone()))
+                        .collect(),
+                ),
+            );
+        }
         if let Some(desc) = field.description {
             prop.insert(
                 "description".to_string(),

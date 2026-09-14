@@ -460,8 +460,13 @@ impl Cli {
         uri: impl Into<String>,
         description: Option<String>,
     ) -> Result<Self, crate::errors::Error> {
-        self.remote_mcp_with(name, uri, description, &crate::mcp::McpRemoteOptions::default())
-            .await
+        self.remote_mcp_with(
+            name,
+            uri,
+            description,
+            &crate::mcp::McpRemoteOptions::default(),
+        )
+        .await
     }
 
     /// Mounts tools from a remote MCP-over-HTTP server, with explicit standards
@@ -3715,6 +3720,17 @@ fn collect_help_commands(commands: &BTreeMap<String, CommandEntry>) -> Vec<Comma
         .collect();
     result.sort_by(|a, b| a.name.cmp(&b.name));
     result
+}
+
+impl Cli {
+    /// Returns this CLI's commands as Prompt Compiler input for skill generation.
+    ///
+    /// This is the same command information the built-in `skills` command
+    /// compiles, exposed so other surfaces can generate and install the same
+    /// skill files. It carries no handlers, so it cannot invoke a command.
+    pub fn skill_command_info(&self) -> Vec<skill::CommandInfo> {
+        collect_all_command_info(self.root_command.as_ref(), &self.commands)
+    }
 }
 
 /// Recursively collects all leaf commands as `CommandInfo` for skill generation.

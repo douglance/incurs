@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/incurs-app-gpui",
+  "examples/todo-desktop",
+]
+resolver = "2"

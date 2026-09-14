@@ -1,0 +1,26 @@
+[package]
+name = "incurs-app-gpui"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Native desktop application surface for incurs command graphs, built on GPUI"
+repository = "https://github.com/douglance/incurs"
+readme = "README.md"
+
+[dependencies]
+incurs = { path = "../../../../crates/incurs", version = "0.5.3", default-features = false }
+gpui = "0.2.2"
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+async-trait = "0.1"
+futures = "0.3"
+unicode-segmentation = "1"
+
+[dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+schemars = "1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
