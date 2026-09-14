@@ -1,0 +1,38 @@
+exit: none
+--- stdout ---
+[
+  {
+    "event": "progress",
+    "step": 1,
+    "total": 5,
+    "message": "Processing batch 1..."
+  },
+  {
+    "event": "progress",
+    "step": 2,
+    "total": 5,
+    "message": "Processing batch 2..."
+  },
+  {
+    "event": "progress",
+    "step": 3,
+    "total": 5,
+    "message": "Processing batch 3..."
+  },
+  {
+    "event": "progress",
+    "step": 4,
+    "total": 5,
+    "message": "Processing batch 4..."
+  },
+  {
+    "event": "progress",
+    "step": 5,
+    "total": 5,
+    "message": "Processing batch 5..."
+  },
+  {
+    "event": "complete",
+    "message": "All batches processed successfully"
+  }
+]

@@ -1,0 +1,14 @@
+exit: 1
+--- stdout ---
+{
+  "code": "NOT_FOUND",
+  "message": "Todo #99 not found",
+  "cta": {
+    "description": "Try listing all todos:",
+    "commands": [
+      {
+        "command": "todoapp list"
+      }
+    ]
+  }
+}

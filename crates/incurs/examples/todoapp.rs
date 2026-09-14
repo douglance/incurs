@@ -234,7 +234,7 @@ fn logging_middleware() -> MiddlewareFn {
 // CLI construction
 // ---------------------------------------------------------------------------
 
-fn build_cli() -> Cli {
+pub fn build_cli() -> Cli {
     Cli::create("todoapp")
         .description("A simple todo list manager")
         .version("0.1.0")

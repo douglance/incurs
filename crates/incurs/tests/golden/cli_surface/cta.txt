@@ -1,0 +1,20 @@
+exit: none
+--- stdout ---
+{
+  "id": 42,
+  "title": "test item",
+  "priority": "high",
+  "status": "pending",
+  "cta": {
+    "description": "Next steps:",
+    "commands": [
+      {
+        "command": "todoapp list"
+      },
+      {
+        "command": "todoapp get 42",
+        "description": "View the new todo"
+      }
+    ]
+  }
+}

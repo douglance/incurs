@@ -1,0 +1,7 @@
+exit: none
+--- stdout ---
+{
+  "by_priority": {
+    "high": 2
+  }
+}

@@ -1,0 +1,150 @@
+exit: none
+--- stdout ---
+{
+  "version": "incur.v1",
+  "commands": [
+    {
+      "name": "add",
+      "description": "Add a new todo item",
+      "schema": {
+        "args": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "The todo title"
+            }
+          },
+          "required": [
+            "title"
+          ]
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "priority": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ],
+              "description": "Priority level",
+              "default": "medium"
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "command": "\"Buy groceries\"",
+          "description": "Add with default priority"
+        },
+        {
+          "command": "\"Fix bug\" --priority high",
+          "description": "Add with high priority"
+        },
+        {
+          "command": "\"Read book\" -p low",
+          "description": "Add with short alias"
+        }
+      ]
+    },
+    {
+      "name": "complete",
+      "description": "Mark a todo as done",
+      "schema": {
+        "args": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "number",
+              "description": "The todo ID to complete"
+            }
+          },
+          "required": [
+            "id"
+          ]
+        }
+      },
+      "examples": [
+        {
+          "command": "1",
+          "description": "Complete todo #1"
+        }
+      ]
+    },
+    {
+      "name": "get",
+      "description": "Get a todo by ID",
+      "schema": {
+        "args": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "number",
+              "description": "The todo ID"
+            }
+          },
+          "required": [
+            "id"
+          ]
+        }
+      },
+      "examples": [
+        {
+          "command": "1",
+          "description": "Get todo #1"
+        }
+      ]
+    },
+    {
+      "name": "list",
+      "description": "List todo items",
+      "schema": {
+        "options": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "all",
+                "pending",
+                "done"
+              ],
+              "description": "Filter by status",
+              "default": "all"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Maximum number of results",
+              "default": 50
+            }
+          }
+        }
+      },
+      "examples": [
+        {
+          "command": "",
+          "description": "List all todos"
+        },
+        {
+          "command": "--status pending",
+          "description": "List only pending"
+        },
+        {
+          "command": "--json",
+          "description": "Output as JSON"
+        }
+      ]
+    },
+    {
+      "name": "stats",
+      "description": "Show todo statistics"
+    },
+    {
+      "name": "stream",
+      "description": "Stream progress updates (demo)"
+    }
+  ]
+}

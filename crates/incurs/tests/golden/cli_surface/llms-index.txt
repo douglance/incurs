@@ -1,0 +1,16 @@
+exit: none
+--- stdout ---
+# todoapp
+
+A simple todo list manager
+
+| Command | Description |
+|---------|-------------|
+| `todoapp add <title>` | Add a new todo item |
+| `todoapp complete <id>` | Mark a todo as done |
+| `todoapp get <id>` | Get a todo by ID |
+| `todoapp list` | List todo items |
+| `todoapp stats` | Show todo statistics |
+| `todoapp stream` | Stream progress updates (demo) |
+
+Run `todoapp --llms-full` for full manifest. Run `todoapp <command> --schema` for argument details.

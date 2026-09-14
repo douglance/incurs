@@ -1,0 +1,9 @@
+exit: none
+--- stdout ---
+total: 5
+pending: 3
+done: 2
+by_priority:
+  high: 2
+  medium: 2
+  low: 1

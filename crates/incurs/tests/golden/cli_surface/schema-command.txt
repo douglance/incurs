@@ -1,0 +1,17 @@
+exit: none
+--- stdout ---
+args:
+  type: object
+  properties:
+    title:
+      type: string
+      description: The todo title
+  required[1]: title
+options:
+  type: object
+  properties:
+    priority:
+      type: string
+      enum[3]: low,medium,high
+      description: Priority level
+      default: medium

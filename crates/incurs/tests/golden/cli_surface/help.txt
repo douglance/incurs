@@ -1,0 +1,31 @@
+exit: none
+--- stdout ---
+todoapp@0.1.0 — A simple todo list manager
+
+Usage: todoapp <command>
+
+Commands:
+  add       Add a new todo item
+  complete  Mark a todo as done
+  get       Get a todo by ID
+  list      List todo items
+  stats     Show todo statistics
+  stream    Stream progress updates (demo)
+
+Integrations:
+  completions  Generate shell completion script
+  mcp          Register as MCP server (add, doctor)
+  skills       Sync skill files to agents (add, list)
+
+Global Options:
+  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl>  Output format
+  --full-output                       Show full output envelope
+  --help                              Show help
+  --llms, --llms-full                 Print LLM-readable manifest
+  --mcp                               Start as MCP stdio server
+  --schema                            Show JSON Schema for command
+  --token-count                       Print token count of output (instead of output)
+  --token-limit <n>                   Limit output to n tokens
+  --token-offset <n>                  Skip first n tokens of output
+  --version                           Show version

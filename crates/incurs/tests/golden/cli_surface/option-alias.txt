@@ -1,0 +1,16 @@
+exit: none
+--- stdout ---
+[
+  {
+    "id": 2,
+    "title": "Write docs",
+    "priority": "medium",
+    "status": "done"
+  },
+  {
+    "id": 4,
+    "title": "Review PR",
+    "priority": "low",
+    "status": "done"
+  }
+]

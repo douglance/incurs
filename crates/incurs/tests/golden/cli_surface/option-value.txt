@@ -1,0 +1,22 @@
+exit: none
+--- stdout ---
+[
+  {
+    "id": 1,
+    "title": "Buy groceries",
+    "priority": "high",
+    "status": "pending"
+  },
+  {
+    "id": 3,
+    "title": "Fix bug #123",
+    "priority": "high",
+    "status": "pending"
+  },
+  {
+    "id": 5,
+    "title": "Deploy v2",
+    "priority": "medium",
+    "status": "pending"
+  }
+]
