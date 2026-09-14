@@ -1,8 +1,8 @@
-//! Explicitly enabled extensions that are not part of incur 0.4.17 parity.
+//! Opt-in output formats that the default incurs CLI surface does not expose.
 
 use serde_json::Value;
 
-/// Rust-only output formats excluded from the parity-default CLI surface.
+/// Output formats excluded from the default CLI surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtraFormat {
     /// Aligned ASCII table output.
@@ -29,9 +29,9 @@ impl ExtraFormat {
     }
 }
 
-/// Extension methods for explicitly opting a CLI into Rust-only behavior.
+/// Extension methods for explicitly opting a CLI into these formats.
 pub trait CliExtras {
-    /// Sets a Rust-only default output format without changing the parity-default flags.
+    /// Sets a default output format without changing the built-in format flags.
     fn default_extra_format(self, format: ExtraFormat) -> Self;
 }
 

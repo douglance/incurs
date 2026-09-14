@@ -1,8 +1,10 @@
 # incurs
 
-A Rust implementation of [wevm/incur](https://github.com/wevm/incur), the CLI framework for humans and agents.
+The CLI framework for humans and agents.
 
-Define a command once and expose the same validated behavior through CLI, HTTP, MCP, OpenAPI, Agent Plugin packages, skill files, and shell completions. The vendored TypeScript 0.4.17 implementation is the behavioral oracle; Rust-only extensions are opt-in.
+Define a command once and expose the same validated behavior through CLI, HTTP, MCP, OpenAPI, Agent Plugin packages, skill files, shell completions, and a native desktop window.
+
+incurs began as a Rust port of [wevm/incur](https://github.com/wevm/incur) and keeps its command model. The two are now independent: incurs is the implementation, not a translation of one, and its observable surface is defined by its own tests.
 
 ## Status
 
@@ -170,7 +172,7 @@ Library consumers can enable `agent-plugins` for offline loading or `agent-plugi
 
 ## Rust-only extensions
 
-Parity-default help and parsing expose only upstream formats. Table and CSV remain available through the separate extension crate:
+Built-in help and parsing expose the core output formats only. Table and CSV remain available through the separate extension crate:
 
 ```toml
 [dependencies]

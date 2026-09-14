@@ -146,7 +146,7 @@ split at the relevant seam.
 | MCP prompt | Prompt Artifact | Supplies model-directed content. |
 | CLI help | Documentation Artifact | Explains commands to a person. |
 | Executable JavaScript bridge | Tool Binding | Executes even though its encoding is text. |
-| TypeScript declarations placed in model context | Prompt Artifact | Informs model behavior but is not the executable bridge. |
+| TypeScript declarations placed in model context (`incurs_codemode::generate_types`) | Prompt Artifact | Informs model behavior but is not the executable bridge. |
 | Structured result containing text | Tool Result | Remains data until prompt compilation explicitly uses it. |
 
 ## Naming rules
