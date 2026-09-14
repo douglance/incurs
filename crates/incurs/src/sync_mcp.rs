@@ -1,6 +1,6 @@
 //! MCP server registration with AI coding agents.
 //!
-//! Ported from `src/SyncMcp.ts`. Registers the CLI binary as an MCP (Model
+//! Registers the CLI binary as an MCP (Model
 //! Context Protocol) server by writing agent-specific configuration files.
 //! For Rust binaries, uses `std::env::current_exe()` instead of npx.
 

@@ -1,6 +1,6 @@
 //! OpenAPI spec to command generation.
 //!
-//! Ported from `src/Openapi.ts`. Parses an OpenAPI 3.x specification and
+//! Parses an OpenAPI 3.x specification and
 //! generates command definitions that can be registered with the incurs CLI
 //! framework. Gated behind the `openapi` feature flag.
 //!

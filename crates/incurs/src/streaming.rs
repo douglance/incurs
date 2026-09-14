@@ -4,8 +4,6 @@
 //! CLI, HTTP, and MCP transports. The key pattern is wrapping a stream with
 //! a completion signal so that middleware "after" hooks can run after the
 //! stream is fully consumed by the transport layer.
-//!
-//! Ported from streaming patterns in `src/internal/command.ts` and `src/Cli.ts`.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};

@@ -1,6 +1,6 @@
 //! Shell completion generation for bash, zsh, fish, and nushell.
 //!
-//! Ported from `src/Completions.ts`. Generates shell hook scripts for dynamic
+//! Generates shell hook scripts for dynamic
 //! tab completions and computes completion candidates based on the command tree.
 
 use std::collections::BTreeMap;

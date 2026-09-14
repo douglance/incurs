@@ -50,9 +50,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.30.2
+      # The conformance runner is an upstream npm CLI, not a dependency of this
+      # repository. Node is here to launch it and nothing else.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -72,9 +71,9 @@ jobs:
           cat /tmp/incurs-mcp-conformance.log
           exit 1
       - name: Active MCP standards
-        run: pnpm dlx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url http://127.0.0.1:3030/mcp --suite active --expected-failures tests/mcp/conformance-baseline.yml
+        run: npx --yes @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url http://127.0.0.1:3030/mcp --suite active --expected-failures tests/mcp/conformance-baseline.yml
       - name: MCP 2026-07-28
-        run: pnpm dlx @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url http://127.0.0.1:3030/mcp --suite draft --expected-failures tests/mcp/conformance-baseline.yml
+        run: npx --yes @modelcontextprotocol/conformance@0.2.0-alpha.10 server --url http://127.0.0.1:3030/mcp --suite draft --expected-failures tests/mcp/conformance-baseline.yml
       - name: Stop conformance server
         if: always()
         run: kill "$(cat /tmp/incurs-mcp-conformance.pid)" || true

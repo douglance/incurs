@@ -4,8 +4,6 @@
 //! [`execute`] function is called by CLI, HTTP, and MCP transports with
 //! different [`ParseMode`] values to handle input parsing, middleware
 //! composition, and handler invocation uniformly.
-//!
-//! Ported from `src/internal/command.ts`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;

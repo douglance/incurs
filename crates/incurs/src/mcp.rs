@@ -1,6 +1,6 @@
 //! MCP (Model Context Protocol) stdio server.
 //!
-//! Ported from `src/Mcp.ts`. Exposes CLI commands as MCP tools over a stdio
+//! Exposes CLI commands as MCP tools over a stdio
 //! transport. The actual server implementation uses the `rmcp` crate and is
 //! gated behind the `mcp` feature flag.
 

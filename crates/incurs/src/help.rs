@@ -3,8 +3,6 @@
 //! Generates formatted help output for both router CLIs (command groups)
 //! and leaf commands. Handles all sections: header, synopsis, arguments,
 //! options, examples, hints, subcommands, global options, and env vars.
-//!
-//! Ported from `src/Help.ts`.
 
 use std::collections::HashMap;
 

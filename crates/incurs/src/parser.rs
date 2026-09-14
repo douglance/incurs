@@ -1,6 +1,6 @@
 //! Argv and environment variable parser for the incurs framework.
 //!
-//! Ported from `src/Parser.ts`. Takes raw argv tokens and parses them against
+//! Takes raw argv tokens and parses them against
 //! [`FieldMeta`] metadata, producing a [`ParseResult`] with coerced values.
 
 use std::collections::{BTreeMap, HashMap};

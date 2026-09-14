@@ -1,6 +1,6 @@
 //! Output formatting for the incurs framework.
 //!
-//! Ported from `src/Formatter.ts`. Serializes a [`serde_json::Value`] to a
+//! Serializes a [`serde_json::Value`] to a
 //! string in the requested [`Format`].
 
 use serde_json::Value;

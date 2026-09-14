@@ -1,6 +1,6 @@
 //! Skill file (SKILL.md) generation for agent discovery.
 //!
-//! Ported from `src/Skill.ts`. Generates Markdown skill files that AI coding
+//! Generates Markdown skill files that AI coding
 //! agents use to discover and understand CLI commands. Supports compact index
 //! generation (`--llms`), full skill file generation, depth-based splitting,
 //! and SHA-256 hashing for staleness detection.

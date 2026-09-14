@@ -1,6 +1,4 @@
 //! Error types for the incurs framework.
-//!
-//! Ported from `src/Errors.ts`.
 
 use std::fmt;
 

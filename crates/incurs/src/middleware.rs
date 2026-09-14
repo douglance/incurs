@@ -4,8 +4,6 @@
 //! receives a context and a `next` function. Calling `next` runs the inner
 //! layers (and eventually the command handler). Code before `next()` runs
 //! "before" the command; code after runs "after".
-//!
-//! Ported from `src/middleware.ts`.
 
 use std::future::Future;
 use std::pin::Pin;

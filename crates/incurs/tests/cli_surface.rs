@@ -128,7 +128,7 @@ macro_rules! surface_case {
     };
 }
 
-// The sixteen cases ported from `tests/parity/cases.json`.
+// The sixteen cases the retired cross-implementation parity gate covered.
 surface_case!(help, "help", ["--help"]);
 surface_case!(version, "version", ["--version"]);
 surface_case!(default_toon, "default-toon", ["stats"]);

@@ -1,6 +1,4 @@
 //! Output envelope types for the incurs framework.
-//!
-//! Ported from the output types in `src/Cli.ts` and `src/internal/command.ts`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

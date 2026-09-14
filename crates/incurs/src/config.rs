@@ -14,8 +14,6 @@
 //!   }
 //! }
 //! ```
-//!
-//! Ported from config loading logic in `src/Cli.ts`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

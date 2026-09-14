@@ -1,6 +1,6 @@
 //! Filter expressions for selecting and slicing output data.
 //!
-//! Ported from `src/Filter.ts`. Parses dot-separated key paths with optional
+//! Parses dot-separated key paths with optional
 //! array slices and applies them to [`serde_json::Value`] trees.
 
 use serde_json::Value;

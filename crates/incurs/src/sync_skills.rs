@@ -1,6 +1,6 @@
 //! Skill file synchronization — generates and installs skill files from commands.
 //!
-//! Ported from `src/SyncSkills.ts`. Generates SKILL.md files from the command
+//! Generates SKILL.md files from the command
 //! tree, installs them to agent directories, and tracks a hash for staleness
 //! detection so repeated syncs are no-ops when commands haven't changed.
 
@@ -247,7 +247,7 @@ pub fn read_hash(name: &str) -> Option<String> {
 
 /// Returns the set of stored skill names for this CLI that are currently
 /// installed (a `SKILL.md` exists under `~/.agents/skills/<skill>` or
-/// `<cwd>/.agents/skills/<skill>`). Ported from `SyncSkills.readInstalledSkills`.
+/// `<cwd>/.agents/skills/<skill>`).
 fn installed_skills(name: &str, cwd: Option<&str>) -> std::collections::HashSet<String> {
     let meta = match read_meta(name) {
         Some(m) if !m.skills.is_empty() => m,
@@ -275,7 +275,7 @@ fn installed_skills(name: &str, cwd: Option<&str>) -> std::collections::HashSet<
 }
 
 /// Returns `true` if any of the stored skills for this CLI are currently
-/// installed. Ported from `SyncSkills.hasInstalledSkills`.
+/// installed.
 pub fn has_installed_skills(name: &str, cwd: Option<&str>) -> bool {
     !installed_skills(name, cwd).is_empty()
 }
@@ -291,7 +291,7 @@ pub struct ListedSkill {
 }
 
 /// Lists the skills this CLI would generate, annotated with whether each is
-/// currently installed. Ported from `SyncSkills.list`.
+/// currently installed.
 pub fn list(
     name: &str,
     commands: &[CommandInfo],

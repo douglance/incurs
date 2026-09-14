@@ -1,6 +1,4 @@
-//! Integration tests ported from `src/Parser.test.ts`.
-//!
-//! Each TypeScript `test('description', ...)` is translated to a Rust `#[test]`.
+//! Integration tests for the argv parser.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -51,7 +49,6 @@ fn empty_opts() -> ParseOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Tests ported from Parser.test.ts
 // ---------------------------------------------------------------------------
 
 #[test]

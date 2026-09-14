@@ -1,6 +1,6 @@
 //! End-to-end tests for the incurs CLI framework.
 //!
-//! Ported from `src/e2e.test.ts`. These tests exercise the full CLI lifecycle
+//! These tests exercise the full CLI lifecycle
 //! through `Cli::serve_to`, which writes output to a buffer instead of stdout
 //! and returns exit codes instead of calling `process::exit`.
 //!

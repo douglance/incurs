@@ -3,8 +3,6 @@
 //! Generates a JSON Schema describing the valid config file structure
 //! from the CLI's command tree and root options. This allows editors and
 //! validators to provide autocompletion and validation for config files.
-//!
-//! Ported from `src/internal/configSchema.ts`.
 
 use serde_json::{Value, json};
 use std::collections::BTreeMap;

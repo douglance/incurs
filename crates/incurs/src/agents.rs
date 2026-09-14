@@ -1,6 +1,6 @@
 //! Agent configuration and skill installation for AI coding agents.
 //!
-//! Ported from `src/internal/agents.ts`. Defines 21 agent configurations and
+//! Defines 21 agent configurations and
 //! provides install/remove/detect operations that manage skill files across
 //! the canonical `.agents/skills/` directory and agent-specific locations.
 

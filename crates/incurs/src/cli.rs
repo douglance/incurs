@@ -8,8 +8,6 @@
 //! - Built-in flags (--help, --version, --format, --json, --full-output, etc.)
 //! - Config file loading for option defaults
 //! - Three-transport architecture (CLI, HTTP, MCP)
-//!
-//! Ported from `src/Cli.ts`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
@@ -594,7 +592,6 @@ impl Cli {
     ///
     /// Computes the "Skills are out of date" CTA: when installed skills exist
     /// for this CLI and the stored hash differs from the live command tree.
-    /// Ported from `Cli.ts` `skillsCta`.
     fn compute_skills_cta(&self) -> Option<FormattedCtaBlock> {
         let stored = crate::sync_skills::read_hash(&self.name)?;
         if !crate::sync_skills::has_installed_skills(&self.name, None) {
@@ -3903,7 +3900,7 @@ fn build_llms_manifest(
 
 /// Builds a `--schema` JSON object for a command from its FieldMeta, with
 /// `args`, `env`, `options`, and `output` sections (each present only when the
-/// command declares them). Ported from `Cli.ts` `--schema` handling.
+/// command declares them).
 fn build_command_schema(command: &CommandDef, globals_fields: &[FieldMeta]) -> Value {
     let mut result = serde_json::Map::new();
     if !globals_fields.is_empty() {
@@ -3938,7 +3935,7 @@ fn build_command_schema(command: &CommandDef, globals_fields: &[FieldMeta]) -> V
 
 /// Scans command tokens for supplied deprecated options and returns the
 /// `Warning: --<cli-name> is deprecated` lines. Recognizes long flags, their
-/// `--no-` form, and short aliases. Ported from `Cli.ts` `emitDeprecationWarnings`.
+/// `--no-` form, and short aliases.
 fn deprecation_warnings(
     rest: &[String],
     options_fields: &[FieldMeta],
@@ -4938,7 +4935,7 @@ fn apply_token_ops(output: &str, builtin: &BuiltinFlags) -> Option<String> {
 /// Truncates a formatted string by token window, returning the truncated text
 /// (with the `[truncated: …]` marker) and the next offset for pagination, or
 /// `None` when no truncation is needed. Used by the full-output envelope path
-/// so that `meta.nextOffset` can be surfaced. Ported from `Cli.ts` `truncate`.
+/// so that `meta.nextOffset` can be surfaced.
 #[cfg(feature = "tokens")]
 fn truncate_tokens(output: &str, builtin: &BuiltinFlags) -> Option<(String, Option<usize>)> {
     if builtin.token_offset.is_none() && builtin.token_limit.is_none() {

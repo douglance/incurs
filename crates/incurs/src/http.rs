@@ -1,6 +1,5 @@
 //! HTTP transport for the incurs framework.
 //!
-//! Ported from the `fetchImpl()` function in `src/Cli.ts` (lines ~1450-1700).
 //! Exposes incur CLI commands over HTTP using Axum. Each registered command
 //! becomes a route: `GET/POST /{command}` for top-level commands and
 //! `GET/POST /{group}/{command}` for grouped commands.

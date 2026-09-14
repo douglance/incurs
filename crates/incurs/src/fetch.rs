@@ -1,6 +1,6 @@
 //! Curl-style argv parsing and HTTP request/response handling.
 //!
-//! Ported from `src/Fetch.ts`. Parses curl-style command-line arguments into
+//! Parses curl-style command-line arguments into
 //! structured fetch input, and provides utilities for detecting streaming
 //! responses.
 
