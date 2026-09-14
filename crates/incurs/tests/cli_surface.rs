@@ -112,8 +112,7 @@ fn assert_golden(name: &str, observed: &str) {
     });
 
     assert_eq!(
-        observed,
-        expected,
+        observed, expected,
         "the observable CLI surface changed for case `{name}`.\n\
          If that is intended, rerun with UPDATE_GOLDEN=1 and review the diff."
     );
@@ -141,9 +140,17 @@ surface_case!(
     "option-value",
     ["list", "--status", "pending", "--json"]
 );
-surface_case!(option_alias, "option-alias", ["list", "-s", "done", "--json"]);
+surface_case!(
+    option_alias,
+    "option-alias",
+    ["list", "-s", "done", "--json"]
+);
 surface_case!(positional, "positional", ["get", "1", "--json"]);
-surface_case!(structured_error, "structured-error", ["get", "99", "--json"]);
+surface_case!(
+    structured_error,
+    "structured-error",
+    ["get", "99", "--json"]
+);
 surface_case!(
     cta,
     "cta",
@@ -185,8 +192,8 @@ surface_case!(llms_full, "llms-full", ["--llms-full", "--format", "json"]);
 /// in agent mode, so nothing is being silently dropped.
 #[tokio::test]
 async fn harness_matches_a_real_process() {
-    let executable = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/debug/examples/todoapp");
+    let executable =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/examples/todoapp");
     if !executable.is_file() {
         // The example is built by `cargo test --all-targets`; skip rather than
         // fail when this test runs against a tree that has not built it.
