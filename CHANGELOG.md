@@ -1,6 +1,34 @@
-# incur
+# incurs
 
-## Rust 0.5.0
+## 0.6.0
+
+- Rebuilt the `incurs` command-line tool with incurs itself. Its commands are
+  now ordinary `CommandDef` definitions, so help, schemas, `--llms-full`, the
+  config schema, completions, skills, MCP, and the output envelope are derived
+  rather than hand-written.
+- Fixed a builtin command silently shadowing a user-defined one. `completions`,
+  `mcp`, `plugin`, and `skills` claimed their names unconditionally, and every
+  builtin dispatcher treats an unrecognized subcommand as success — so a
+  registered command of that name printed builtin help and exited zero, with no
+  diagnostic. A defined command now wins.
+- Fixed boolean options failing to parse when their flag was omitted. A `bool`
+  is optional but declared no default, and `bool` has no serde default of its
+  own. An absent flag now declares `false`, which also publishes the default in
+  every emitted schema.
+- Added `incurs explain`, the Rust authoring reference carried as command data,
+  and compiled `SKILL.md` from the command graph with a provenance check.
+- Added `incurs-app-gpui`, a native desktop surface over the shared tool
+  catalog, with macOS `.app` bundling.
+- Changed `incurs plugin call` to print the invoked tool's data. It previously
+  printed a `{status, data}` wrapper nested inside the framework's own envelope.
+- Removed the vendored TypeScript implementation and all Node tooling. The
+  observable CLI surface is pinned by golden files captured while the
+  cross-implementation gate was still green.
+- Fixed `cargo xtask release-check` never verifying `incurs-remote`, which was
+  packaged but never compiled from its own archive, and taught it the extension
+  publish order.
+
+## 0.5.0
 
 - Added standard `--` end-of-options parsing with exact passthrough argument
   preservation.
@@ -29,7 +57,7 @@
 - Guarded completion, rejection, cancellation, and rollback against stale lifecycle transitions.
 - Completed connector lifecycle hooks for idle cancellation and host-managed detached execution.
 
-## Rust 0.4.0
+## 0.4.0
 
 - Added `ToolCatalog` as the shared direct and streaming invocation boundary for
   MCP, Code Mode, and future non-CLI transports.
@@ -42,6 +70,13 @@
   and reusable server transports. Search results carry callable declarations,
   HTTP request metadata reaches incurs tools, and oversized execution values
   remain retrievable artifact references.
+
+---
+
+## Before the Rust implementation
+
+Releases below are the TypeScript `incur` package this project was ported from.
+Their version numbers are unrelated to the Rust releases above.
 
 ## 0.4.17
 

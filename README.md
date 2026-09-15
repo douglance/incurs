@@ -2,37 +2,10 @@
 
 The CLI framework for humans and agents.
 
-Define a command once and expose the same validated behavior through CLI, HTTP, MCP, OpenAPI, Agent Plugin packages, skill files, shell completions, and a native desktop window.
-
-incurs began as a Rust port of [wevm/incur](https://github.com/wevm/incur) and keeps its command model. The two are now independent: incurs is the implementation, not a translation of one, and its observable surface is defined by its own tests.
-
-## Status
-
-Version 0.6.0 builds the `incurs` CLI with incurs itself. Doing so surfaced
-three defects no existing test could see: a builtin command silently shadowed a
-user-defined one of the same name, a boolean option could not be omitted, and
-one behavioral fact was carried by two independent fields. All three are fixed.
-`SKILL.md` is now generated from the command graph rather than hand-written, and
-`incurs explain` carries the Rust authoring reference as command data. Version
-0.6 requires Rust 1.88 or newer. See [MIGRATION.md](MIGRATION.md).
-
-| Surface | 0.6 status |
-| --- | --- |
-| CLI parsing, help, validation, aliases, output and streaming | Golden-tested |
-| HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
-| MCP 2024-11-05 through 2026-07-28, progressive/direct discovery and calls | Exact standard profiles with `rmcp` 3 |
-| OpenAPI, skills and shell completions | Generated from the shared command graph |
-| Agent Plugins 1.0 | Portable `plugin.json`, Agent Skills, and optional `mcp.json` output |
-| Native desktop application | GPUI window over the shared tool catalog, in `extensions/gpui` |
-| Durable Code Mode | Platform-neutral Rust lifecycle with local sandbox execution |
-| Typed args, options, env and output | `CommandDef::typed` plus derive macros |
-| Rust and JSON generation | `incurs gen` |
-| Authoring reference | `incurs explain`, compiled into `SKILL.md` |
-| Rust-only table and CSV formats | Explicit `incurs-extras` opt-in |
-
-`crates/incurs/tests/cli_surface.rs` pins the observable CLI surface — exit code and stdout together — with golden files covering every documented output format, error envelope, and streaming mode.
-
-## Quick start
+Define a command once. incurs derives the argument parsing, help, validation, output
+formatting, JSON Schemas, and every transport from that single definition — so a
+command you wrote for a terminal is already an MCP tool, an HTTP route, an OpenAPI
+operation, a skill file an agent can read, a shell completion, and a window.
 
 ```toml
 [dependencies]
@@ -41,6 +14,10 @@ schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 ```
+
+Requires Rust 1.88 or newer.
+
+## Quick start
 
 ```rust
 use incurs::cli::Cli;
@@ -66,7 +43,7 @@ struct GreetOutput {
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let greet = CommandDef::typed::<GreetArgs, GreetOptions, (), GreetOutput, _, _>(
         "greet",
         |ctx: TypedContext<GreetArgs, GreetOptions, ()>| async move {
@@ -92,94 +69,46 @@ async fn main() -> std::io::Result<()> {
 
 ```console
 $ greet greet Ada --excited --json
-{"message":"Hello, Ada!"}
+{
+  "message": "Hello, Ada!"
+}
 ```
 
-`CommandDef::typed` derives the transport schemas from the input types and the output JSON Schema from `GreetOutput`. The handler receives validated values regardless of whether it was called by CLI, HTTP, or MCP.
+Doc comments become descriptions everywhere. `CommandDef::typed` derives the input
+schemas from `GreetArgs` and `GreetOptions`, and the output schema from `GreetOutput`.
+The handler receives validated values whether the call arrived from a terminal, HTTP,
+or an agent.
 
-## Code generation
+## What that one definition already gives you
 
-Install or run the workspace CLI, then point it at a Cargo project whose binary exports `--llms-full --format json`:
+Nothing below needs extra code.
 
-```bash
-cargo run -p incurs-cli -- gen --dir ./my-cli --entry my-cli --config-schema
-```
+| Run this | You get |
+| --- | --- |
+| `greet --help` | Help for the CLI and every command |
+| `greet greet --schema` | The command's JSON Schema |
+| `greet --llms` / `--llms-full` | A manifest written for an agent to read |
+| `greet --format json\|yaml\|toon\|jsonl\|md` | The same result in any output format |
+| `greet --mcp` | An MCP server over stdio |
+| `greet mcp add` | Registration with detected MCP clients |
+| `greet skills add` | Agent Skills installed for detected agents |
+| `greet completions bash\|zsh\|fish` | A shell completion script |
+| `greet plugin build --output ./dist` | A portable Agent Plugins 1.0 package |
+| `greet --config-schema` | A schema for the config file format |
 
-The command writes deterministic artifacts:
+## Output
 
-- `src/incurs_generated.rs`: typed command modules, argument/option types, CTA renderers, and the embedded manifest
-- `incurs.manifest.json`: canonical shared command manifest
-- `config.schema.json`: optional configuration schema
+A command returns `TypedResult::ok(value)`, and the serialized value *is* the output.
+Pass `--full-output` for the `{ok, data, meta}` envelope when a caller wants timing and
+command metadata. `TypedResult::error(code, message)` produces the structured error
+envelope and a non-zero exit; `ok_with_exit_code` passes a wrapped subprocess's status
+through without turning success into a failure; `ok_with_cta` attaches follow-up
+commands.
 
-Use `--output` and `--json-output` to override the first two paths. `--entry` accepts a Cargo binary name or an executable path.
-
-### Agent Plugin packages
-
-Build an [Agent Plugins 1.0](https://agent-plugins.org/specification) directory from the same complete command graph:
-
-```bash
-my-cli plugin build --bundle-cli --output ./dist/my-cli-plugin
-```
-
-Or add it to the normal code-generation pass:
-
-```bash
-cargo run -p incurs-cli -- gen \
-  --dir ./my-cli \
-  --entry my-cli \
-  --plugin-output ./dist/my-cli-plugin \
-  --plugin-bundle-cli
-```
-
-The publisher keeps each layer explicit: `skills/<name>/SKILL.md` files are Prompt Artifacts, root `mcp.json` is the Tool Binding, and `bin/my-cli` is the target-specific Tool Runtime. The root `plugin.json` declares all three. Use `--plugin-no-mcp` for a skills-only package. Regeneration refuses to replace existing plugin artifacts unless you pass `--plugin-force`; the target command uses the equivalent `--force` option.
-
-Install the CLI, MCP server, and skills from that one directory:
-
-```bash
-incurs plugin install ./dist/my-cli-plugin
-```
-
-The installer validates the full package, checks its operating system and architecture, copies it into the user data directory, and installs its command into the user executable directory. It reports when that directory is not on `PATH` but never edits a shell profile. Native agent clients still control how they discover Agent Plugin directories; Incurs does not rewrite legacy agent configuration files.
-
-Remove the managed package and command while preserving its persistent data, or explicitly purge the data:
-
-```bash
-incurs plugin uninstall my-cli
-incurs plugin uninstall my-cli --purge
-```
-
-The standalone `incurs` binary also acts as an Agent Plugins 1.0 client. Validation is offline and reports fatal manifest failures separately from skipped skills and MCP servers:
-
-```bash
-incurs plugin validate ./dist/my-cli-plugin \
-  --data-dir "$HOME/.local/share/my-cli-plugin"
-```
-
-Connect valid stdio, Streamable HTTP, and legacy HTTP+SSE servers and inspect the resulting namespaced `ToolCatalog`:
-
-```bash
-incurs plugin tools ./dist/my-cli-plugin \
-  --data-dir "$HOME/.local/share/my-cli-plugin"
-```
-
-Call any discovered namespaced tool with a flat JSON object:
-
-```bash
-incurs plugin call ./dist/my-cli-plugin my-server_my-tool \
-  --arguments '{"name":"Ada"}' \
-  --data-dir "$HOME/.local/share/my-cli-plugin"
-```
-
-Each MCP server connects independently, so one connection, authentication, or handshake failure does not hide tools from other servers. The explicit data directory is created before launch, persists across runs, and is never removed by the runtime. Configured HTTP headers are visible configuration rather than a secret store. The stdio runtime launches exact argv without a shell and does not claim to sandbox the subprocess.
-
-Library consumers can enable `agent-plugins` for offline loading or `agent-plugins-mcp` for loading plus all three MCP transports. See [Agent Plugins compatibility](docs/agent-plugins.md) for the complete behavior and failure-boundary matrix.
-
-## Rust-only extensions
-
-Built-in help and parsing expose the core output formats only. Table and CSV remain available through the separate extension crate:
+The default format is [TOON](https://crates.io/crates/toon-format). Table and CSV are
+deliberately opt-in, through a separate crate:
 
 ```toml
-[dependencies]
 incurs-extras = "0.6"
 ```
 
@@ -189,102 +118,125 @@ use incurs_extras::{CliExtras, ExtraFormat};
 let cli = cli.default_extra_format(ExtraFormat::Table);
 ```
 
-## Runtime and transports
-
-`Cli::run_to` is the injectable execution boundary. `serve` and `serve_with` are process adapters over it, while `serve_to` is the stable buffered test surface. This keeps parsing, discovery, middleware, command execution, formatting, CTAs, and exit behavior on one path.
-
-The optional transport features are:
+## Feature flags
 
 ```toml
 incurs = { version = "0.6", features = ["http", "mcp", "openapi"] }
 ```
 
-HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known
-skill files, and fetch gateways. MCP supports all five official standards at
-once. Modern clients negotiate with `server/discover`; legacy clients continue
-to initialize with their exact standard. HTTP clients fall back only on
-protocol-specific evidence, never on authentication, transport, or server
-failures.
+| Feature | Adds |
+| --- | --- |
+| `cli` *(default)* | Process adapters, signals, and terminal output |
+| `toon`, `tokens` *(default)* | TOON output and `--token-count` / `--token-limit` |
+| `http` | Axum routes for root and nested commands, plus fetch gateways |
+| `mcp` | MCP server, all five published standards at once |
+| `openapi` | Import an OpenAPI 3.x document as commands, and emit one |
+| `yaml` | YAML output |
+| `agent-plugins`, `agent-plugins-mcp` | Load Agent Plugin packages, with or without MCP transports |
 
-`incurs-mcp-protocol` owns the exact standard registry, lifecycle families,
-wire-era codecs, feature changes, and negotiation policy. Each published
-standard has its own module and embeds its pinned official JSON Schema. Run
-`cargo xtask mcp-schema-sync --check` to verify schema provenance and generated
-method registries.
+MCP clients that support discovery negotiate with `server/discover`; older clients
+initialize with their exact standard. Fallback happens only on protocol evidence, never
+on an authentication, transport, or server failure.
+
+## The `incurs` command-line tool
+
+```bash
+cargo install incurs-cli     # installs the `incurs` binary
+```
+
+```bash
+incurs explain               # the Rust authoring reference, by topic
+incurs explain typed-commands
+```
+
+### Code generation
+
+Point it at a project whose binary exposes `--llms-full`, and it writes typed helpers
+for calling that CLI from Rust:
+
+```bash
+incurs gen --dir ./my-cli --entry my-cli --config-schema
+```
+
+- `src/incurs_generated.rs` — typed command modules, argument and option types, CTA renderers, and the embedded manifest
+- `incurs.manifest.json` — the canonical command manifest
+- `config.schema.json` — the config file schema, with `--config-schema`
+
+`--output` and `--json-output` override the first two paths. `--entry` takes a Cargo
+binary name or a path to an executable.
+
+### Agent Plugin packages
+
+Any incurs CLI can package itself:
+
+```bash
+my-cli plugin build --bundle-cli --output ./dist/my-cli-plugin
+```
+
+The package keeps its layers separate: `skills/<name>/SKILL.md` for agents to read,
+`mcp.json` declaring the tool surface, and `bin/my-cli` as the executable, all declared
+by a root `plugin.json`. Use `--plugin-no-mcp` for a skills-only package. Regeneration
+will not overwrite existing plugin artifacts without `--force`.
+
+The `incurs` binary is also a client for those packages:
+
+```bash
+incurs plugin install ./dist/my-cli-plugin
+incurs plugin validate ./dist/my-cli-plugin --data-dir ~/.local/share/my-cli-plugin
+incurs plugin tools    ./dist/my-cli-plugin --data-dir ~/.local/share/my-cli-plugin
+incurs plugin call     ./dist/my-cli-plugin my-server_my-tool \
+  --arguments '{"name":"Ada"}' --data-dir ~/.local/share/my-cli-plugin
+incurs plugin uninstall my-cli [--purge]
+```
+
+Installation validates the package, checks its operating system and architecture, and
+installs the command into your executable directory. It tells you when that directory
+is not on `PATH`, and never edits a shell profile. Each MCP server connects
+independently, so one failure does not hide the tools from the others. The data
+directory you name is created before launch, persists across runs, and is never removed
+for you.
+
+See [Agent Plugins compatibility](docs/agent-plugins.md) for the full behavior and
+failure-boundary matrix.
+
+## Calling commands without a CLI
+
+`Cli::tool_catalog()` exposes every MCP-visible command as a transport-neutral Rust
+API. Calls made through it use the same schemas, middleware, environment fields, config
+defaults, streaming results, and structured errors as the CLI — it is the boundary MCP,
+Code Mode, and the desktop application all go through. `try_tool_catalog()` reports
+name collisions instead of silently replacing a command.
 
 ## Code Mode
 
-`Cli::tool_catalog()` exposes every MCP-visible leaf command as a
-transport-neutral Rust API. Calls use the same schemas, middleware, declared
-environment fields, CLI global defaults, command config sections, request
-metadata, streaming results, and structured errors as the shared command
-runtime. `Cli::try_tool_catalog()` reports exposed-name collisions instead of
-silently replacing a command.
+`incurs-codemode` lets an agent write a small JavaScript program that calls your tools,
+instead of making one tool call per step. It provides connector discovery, approval
+policy, immutable capability snapshots, deterministic replay, cancellation, ordered
+events, artifact-backed large values, rollback hooks, and bounded durable history. It
+can wrap an incurs catalog, a remote MCP client, or an authenticated OpenAPI client.
 
-The `incurs-codemode` crate owns the generic `CodeMode` lifecycle and executor
-contract. It provides typed connector discovery, search and describe, resolved
-approval policy, immutable capability snapshots, deterministic replay,
-cancellation, ordered events, artifact-backed large values, rollback hooks,
-snippets, and bounded durable history. It can wrap an incurs catalog, a remote
-MCP client, or an authenticated OpenAPI client.
+Your command's own annotations decide policy: a read-only tool skips approval only when
+it is neither destructive nor open-world. Remote tools require approval unless the host
+installs its own policy resolver.
 
-Local incurs annotations are authoritative. A read-only local tool skips
-approval only when it is neither destructive nor open-world. Remote MCP and
-OpenAPI tools require approval and use logged replay unless the host installs an
-explicit `ToolPolicyResolver`.
-
-Code Mode programs use JavaScript for low startup latency and direct access to
-JSON-shaped tool inputs and outputs. `incurs-codemode-local` runs them in a
-resource-limited QuickJS runtime. Remote and provider-specific executors
-implement the same Rust `CodeExecutor` contract in standalone workspaces under
-`extensions/`.
-
-Run the native example with:
-
-```sh
-cargo run -p incurs-codemode-local --example local
-```
-
-The lifecycle, connector policy, dispatch, harness generation, and persistence
-contracts are Rust. The generated JavaScript harness is shared by local and
-remote executors.
-
-`incurs-codemode-mcp` provides a reusable `rmcp::ServerHandler` and stdio
-adapter for the stable provider-neutral lifecycle surface:
+`incurs-codemode-local` runs those programs in a resource-limited QuickJS runtime, and
+`incurs-codemode-mcp` exposes the lifecycle to MCP clients:
 
 | Tool | Purpose |
 | --- | --- |
-| `codemode_search` | Search current tools and snippets with declarations needed to call each match. |
-| `codemode_execute` | Start a JavaScript execution. |
-| `codemode_execution` | Read execution state or an owned artifact. |
-| `codemode_decide` | Approve or reject one pending action. |
-| `codemode_cancel` | Cancel a running or paused execution. |
-
-`codemode_execute` returns a durable running state before the actor drives the
-non-`Send` QuickJS pass. MCP cancellation remains responsive and propagates
-through connector calls. The same handler can be served over stdio or an HTTP
-transport. HTTP method, path, and headers flow into incurs request context when
-the transport provides them. Oversized values remain artifact references in MCP
-execution snapshots and can be fetched with `codemode_execution.artifact_id`.
-
-## Examples
-
-[`crates/incurs/examples/todoapp.rs`](crates/incurs/examples/todoapp.rs) exercises commands, streaming, middleware, CTAs, discovery, and output formats.
-
-```bash
-cargo run -p incurs --example todoapp -- --help
-cargo run -p incurs --example todoapp -- add "Buy groceries" --priority high
-cargo run -p incurs --example todoapp -- list --json
-cargo run -p incurs --example todoapp -- stream
-```
+| `codemode_search` | Search tools and snippets, with the declarations needed to call each match |
+| `codemode_execute` | Start a JavaScript execution |
+| `codemode_execution` | Read execution state or an owned artifact |
+| `codemode_decide` | Approve or reject one pending action |
+| `codemode_cancel` | Cancel a running or paused execution |
 
 ## Native desktop applications
 
-`extensions/gpui` ships the same command graph as a double-clickable
-application, for people who will never open a terminal. Commands are listed in
-a window, each command's inputs are collected from its Tool Contract schema,
-and every call goes through `ToolCatalog`, so validation, middleware, config
-defaults, streaming, and cancellation behave as they do on the CLI.
+`incurs-app-gpui` ships the same command graph as a double-clickable application, for
+people who will never open a terminal. Commands are listed in a window, each command's
+inputs are collected from its schema, and every call goes through the tool catalog — so
+validation, middleware, config defaults, streaming, and cancellation behave exactly as
+they do on the CLI.
 
 ```rust
 use incurs_app_gpui::DesktopApp;
@@ -292,44 +244,38 @@ use incurs_app_gpui::DesktopApp;
 DesktopApp::from_cli(&cli)?.title("Todo").run()
 ```
 
-`bundle::MacBundle` wraps the built executable in a macOS `.app` so it can be
-installed by dragging it. GPUI is a large platform-specific dependency, so the
-extension is a standalone workspace and the root workspace does not depend on
-it. See [extensions/gpui/README.md](extensions/gpui/README.md).
+`MacBundle` wraps the built executable in a macOS `.app` that installs by dragging.
+See [its README](extensions/gpui/README.md) for the full guide and current limits.
 
-## Verification
-
-```bash
-# Rust contracts across every feature, including the CLI surface goldens
-cargo test --workspace --all-features
-
-# Public documentation
-cargo doc --workspace --all-features --no-deps
-```
-
-See [MIGRATION.md](MIGRATION.md) for release migration notes.
-
-## Architecture
+## How it fits together
 
 ```text
-typed command definitions
-          |
-          v
-shared command graph + schemas
-  |       |       |       |                  |
- CLI     HTTP     MCP   tool catalog    generated artifacts
-                           |              |-- OpenAPI
-                           |              |-- skills
-                           |              |-- completions
-                           |              `-- Rust/JSON codegen
-                           |
-                           |-- generic Code Mode
-                           |     |           |
-                           |  local QuickJS  remote executors
-                           |
-                           `-- native desktop window (extensions/gpui)
+              typed command definitions
+                         |
+                         v
+            shared command graph + schemas
+      ______________|____________________________
+     |        |        |            |            |
+    CLI     HTTP      MCP     tool catalog   generated artifacts
+                                   |          |-- OpenAPI
+                                   |          |-- Agent Skills
+                                   |          |-- shell completions
+                                   |          `-- Rust and JSON codegen
+                                   |
+                                   |-- Code Mode  (local QuickJS, remote executors)
+                                   |
+                                   `-- native desktop window
 ```
+
+## Learn more
+
+- [`incurs explain`](crates/incurs-cli) — the authoring reference, also compiled into [`SKILL.md`](SKILL.md) for agents
+- [A worked example](crates/incurs/examples/todoapp.rs) covering commands, streaming, middleware, CTAs, discovery, and output formats
+- [MIGRATION.md](MIGRATION.md) — upgrading between releases
+- [CHANGELOG.md](CHANGELOG.md) — what changed
+- [CONTRIBUTING.md](CONTRIBUTING.md) — working on incurs itself
 
 ## License
 
-MIT, matching upstream [wevm/incur](https://github.com/wevm/incur).
+MIT. incurs began as a Rust port of [wevm/incur](https://github.com/wevm/incur) and
+keeps its command model; the two are now independent.
