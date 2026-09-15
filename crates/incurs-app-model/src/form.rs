@@ -18,6 +18,8 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
+use crate::text::humanize;
+
 /// The control used to collect one field value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldKind {
@@ -464,17 +466,6 @@ fn parse_number(text: &str, integer: bool) -> Option<Value> {
 
 /// Renders a property name as a label a person can read.
 ///
-/// `output_dir` becomes `Output dir`, matching how the CLI help names the
-/// same field without exposing its snake_case identifier.
-fn humanize(name: &str) -> String {
-    let spaced = name.replace(['_', '-'], " ");
-    let mut chars = spaced.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
-}
-
 /// Produces the initial control state for one field.
 fn seed_value(field: &FormField) -> FieldValue {
     let mut value = FieldValue::default();

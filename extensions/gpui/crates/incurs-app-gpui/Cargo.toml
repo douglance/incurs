@@ -10,6 +10,7 @@ readme = "README.md"
 
 [dependencies]
 incurs = { path = "../../../../crates/incurs", version = "0.6.0", default-features = false }
+incurs-app-model = { path = "../../../../crates/incurs-app-model", version = "0.1.0" }
 gpui = "0.2.2"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time"] }

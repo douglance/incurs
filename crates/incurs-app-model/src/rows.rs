@@ -12,6 +12,8 @@
 
 use serde_json::Value;
 
+use crate::text::humanize;
+
 /// One line of a rendered result.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DisplayRow {
@@ -121,16 +123,6 @@ fn format_scalar(value: &Value) -> String {
 /// Renders a value as indented JSON for the raw view.
 pub fn raw_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
-}
-
-/// Renders a property name as a label a person can read.
-fn humanize(name: &str) -> String {
-    let spaced = name.replace(['_', '-'], " ");
-    let mut chars = spaced.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
 }
 
 #[cfg(test)]

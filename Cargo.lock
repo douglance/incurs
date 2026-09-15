@@ -1301,6 +1301,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "incurs-app-model"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "incurs",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "incurs-cli"
 version = "0.6.0"
 dependencies = [

@@ -16,118 +16,28 @@ use gpui::{
     Styled, Task, Window, div, prelude::*, px,
 };
 use incurs::output::{CtaBlock, CtaEntry};
-use incurs::tool::{ToolCallOutcome, ToolDefinition, ToolEvent};
 use serde_json::Value;
-use tokio_util::sync::CancellationToken;
 
-use crate::form::{FieldKind, FormModel, FormState};
-use crate::render::{DisplayRow, raw_json, rows_for};
-use crate::runtime::{RunUpdate, ToolRunner};
-use crate::skills::{SkillPublisher, SkillReport};
+use incurs_app_model::form::{FieldKind, FormModel};
+use incurs_app_model::rows::{DisplayRow, raw_json, rows_for};
+use incurs_app_model::session::{AppSession, RunState, SkillState};
+use incurs_app_model::{RunUpdate, SkillPublisher, SkillReport, ToolRunner};
+
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::{FIELD_HEIGHT, RADIUS, SIDEBAR_WIDTH, Theme};
 
-/// One command as the workbench presents it.
-struct CommandItem {
-    /// The exposed tool name used for invocation.
-    name: String,
-    /// The label shown in the sidebar.
-    title: String,
-    /// The command's neutral summary.
-    description: String,
-    /// Whether the contract marks the command as destructive.
-    destructive: bool,
-    /// The lowered input form.
-    model: FormModel,
-}
-
-impl CommandItem {
-    /// Builds a presentation item from one tool definition.
-    fn from_definition(definition: &ToolDefinition) -> Self {
-        let title = definition
-            .annotations
-            .as_ref()
-            .and_then(|annotations| annotations.title.clone())
-            .unwrap_or_else(|| humanize_path(&definition.name));
-        let destructive = definition
-            .annotations
-            .as_ref()
-            .and_then(|annotations| annotations.destructive_hint)
-            .unwrap_or(false);
-
-        Self {
-            name: definition.name.clone(),
-            title,
-            description: definition.description.clone(),
-            destructive,
-            model: FormModel::from_input_schema(&definition.input_schema),
-        }
-    }
-}
-
-/// The state of the current or most recent call.
-enum RunState {
-    /// No call has been made for the selected command.
-    Idle,
-    /// A call is in flight.
-    Running {
-        /// Cancellation signal for the active call.
-        cancellation: CancellationToken,
-        /// Progress messages and logs, newest last.
-        log: Vec<String>,
-        /// The most recent reported completion fraction.
-        fraction: Option<f64>,
-        /// Streamed chunks collected so far.
-        chunks: Vec<Value>,
-    },
-    /// The call succeeded.
-    Succeeded {
-        /// The structured result.
-        data: Value,
-        /// Follow-up suggestions reported by the command.
-        cta: Option<CtaBlock>,
-        /// Whether the raw JSON view is expanded.
-        raw: bool,
-    },
-    /// The call failed.
-    Failed {
-        /// The human-readable failure message.
-        message: String,
-        /// The machine-readable failure code.
-        code: String,
-        /// Problems that matched no field.
-        details: Vec<String>,
-    },
-    /// The call was cancelled by the person using the application.
-    Cancelled,
-}
-
-/// The state of agent skill installation.
-enum SkillState {
-    /// Nothing has been installed in this session.
-    Idle,
-    /// An installation is in flight.
-    Installing,
-    /// The last installation succeeded.
-    Installed(SkillReport),
-    /// The last installation failed.
-    Failed(String),
-}
-
 /// The root view of the desktop application.
 pub struct Workbench {
-    runner: Arc<ToolRunner>,
+    /// Everything that is not specific to this toolkit.
+    session: AppSession,
     app_title: SharedString,
-    app_version: Option<SharedString>,
-    commands: Vec<CommandItem>,
-    selected: Option<usize>,
+    /// This view owns its text buffers; the session does not. The controls are
+    /// the source of truth, written into form state just before a call.
     search: Entity<TextField>,
     fields: BTreeMap<String, Entity<TextField>>,
-    state: FormState,
-    run: RunState,
+    /// Whether the raw-JSON disclosure is open. Presentation, not domain state.
+    raw_open: bool,
     run_task: Option<Task<()>>,
-    skills: Option<SkillPublisher>,
-    skill_state: SkillState,
     skill_task: Option<Task<()>>,
     focus_handle: FocusHandle,
 }
@@ -142,19 +52,6 @@ impl Workbench {
     ) -> Self {
         cx.set_global(Theme::for_appearance(window.appearance()));
 
-        let (app_version, commands) = {
-            let catalog = runner.catalog();
-            let version = catalog
-                .version()
-                .map(|version| SharedString::from(version.to_string()));
-            let commands: Vec<CommandItem> = catalog
-                .definitions()
-                .iter()
-                .map(CommandItem::from_definition)
-                .collect();
-            (version, commands)
-        };
-
         let search = cx.new(|cx| TextField::new("Search commands", cx));
         cx.subscribe(&search, |this: &mut Self, _, _: &TextFieldEvent, cx| {
             cx.notify();
@@ -163,60 +60,27 @@ impl Workbench {
         .detach();
 
         let mut workbench = Self {
-            runner,
+            session: AppSession::new(runner),
             app_title,
-            app_version,
-            commands,
-            selected: None,
             search,
             fields: BTreeMap::new(),
-            state: FormState::default(),
-            run: RunState::Idle,
+            raw_open: false,
             run_task: None,
-            skills: None,
-            skill_state: SkillState::Idle,
             skill_task: None,
             focus_handle: cx.focus_handle(),
         };
-
-        if !workbench.commands.is_empty() {
-            workbench.select(0, cx);
-        }
+        workbench.rebuild_controls(cx);
         workbench
     }
 
-    /// Selects one command and rebuilds its form controls.
-    fn select(&mut self, index: usize, cx: &mut Context<Self>) {
-        let Some(command) = self.commands.get(index) else {
-            return;
-        };
-
-        self.selected = Some(index);
-        self.state = FormState::new(&command.model);
-        self.run = RunState::Idle;
-        self.run_task = None;
+    /// Rebuilds one text control per text-like field of the selected command.
+    fn rebuild_controls(&mut self, cx: &mut Context<Self>) {
         self.fields.clear();
-
-        let fields: Vec<(String, String)> = command
-            .model
-            .fields
-            .iter()
-            .filter(|field| field.kind.is_text_like())
-            .map(|field| {
-                let placeholder = match &field.kind {
-                    FieldKind::List => "Separate entries with commas".to_string(),
-                    FieldKind::Json => "JSON value".to_string(),
-                    FieldKind::Number { integer: true } => "Whole number".to_string(),
-                    FieldKind::Number { integer: false } => "Number".to_string(),
-                    _ => field.label.clone(),
-                };
-                (field.name.clone(), placeholder)
-            })
-            .collect();
-
-        for (name, placeholder) in fields {
+        self.raw_open = false;
+        for (name, placeholder) in self.session.text_fields() {
             let seed = self
-                .state
+                .session
+                .state()
                 .value(&name)
                 .map(|value| value.text.clone())
                 .unwrap_or_default();
@@ -231,38 +95,38 @@ impl Workbench {
                 .detach();
             self.fields.insert(name, control);
         }
-
         cx.notify();
+    }
+
+    /// Selects one command and rebuilds its form controls.
+    fn select(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.session.select(index);
+        self.run_task = None;
+        self.rebuild_controls(cx);
     }
 
     /// Selects the command with the given exposed tool name.
     ///
     /// Returns whether a command with that name exists.
     pub fn select_command(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
-        match self
-            .commands
-            .iter()
-            .position(|command| command.name == name)
-        {
-            Some(index) => {
-                self.select(index, cx);
-                true
-            }
-            None => false,
+        if self.session.select_command(name) {
+            self.run_task = None;
+            self.rebuild_controls(cx);
+            true
+        } else {
+            false
         }
     }
 
     /// Returns the exposed name of the selected command.
     pub fn selected_command(&self) -> Option<&str> {
-        self.selected
-            .and_then(|index| self.commands.get(index))
-            .map(|command| command.name.as_str())
+        self.session.selected_command()
     }
 
     /// Sets one text control's contents.
     ///
     /// Has no effect on a field that is not collected as text, such as a
-    /// switch or a choice.
+    /// switch or a choice; drive those through the session's form state.
     pub fn set_field_text(&mut self, name: &str, text: &str, cx: &mut Context<Self>) {
         if let Some(control) = self.fields.get(name) {
             control.update(cx, |field, cx| field.set_text(text.to_string(), cx));
@@ -285,47 +149,38 @@ impl Workbench {
         }
     }
 
-    /// Returns whether a call is currently in flight.
+    /// Returns whether a call is in flight.
     pub fn is_running(&self) -> bool {
-        matches!(self.run, RunState::Running { .. })
+        self.session.is_running()
     }
 
-    /// Returns the most recent successful result, when the last call succeeded.
+    /// Returns the most recent successful result.
     pub fn last_result(&self) -> Option<&Value> {
-        match &self.run {
-            RunState::Succeeded { data, .. } => Some(data),
-            _ => None,
-        }
+        self.session.last_result()
     }
 
-    /// Returns the most recent failure message, when the last call failed.
+    /// Returns the most recent failure message.
     pub fn last_error(&self) -> Option<&str> {
-        match &self.run {
-            RunState::Failed { message, .. } => Some(message),
-            _ => None,
-        }
+        self.session.last_error()
     }
 
-    /// Sets the skill publisher offered in the sidebar.
-    ///
-    /// Passing `None` hides skill installation.
+    /// Sets the agent skill publisher offered by the footer.
     pub fn set_skills(&mut self, skills: Option<SkillPublisher>, cx: &mut Context<Self>) {
-        self.skills = skills;
-        self.skill_state = SkillState::Idle;
+        self.session.set_skills(skills);
         cx.notify();
     }
 
-    /// Returns the report from the last successful skill installation.
+    /// Returns the report of the last successful skill installation.
     pub fn last_skill_report(&self) -> Option<&SkillReport> {
-        match &self.skill_state {
+        match self.session.skill_state() {
             SkillState::Installed(report) => Some(report),
             _ => None,
         }
     }
 
-    /// Returns the message from the last failed skill installation.
+    /// Returns the message of the last failed skill installation.
     pub fn last_skill_error(&self) -> Option<&str> {
-        match &self.skill_state {
+        match self.session.skill_state() {
             SkillState::Failed(message) => Some(message),
             _ => None,
         }
@@ -335,19 +190,14 @@ impl Workbench {
     ///
     /// Does nothing when no publisher is configured or one is already running.
     pub fn install_skills(&mut self, cx: &mut Context<Self>) {
-        let Some(publisher) = self.skills.clone() else {
+        let Some(publisher) = self.session.begin_skill_install() else {
             return;
         };
-        if matches!(self.skill_state, SkillState::Installing) {
-            return;
-        }
-
-        self.skill_state = SkillState::Installing;
 
         // Installation touches the filesystem, so it runs on the call runtime
         // rather than blocking the window.
         let (sender, receiver) = futures::channel::oneshot::channel();
-        self.runner.spawn(async move {
+        self.session.runner().spawn(async move {
             let _ = sender.send(match publisher.install().await {
                 Ok(result) => Ok(SkillReport::from_result(&result)),
                 Err(error) => Err(error.to_string()),
@@ -357,11 +207,10 @@ impl Workbench {
         self.skill_task = Some(cx.spawn(async move |this, cx| {
             let outcome = receiver.await;
             let _ = this.update(cx, |this, cx| {
-                this.skill_state = match outcome {
-                    Ok(Ok(report)) => SkillState::Installed(report),
-                    Ok(Err(message)) => SkillState::Failed(message),
-                    Err(_) => SkillState::Failed("Installation stopped unexpectedly.".to_string()),
-                };
+                this.session.finish_skill_install(match outcome {
+                    Ok(result) => result,
+                    Err(_) => Err("Installation stopped unexpectedly.".to_string()),
+                });
                 this.skill_task = None;
                 cx.notify();
             });
@@ -371,6 +220,9 @@ impl Workbench {
     }
 
     /// Copies every text control back into the form state.
+    ///
+    /// The controls are the source of truth for text, so this must run before
+    /// arguments are collected. Deleting it makes typing reach no command.
     fn sync_text_values(&mut self, cx: &mut App) {
         let texts: Vec<(String, String)> = self
             .fields
@@ -378,46 +230,26 @@ impl Workbench {
             .map(|(name, control)| (name.clone(), control.read(cx).text().to_string()))
             .collect();
         for (name, text) in texts {
-            self.state.value_mut(&name).text = text;
+            self.session.state_mut().value_mut(&name).text = text;
         }
     }
 
     /// Starts the selected command with the collected values.
     pub fn run_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(index) = self.selected else {
-            return;
-        };
-        let Some(command) = self.commands.get(index) else {
-            return;
-        };
-        let name = command.name.clone();
-        let model = command.model.clone();
-
         self.sync_text_values(cx);
-        self.state.clear_issues();
-        self.apply_issue_marks(cx);
 
-        let arguments = match self.state.arguments(&model) {
-            Ok(arguments) => arguments,
-            Err(issues) => {
-                for issue in issues {
-                    self.state.value_mut(&issue.field).issue = Some(issue.message);
-                }
+        let handle = match self.session.start_run() {
+            Ok(handle) => handle,
+            Err(_) => {
                 self.apply_issue_marks(cx);
                 cx.notify();
                 return;
             }
         };
+        self.apply_issue_marks(cx);
+        self.raw_open = false;
 
-        let handle = self.runner.start(&name, arguments);
         let mut updates = handle.updates;
-        self.run = RunState::Running {
-            cancellation: handle.cancellation,
-            log: Vec::new(),
-            fraction: None,
-            chunks: Vec::new(),
-        };
-
         self.run_task = Some(cx.spawn(async move |this, cx| {
             while let Some(update) = updates.next().await {
                 let delivered = this.update(cx, |this, cx| this.receive(update, cx));
@@ -432,98 +264,13 @@ impl Workbench {
 
     /// Applies one ordered update from the running call.
     fn receive(&mut self, update: RunUpdate, cx: &mut Context<Self>) {
-        match update {
-            RunUpdate::Event(event) => {
-                if let RunState::Running {
-                    log,
-                    fraction,
-                    chunks,
-                    ..
-                } = &mut self.run
-                {
-                    match event {
-                        ToolEvent::Progress {
-                            message,
-                            fraction: f,
-                        } => {
-                            log.push(message);
-                            if f.is_some() {
-                                *fraction = f;
-                            }
-                        }
-                        ToolEvent::Log { level, message } => {
-                            log.push(format!("{level}: {message}"));
-                        }
-                        ToolEvent::Chunk { data } => chunks.push(data),
-                    }
-                    // Keep the visible log bounded; a long stream must not grow
-                    // the view without limit.
-                    if log.len() > 200 {
-                        log.drain(0..log.len() - 200);
-                    }
-                }
-            }
-            RunUpdate::Finished(outcome) => self.finish(*outcome, cx),
+        let terminal = matches!(update, RunUpdate::Finished(_));
+        self.session.receive(update);
+        if terminal {
+            self.run_task = None;
+            self.apply_issue_marks(cx);
         }
         cx.notify();
-    }
-
-    /// Records the terminal outcome of a call.
-    fn finish(&mut self, outcome: ToolCallOutcome, cx: &mut Context<Self>) {
-        let cancelled = matches!(&self.run, RunState::Running { cancellation, .. } if cancellation.is_cancelled());
-        let streamed = match &self.run {
-            RunState::Running { chunks, .. } if !chunks.is_empty() => Some(chunks.clone()),
-            _ => None,
-        };
-
-        self.run = match outcome {
-            ToolCallOutcome::Ok { data, cta } => {
-                if cancelled {
-                    RunState::Cancelled
-                } else {
-                    RunState::Succeeded {
-                        // A streaming command reports its chunks as the result,
-                        // because its terminal value carries no rows.
-                        data: match streamed {
-                            Some(chunks) if data.is_null() => Value::Array(chunks),
-                            _ => data,
-                        },
-                        cta,
-                        raw: false,
-                    }
-                }
-            }
-            ToolCallOutcome::Error {
-                code,
-                message,
-                field_errors,
-                ..
-            } => {
-                if cancelled {
-                    RunState::Cancelled
-                } else {
-                    let details = field_errors
-                        .as_ref()
-                        .map(|errors| {
-                            let model = self
-                                .selected
-                                .and_then(|index| self.commands.get(index))
-                                .map(|command| command.model.clone())
-                                .unwrap_or_default();
-                            self.state.apply_field_errors(&model, errors)
-                        })
-                        .unwrap_or_default();
-                    RunState::Failed {
-                        message,
-                        code,
-                        details,
-                    }
-                }
-            }
-        };
-
-        self.apply_issue_marks(cx);
-        self.run_task = None;
     }
 
     /// Marks each text control according to its current field problem.
@@ -533,7 +280,8 @@ impl Workbench {
             .keys()
             .map(|name| {
                 let invalid = self
-                    .state
+                    .session
+                    .state()
                     .value(name)
                     .and_then(|value| value.issue.as_ref())
                     .is_some();
@@ -549,26 +297,13 @@ impl Workbench {
 
     /// Cancels the active call, if any.
     fn cancel_run(&mut self, cx: &mut Context<Self>) {
-        if let RunState::Running { cancellation, .. } = &self.run {
-            cancellation.cancel();
-        }
+        self.session.cancel();
         cx.notify();
     }
 
     /// Returns the indices of commands matching the current search text.
     fn visible_commands(&self, cx: &App) -> Vec<usize> {
-        let query = self.search.read(cx).text().trim().to_lowercase();
-        self.commands
-            .iter()
-            .enumerate()
-            .filter(|(_, command)| {
-                query.is_empty()
-                    || command.title.to_lowercase().contains(&query)
-                    || command.name.to_lowercase().contains(&query)
-                    || command.description.to_lowercase().contains(&query)
-            })
-            .map(|(index, _)| index)
-            .collect()
+        self.session.visible(self.search.read(cx).text())
     }
 }
 
@@ -604,7 +339,7 @@ impl Workbench {
     /// Renders the command list.
     fn render_sidebar(&mut self, theme: Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let visible = self.visible_commands(cx);
-        let selected = self.selected;
+        let selected = self.session.selected_index();
 
         div()
             .w(SIDEBAR_WIDTH)
@@ -629,7 +364,7 @@ impl Workbench {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(self.app_title.clone()),
                     )
-                    .children(self.app_version.clone().map(|version| {
+                    .children(self.session.version().map(|version| {
                         div()
                             .text_size(px(11.0))
                             .text_color(theme.text_muted)
@@ -648,7 +383,7 @@ impl Workbench {
                     .flex_col()
                     .gap_px()
                     .children(visible.into_iter().map(|index| {
-                        let command = &self.commands[index];
+                        let command = &self.session.commands()[index];
                         let is_selected = selected == Some(index);
                         div()
                             .id(("command", index))
@@ -684,13 +419,13 @@ impl Workbench {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
-        let publisher = self.skills.as_ref()?;
+        let publisher = self.session.skills()?;
         if publisher.is_empty() {
             return None;
         }
-        let installing = matches!(self.skill_state, SkillState::Installing);
+        let installing = matches!(self.session.skill_state(), SkillState::Installing);
 
-        let status: Option<gpui::AnyElement> = match &self.skill_state {
+        let status: Option<gpui::AnyElement> = match self.session.skill_state() {
             SkillState::Idle => Some(
                 div()
                     .text_size(px(11.0))
@@ -744,7 +479,7 @@ impl Workbench {
                             this.cursor_pointer()
                                 .hover(|style| style.bg(theme.surface_hover))
                         })
-                        .child(match &self.skill_state {
+                        .child(match self.session.skill_state() {
                             SkillState::Installing => "Installing…",
                             SkillState::Installed(_) => "Install again",
                             _ => "Install",
@@ -761,7 +496,7 @@ impl Workbench {
 
     /// Renders the selected command's form and result.
     fn render_detail(&mut self, theme: Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let Some(index) = self.selected else {
+        let Some(index) = self.session.selected_index() else {
             return div()
                 .flex_1()
                 .flex()
@@ -771,12 +506,12 @@ impl Workbench {
                 .child("This application has no commands to show.")
                 .into_any_element();
         };
-        let command = &self.commands[index];
+        let command = &self.session.commands()[index];
         let title = command.title.clone();
         let description = command.description.clone();
         let destructive = command.destructive;
         let model = command.model.clone();
-        let running = matches!(self.run, RunState::Running { .. });
+        let running = matches!(self.session.run_state(), RunState::Running { .. });
 
         div()
             .id("detail")
@@ -842,7 +577,12 @@ impl Workbench {
             .fields
             .iter()
             .map(|field| {
-                let value = self.state.value(&field.name).cloned().unwrap_or_default();
+                let value = self
+                    .session
+                    .state()
+                    .value(&field.name)
+                    .cloned()
+                    .unwrap_or_default();
                 let name = field.name.clone();
 
                 let control: gpui::AnyElement = match &field.kind {
@@ -862,7 +602,7 @@ impl Workbench {
                             .on_click(cx.listener({
                                 let name = name.clone();
                                 move |this, _, _, cx| {
-                                    let value = this.state.value_mut(&name);
+                                    let value = this.session.state_mut().value_mut(&name);
                                     value.toggle = !value.toggle;
                                     cx.notify();
                                 }
@@ -894,7 +634,8 @@ impl Workbench {
                                     let name = name.clone();
                                     let option = option.clone();
                                     move |this, _, _, cx| {
-                                        this.state.value_mut(&name).choice = option.clone();
+                                        this.session.state_mut().value_mut(&name).choice =
+                                            option.clone();
                                         cx.notify();
                                     }
                                 }))
@@ -1002,7 +743,7 @@ impl Workbench {
 
     /// Renders the current run state.
     fn render_result(&mut self, theme: Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        match &self.run {
+        match self.session.run_state() {
             RunState::Idle => div().into_any_element(),
             RunState::Cancelled => card(theme)
                 .child(
@@ -1064,8 +805,8 @@ impl Workbench {
                         .child(code.clone()),
                 )
                 .into_any_element(),
-            RunState::Succeeded { data, cta, raw } => {
-                let raw_open = *raw;
+            RunState::Succeeded { data, cta } => {
+                let raw_open = self.raw_open;
                 let rows = rows_for(data);
                 let json = raw_json(data);
                 card(theme)
@@ -1097,9 +838,7 @@ impl Workbench {
                                 "Show raw data"
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
-                                if let RunState::Succeeded { raw, .. } = &mut this.run {
-                                    *raw = !*raw;
-                                }
+                                this.raw_open = !this.raw_open;
                                 cx.notify();
                             })),
                     )
@@ -1185,17 +924,4 @@ fn card(theme: Theme) -> gpui::Div {
         .bg(theme.surface)
         .border_1()
         .border_color(theme.border)
-}
-
-/// Renders an exposed tool name as a readable command title.
-///
-/// Tool names join their command path with underscores, so `todo_add` reads as
-/// `Todo add` unless the contract supplied its own title.
-fn humanize_path(name: &str) -> String {
-    let spaced = name.replace(['_', '-'], " ");
-    let mut chars = spaced.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
 }

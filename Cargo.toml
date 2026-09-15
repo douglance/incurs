@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/incurs",
+  "crates/incurs-app-model",
   "crates/incurs-codemode",
   "crates/incurs-codemode-local",
   "crates/incurs-codemode-mcp",

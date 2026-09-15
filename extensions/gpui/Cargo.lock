@@ -3190,12 +3190,25 @@ dependencies = [
  "futures",
  "gpui",
  "incurs",
+ "incurs-app-model",
  "schemars",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "incurs-app-model"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "futures",
+ "incurs",
+ "serde_json",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]

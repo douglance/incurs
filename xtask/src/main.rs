@@ -68,6 +68,7 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         (root, "incurs-codemode-mcp", "0.3.0"),
         (root, "incurs-mcp-protocol", "0.1.0"),
         (root, "incurs-remote", "0.2.0"),
+        (root, "incurs-app-model", "0.1.0"),
         (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.3.0"),
         (cloudflare.as_path(), "incurs-mcp-cloudflare", "0.2.0"),
     ];

@@ -94,6 +94,12 @@ impl ToolRunner {
     /// # Errors
     ///
     /// Returns the Tokio error when the runtime cannot be created.
+    /// # Panics on drop inside an async context
+    ///
+    /// The returned runner owns a Tokio runtime, and Tokio refuses to drop a
+    /// runtime from inside another one. Construct this from synchronous code —
+    /// a `main` that is not `#[tokio::main]`, or an ordinary `#[test]` — not
+    /// from within an existing runtime.
     pub fn new(catalog: ToolCatalog, environment: CallEnvironment) -> std::io::Result<Self> {
         Ok(Self {
             catalog,

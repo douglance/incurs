@@ -12,7 +12,7 @@ use incurs::cli::Cli;
 use incurs::command::{CommandContext, CommandDef, CommandHandler};
 use incurs::output::CommandResult;
 use incurs::schema::{FieldMeta, FieldType};
-use incurs_app_gpui::{SkillPublisher, SkillReport, SkillScope};
+use incurs_app_model::{SkillPublisher, SkillReport, SkillScope};
 use serde_json::json;
 
 /// A command that does nothing, since these tests only compile skills.

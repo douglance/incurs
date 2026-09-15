@@ -33,12 +33,11 @@
 #![deny(missing_docs)]
 
 pub mod bundle;
-pub mod form;
-pub mod render;
-pub mod runtime;
-pub mod skills;
 pub mod text_field;
 pub mod theme;
+
+#[doc(inline)]
+pub use incurs_app_model::{form, rows as render, runtime, session, skills};
 mod workbench;
 
 use std::sync::Arc;
@@ -50,8 +49,8 @@ use gpui::{
 use incurs::cli::Cli;
 use incurs::tool::{ToolCatalog, ToolCatalogError};
 
-pub use runtime::CallEnvironment;
-pub use skills::{SkillPublisher, SkillReport, SkillScope};
+pub use incurs_app_model::CallEnvironment;
+pub use incurs_app_model::{SkillPublisher, SkillReport, SkillScope};
 pub use workbench::Workbench;
 
 /// Builder for the desktop application window.
