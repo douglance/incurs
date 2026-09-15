@@ -880,6 +880,67 @@ fn kebab(value: &str) -> String {
 mod tests {
     use super::*;
 
+    /// A real `--llms-full` manifest, captured from the built `todoapp` example.
+    ///
+    /// Regenerate with:
+    ///
+    /// ```sh
+    /// cargo build --examples -p incurs --all-features
+    /// target/debug/examples/todoapp --llms-full --format json \
+    ///   > crates/incurs-cli/fixtures/todoapp.manifest.json
+    /// ```
+    const TODOAPP_MANIFEST: &str = include_str!("../fixtures/todoapp.manifest.json");
+
+    /// The Rust `incurs gen` produces from [`TODOAPP_MANIFEST`].
+    const TODOAPP_GENERATED: &str = include_str!("../fixtures/todoapp.generated.rs.txt");
+
+    /// Code generation is pinned against a real manifest, not a hand-written one.
+    ///
+    /// The fixture beside this test is the actual output of a built `incurs`
+    /// CLI, so this asserts what a user of `incurs gen` receives rather than
+    /// what a fixture author imagined. `source_contains_typed_command_modules`
+    /// covers shapes the todoapp fixture happens not to contain; this covers
+    /// every byte of one that it does.
+    #[test]
+    fn generated_source_matches_a_real_manifest() {
+        let manifest: Value = serde_json::from_str(TODOAPP_MANIFEST).expect("fixture is JSON");
+
+        let source = rust_source(&manifest).expect("the real manifest generates");
+
+        assert_eq!(
+            source, TODOAPP_GENERATED,
+            "`incurs gen` output changed for the todoapp manifest. If that is \
+             intended, regenerate crates/incurs-cli/fixtures/todoapp.generated.rs.txt \
+             and review the diff as the wire-format change it is."
+        );
+        syn::parse_file(&source).expect("generated source parses");
+    }
+
+    /// An array option must generate its declared item type, not `Vec<String>`.
+    ///
+    /// `rust_type` reads `schema["items"]`, so an emitter that omits `items`
+    /// silently degrades every array to `Vec<String>` with no error. Asserting
+    /// both branches here means that degradation fails a test rather than
+    /// reaching a user's generated code.
+    #[test]
+    fn an_array_generates_its_declared_item_type() {
+        assert_eq!(
+            rust_type(&json!({ "type": "array", "items": { "type": "number" } })),
+            "Vec<f64>"
+        );
+        assert_eq!(
+            rust_type(&json!({ "type": "array", "items": { "type": "boolean" } })),
+            "Vec<bool>"
+        );
+        assert_eq!(
+            rust_type(&json!({ "type": "array", "items": { "type": "string" } })),
+            "Vec<String>"
+        );
+        // Today's MCP emitter omits `items` entirely. Pinning the degraded
+        // result makes the Phase 9a fix visible as a test change.
+        assert_eq!(rust_type(&json!({ "type": "array" })), "Vec<String>");
+    }
+
     #[test]
     fn source_contains_typed_command_modules() {
         let manifest = json!({
