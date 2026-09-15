@@ -8,12 +8,15 @@ incurs began as a Rust port of [wevm/incur](https://github.com/wevm/incur) and k
 
 ## Status
 
-Version 0.5.0 adds exact multi-era MCP negotiation, standard `--`
-end-of-options parsing, and explicit process exit codes for successful typed
-commands. It preserves the typed Rust authoring path and provider-neutral Code
-Mode runtime. Version 0.5 requires Rust 1.88 or newer.
+Version 0.6.0 builds the `incurs` CLI with incurs itself. Doing so surfaced
+three defects no existing test could see: a builtin command silently shadowed a
+user-defined one of the same name, a boolean option could not be omitted, and
+one behavioral fact was carried by two independent fields. All three are fixed.
+`SKILL.md` is now generated from the command graph rather than hand-written, and
+`incurs explain` carries the Rust authoring reference as command data. Version
+0.6 requires Rust 1.88 or newer. See [MIGRATION.md](MIGRATION.md).
 
-| Surface | 0.5 status |
+| Surface | 0.6 status |
 | --- | --- |
 | CLI parsing, help, validation, aliases, output and streaming | Golden-tested |
 | HTTP, nested routes, middleware and fetch gateways | Implemented and tested |
@@ -24,6 +27,7 @@ Mode runtime. Version 0.5 requires Rust 1.88 or newer.
 | Durable Code Mode | Platform-neutral Rust lifecycle with local sandbox execution |
 | Typed args, options, env and output | `CommandDef::typed` plus derive macros |
 | Rust and JSON generation | `incurs gen` |
+| Authoring reference | `incurs explain`, compiled into `SKILL.md` |
 | Rust-only table and CSV formats | Explicit `incurs-extras` opt-in |
 
 `crates/incurs/tests/cli_surface.rs` pins the observable CLI surface — exit code and stdout together — with golden files covering every documented output format, error envelope, and streaming mode.
@@ -32,7 +36,7 @@ Mode runtime. Version 0.5 requires Rust 1.88 or newer.
 
 ```toml
 [dependencies]
-incurs = "0.5"
+incurs = "0.6"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
@@ -176,7 +180,7 @@ Built-in help and parsing expose the core output formats only. Table and CSV rem
 
 ```toml
 [dependencies]
-incurs-extras = "0.5"
+incurs-extras = "0.6"
 ```
 
 ```rust
@@ -192,7 +196,7 @@ let cli = cli.default_extra_format(ExtraFormat::Table);
 The optional transport features are:
 
 ```toml
-incurs = { version = "0.5", features = ["http", "mcp", "openapi"] }
+incurs = { version = "0.6", features = ["http", "mcp", "openapi"] }
 ```
 
 HTTP exposes root and arbitrarily nested commands, OpenAPI documents, well-known

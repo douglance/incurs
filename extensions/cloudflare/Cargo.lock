@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "incurs"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -996,7 +996,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1011,7 +1011,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode-cloudflare"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "incurs",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode-mcp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "http",
  "incurs",
@@ -1061,7 +1061,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1070,7 +1070,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-mcp-cloudflare"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "incurs",
  "incurs-mcp-protocol",

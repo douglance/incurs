@@ -1,128 +1,139 @@
-# Migrating from incurs 0.4 to 0.5
+# Migrating from incurs 0.5 to 0.6
 
-Version 0.5 adds exact multi-era Model Context Protocol (MCP) negotiation,
-standard `--` end-of-options parsing, and explicit process exit codes for
-successful commands. It also updates the MCP transport integration from
-`rmcp` 2.2 to the pinned `rmcp` 3.0.0 beta used by this release.
+Version 0.6 builds the `incurs` CLI with incurs itself. That exercise found
+three defects that no test in the repository could see, because no CLI in it
+had ever used the affected paths. Two of the fixes change behavior, and one
+changes an emitted schema.
 
 ## Prerequisites
 
-incurs 0.5 requires Rust 1.88 or newer. Update the toolchain before changing
-dependency versions:
+incurs 0.6 requires Rust 1.88 or newer, unchanged from 0.5.
 
 ```bash
 rustup update stable
 rustc --version
 ```
 
-The reported compiler version must be 1.88.0 or newer.
-
 ## Package versions
 
-Update packages that share the core incurs API to their 0.5 release line:
+Update the packages that share the core incurs API together:
 
 ```toml
 [dependencies]
-incurs = "0.5"
-incurs-extras = "0.5" # only when using Rust-only formats
+incurs = "0.6"
+incurs-macros = "0.5"  # only when depended on directly
+incurs-extras = "0.6"  # only when using Rust-only formats
 ```
 
-The derive crate remains on its compatible published version:
-
-```toml
-incurs-macros = "0.4"
-```
-
-Update Code Mode packages together because their public APIs exchange incurs
-and Code Mode types:
+Code Mode packages exchange incurs types through their public APIs, so upgrade
+them as a set:
 
 ```toml
 [dependencies]
-incurs-codemode = "0.2"
-incurs-codemode-local = "0.2"
-incurs-codemode-mcp = "0.2"
+incurs-codemode = "0.3"
+incurs-codemode-local = "0.3"
+incurs-codemode-mcp = "0.3"
 ```
 
-Cloudflare integrations use `incurs-codemode-cloudflare = "0.2"`. The new
-`incurs-mcp-protocol = "0.1"` crate is available for applications that need
-the provider-neutral standard registry, codecs, validation, or negotiation
-policy directly.
+Cloudflare integrations use `incurs-codemode-cloudflare = "0.3"` and
+`incurs-mcp-cloudflare = "0.2"`. The remote capability seam is
+`incurs-remote = "0.2"`. `incurs-mcp-protocol` stays at `0.1`.
 
-## Update successful command results
+## Rename a command that shadows a builtin
 
-`TypedResult::Ok` and the lower-level successful command result now include an
-optional `exit_code`. Constructors remain the preferred API:
+`completions`, `mcp`, `plugin` and `skills` are builtin command names. Until
+now a builtin claimed its name unconditionally, and every builtin dispatcher
+treats an unrecognized subcommand as success — so a CLI that registered its own
+command under one of those names saw builtin help and a zero exit, with no
+diagnostic and no way to reach its handler.
+
+A registered command now wins:
 
 ```rust
-TypedResult::ok(output)
+// In 0.5 this command was unreachable; `app plugin check` printed builtin
+// help and exited 0. In 0.6 it runs.
+Cli::create("app").command("plugin", plugin_command())
 ```
 
-Use `TypedResult::ok_with_exit_code` when a command successfully wraps a
-subprocess and must pass through its process status:
+Audit any CLI that defines one of those four names. If it relied on the builtin
+being reachable under that name, rename the registered command — the builtin is
+shadowed only when a command of the same name exists.
 
-```rust
-TypedResult::ok_with_exit_code(output, status.code().unwrap_or(1))
-```
+## Expect a declared default on boolean options
 
-If an application constructs a successful result variant directly, add
-`exit_code: None` to preserve the normal success status:
-
-```rust
-TypedResult::Ok {
-    data: output,
-    cta: None,
-    exit_code: None,
-}
-```
-
-The CLI process adapter reports an explicit successful-result exit code.
-Buffered and embedded runtimes continue to return the structured result to the
-caller.
-
-## Preserve arguments after `--`
-
-The parser now treats `--` as the end-of-options marker. Tokens after it are
-positional or passthrough arguments even when they begin with `-`:
+A `bool` field in a struct deriving `incurs::Options` is optional, but declared
+no default. `bool` has no serde default either, so omitting the flag failed to
+parse:
 
 ```console
-my-cli run --image local -- printf --image --unknown
+$ my-cli ship
+Error (VALIDATION_ERROR): Failed to parse options: missing field `force`
 ```
 
-The command receives `printf`, `--image`, and `--unknown` as passthrough
-arguments. Audit commands that previously treated `--` as an ordinary token.
+An absent boolean flag now declares `false`. Omitting the flag works, and the
+default appears in every published schema:
 
-## Update MCP integrations
+```json
+{ "force": { "type": "boolean", "default": false } }
+```
 
-The MCP feature now uses exact standard profiles for `2024-11-05`,
-`2025-03-26`, `2025-06-18`, `2025-11-25`, and `2026-07-28`.
-`incurs-mcp-protocol` owns the profile registry, lifecycle families, wire-era
-codecs, validation, and negotiation policy.
+Tests or clients that asserted a boolean option had **no** `default` key must
+be updated. Nothing else about boolean parsing changed.
 
-Applications that expose `rmcp` types through their own public APIs must update
-for `rmcp` 3.0.0-beta.5. In particular, tool handlers now return the rmcp 3
-response types, and servers can declare exact supported protocol versions.
+## Declare both destructive fields
 
-`incurs-codemode-mcp::CodeModeMcpServer::new` enables all supported standards.
-Use `CodeModeMcpServer::with_standards` with an `McpStandardSet` when a server
-must restrict its advertised versions:
+`McpCommandOptions::destructive` gates skill confirmation, while the MCP
+`destructive_hint` annotation is what MCP clients read. They are separate
+fields carrying one fact, and setting only one leaves the other surface
+unwarned. Until they are unified, declare both:
 
 ```rust
-use incurs_codemode_mcp::CodeModeMcpServer;
-use incurs_mcp_protocol::McpStandardSet;
-
-let server = CodeModeMcpServer::with_standards(
-    service,
-    McpStandardSet::legacy_only(),
-);
+.mcp(McpCommandOptions {
+    destructive: true,
+    annotations: Some(McpAnnotations {
+        destructive_hint: Some(true),
+        ..Default::default()
+    }),
+    ..Default::default()
+})
 ```
 
-Modern clients use discovery. Legacy clients continue to initialize with an
-exact standard. Authentication, transport, and server failures do not trigger
-protocol fallback.
+## Update `incurs plugin call` consumers
+
+`incurs plugin call` printed the raw `{status, data}` tool outcome, which
+nested one envelope inside the framework's own. It now prints the tool's data,
+like every other command:
+
+```console
+# 0.5
+{"status":"ok","data":{"message":"pong"}}
+
+# 0.6
+{"message":"pong"}
+```
+
+A failure is the standard error envelope with a non-zero exit, so branch on the
+exit status rather than reading `status` from the payload. Pass `--full-output`
+when the `{ok, data, meta}` envelope is wanted.
+
+`incurs` help and error text are now generated rather than hardcoded. `gen` and
+the `plugin` commands keep JSON as their default output format, so scripts that
+parse stdout are unaffected.
+
+## Read the reference from the CLI
+
+The repository's `SKILL.md` documented a TypeScript package. It is now compiled
+from the command graph by `cargo xtask skill-sync`, and the same content is
+available from the CLI:
+
+```bash
+incurs explain                 # list topics
+incurs explain typed-commands  # read one
+```
 
 ## Validate the migration
 
-Run the checks that match the features used by the application:
+Run the checks that match the features the application uses:
 
 ```bash
 cargo check --all-features
@@ -130,5 +141,5 @@ cargo test --all-features
 cargo doc --all-features --no-deps
 ```
 
-For an HTTP or MCP integration, also test its real transport against every
-protocol version that it advertises.
+For a CLI that defines a command named `completions`, `mcp`, `plugin` or
+`skills`, also run that command and confirm it reaches the intended handler.

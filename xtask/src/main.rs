@@ -55,17 +55,21 @@ fn main() {
 fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
     let cloudflare = root.join("extensions/cloudflare");
+    // `incurs-remote` is a root workspace member, so `cargo package --workspace`
+    // builds it. Leaving it out of this list meant it shipped without ever
+    // being unpacked and compiled from its own archive.
     let packages = vec![
-        (root, "incurs-macros", "0.4.0"),
-        (root, "incurs", "0.5.3"),
-        (root, "incurs-cli", "0.5.1"),
-        (root, "incurs-extras", "0.5.0"),
-        (root, "incurs-codemode", "0.2.0"),
-        (root, "incurs-codemode-local", "0.2.1"),
-        (root, "incurs-codemode-mcp", "0.2.0"),
+        (root, "incurs-macros", "0.5.0"),
+        (root, "incurs", "0.6.0"),
+        (root, "incurs-cli", "0.6.0"),
+        (root, "incurs-extras", "0.6.0"),
+        (root, "incurs-codemode", "0.3.0"),
+        (root, "incurs-codemode-local", "0.3.0"),
+        (root, "incurs-codemode-mcp", "0.3.0"),
         (root, "incurs-mcp-protocol", "0.1.0"),
-        (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.2.0"),
-        (cloudflare.as_path(), "incurs-mcp-cloudflare", "0.1.0"),
+        (root, "incurs-remote", "0.2.0"),
+        (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.3.0"),
+        (cloudflare.as_path(), "incurs-mcp-cloudflare", "0.2.0"),
     ];
     for (package_root, package, version) in &packages {
         let archive = package_archive(package_root, package, version);
@@ -87,6 +91,14 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     // The Cloudflare extension is its own workspace, so its members are packaged
     // separately from the root `cargo package --workspace` above.
+    //
+    // A path dependency that crosses a workspace boundary is resolved from the
+    // registry at packaging time, so these crates cannot be packaged until the
+    // `incurs` version they require is published. That is a property of cargo,
+    // not a defect, and it fixes the release order: core first, extensions
+    // after. Report it plainly rather than failing the check for it; every
+    // other packaging failure still fails.
+    let mut deferred = Vec::new();
     for package in ["incurs-codemode-cloudflare", "incurs-mcp-cloudflare"] {
         let mut command = Command::new("cargo");
         command.current_dir(&cloudflare);
@@ -98,7 +110,27 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
             "--no-verify",
             "--locked",
         ]);
-        run(&mut command, &format!("package {package}"))?;
+        let output = command.output()?;
+        if output.status.success() {
+            continue;
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("failed to select a version for the requirement `incurs") {
+            deferred.push(package);
+            continue;
+        }
+        return Err(format!(
+            "package {package} exited with {}: {}",
+            output.status,
+            stderr.trim()
+        )
+        .into());
+    }
+    if !deferred.is_empty() {
+        eprintln!(
+            "deferred until incurs is published: {}",
+            deferred.join(", ")
+        );
     }
 
     let temp = env::temp_dir().join(format!("incurs-release-check-{}", std::process::id()));
@@ -106,7 +138,13 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         fs::remove_dir_all(&temp)?;
     }
     fs::create_dir_all(&temp)?;
-    let result = verify_archives(&temp, &packages);
+    // A deferred package has no archive to verify yet.
+    let verifiable: Vec<_> = packages
+        .iter()
+        .filter(|(_, package, _)| !deferred.contains(package))
+        .copied()
+        .collect();
+    let result = verify_archives(&temp, &verifiable);
     if result.is_ok() {
         fs::remove_dir_all(&temp)?;
     } else {

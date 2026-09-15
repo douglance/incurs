@@ -9,7 +9,7 @@ repository = "https://github.com/douglance/incurs"
 readme = "README.md"
 
 [dependencies]
-incurs = { path = "../../../../crates/incurs", version = "0.5.3", default-features = false }
+incurs = { path = "../../../../crates/incurs", version = "0.6.0", default-features = false }
 gpui = "0.2.2"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time"] }
