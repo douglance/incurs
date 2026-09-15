@@ -65,9 +65,16 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 None => quote! { None },
             };
 
-            let default_tokens = match &attrs.default {
-                Some(lit) => default_value_tokens(lit),
-                None => quote! { None },
+            // An absent boolean flag means false, so declare that default
+            // rather than leaving the field undefined. Without it the option is
+            // not required yet still fails to deserialize when the flag is
+            // omitted, and every consumer of the schema — MCP, config files,
+            // generated code, form controls — loses the fact that the default
+            // is off.
+            let default_tokens = match (&attrs.default, is_bool && !attrs.count) {
+                (Some(lit), _) => default_value_tokens(lit),
+                (None, true) => quote! { Some(::serde_json::Value::Bool(false)) },
+                (None, false) => quote! { None },
             };
 
             let alias_tokens = match attrs.alias {

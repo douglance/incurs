@@ -24,23 +24,23 @@ pub(crate) struct InstallOptions {
 }
 
 /// Structured result of installing one Agent Plugin.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct InstallResult {
+pub struct InstallResult {
     /// Installed plugin name.
-    pub(crate) name: String,
+    pub name: String,
     /// Installed plugin version, when declared.
-    pub(crate) version: Option<String>,
+    pub version: Option<String>,
     /// Managed package directory.
-    pub(crate) plugin_root: PathBuf,
+    pub plugin_root: PathBuf,
     /// Persistent plugin-data directory.
-    pub(crate) data_root: PathBuf,
+    pub data_root: PathBuf,
     /// Installed command path, when the package contains a Tool Runtime.
-    pub(crate) command: Option<PathBuf>,
+    pub command: Option<PathBuf>,
     /// Whether the command directory is already on `PATH`.
-    pub(crate) path_ready: bool,
+    pub path_ready: bool,
     /// Actionable `PATH` warning, when needed.
-    pub(crate) warning: Option<String>,
+    pub warning: Option<String>,
 }
 
 /// Options for removing one managed Agent Plugin.
@@ -54,19 +54,19 @@ pub(crate) struct UninstallOptions {
 }
 
 /// Structured result of removing one Agent Plugin.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct UninstallResult {
+pub struct UninstallResult {
     /// Removed plugin name.
-    pub(crate) name: String,
+    pub name: String,
     /// Former managed package directory.
-    pub(crate) plugin_root: PathBuf,
+    pub plugin_root: PathBuf,
     /// Persistent plugin-data directory.
-    pub(crate) data_root: PathBuf,
+    pub data_root: PathBuf,
     /// Removed command path, when the package contained a Tool Runtime.
-    pub(crate) command: Option<PathBuf>,
+    pub command: Option<PathBuf>,
     /// Whether persistent plugin data was removed.
-    pub(crate) purged_data: bool,
+    pub purged_data: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

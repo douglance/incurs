@@ -124,8 +124,12 @@ done
         "{}",
         String::from_utf8_lossy(&call.stderr)
     );
+    // A typed command's success payload is the data itself. The framework adds
+    // the `{ok, data, meta}` envelope only under `--full-output`, so printing a
+    // second `{status, data}` wrapper here would nest one envelope inside
+    // another. `plugin call` previously emitted that inner wrapper.
     let outcome: Value = serde_json::from_slice(&call.stdout).unwrap();
-    assert_eq!(outcome["data"], json!({ "message": "pong" }));
+    assert_eq!(outcome, json!({ "message": "pong" }));
 
     let _ = fs::remove_dir_all(root);
 }

@@ -1306,6 +1306,7 @@ version = "0.5.1"
 dependencies = [
  "dirs",
  "incurs",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

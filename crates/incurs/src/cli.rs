@@ -745,7 +745,7 @@ impl Cli {
 
         let builtins = builtin_commands(&self.name);
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "completions") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "completions") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "completions")
@@ -799,7 +799,7 @@ impl Cli {
             return Ok(());
         }
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "plugin") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "plugin") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "plugin")
@@ -839,7 +839,7 @@ impl Cli {
             return Ok(());
         }
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "skills") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "skills") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "skills")
@@ -1004,7 +1004,7 @@ impl Cli {
             }
         }
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "mcp") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "mcp") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "mcp")
@@ -1920,7 +1920,7 @@ impl Cli {
 
         let builtins = builtin_commands(&self.name);
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "completions") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "completions") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "completions")
@@ -1974,7 +1974,7 @@ impl Cli {
             return Ok(None);
         }
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "plugin") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "plugin") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "plugin")
@@ -2012,7 +2012,7 @@ impl Cli {
             return Ok(None);
         }
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "skills") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "skills") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "skills")
@@ -2178,7 +2178,7 @@ impl Cli {
             }
         }
 
-        if let Some(index) = builtin_command_index(&builtin.rest, &self.name, "mcp") {
+        if let Some(index) = self.builtin_command_index(&builtin.rest, "mcp") {
             let builtin_def = builtins
                 .iter()
                 .find(|item| item.name == "mcp")
@@ -4462,6 +4462,21 @@ fn format_builtin_subcommand_help(
             version: None,
         },
     )
+}
+
+impl Cli {
+    /// Locates a builtin command invocation, unless this CLI defines that name.
+    ///
+    /// A user definition wins. A builtin that shadowed one would remove a
+    /// declared command with no diagnostic, and every builtin dispatcher treats
+    /// an unrecognized subcommand as success — so the shadowed command would
+    /// appear to run, print builtin help, and exit zero.
+    fn builtin_command_index(&self, tokens: &[String], builtin_name: &str) -> Option<usize> {
+        if self.commands.contains_key(builtin_name) {
+            return None;
+        }
+        builtin_command_index(tokens, &self.name, builtin_name)
+    }
 }
 
 fn builtin_command_index(tokens: &[String], cli_name: &str, builtin_name: &str) -> Option<usize> {
