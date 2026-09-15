@@ -19,6 +19,8 @@ jobs:
         run: cargo fmt --all --check
       - name: MCP schema provenance
         run: cargo xtask mcp-schema-sync --check
+      - name: Skill provenance
+        run: cargo xtask skill-sync --check
       - name: Check
         run: cargo check --workspace --all-features
       - name: Clippy

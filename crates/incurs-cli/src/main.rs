@@ -19,6 +19,7 @@ use incurs::command::{CommandDef, Example, McpAnnotations, McpCommandOptions};
 use incurs::middleware::{BoxFuture, MiddlewareContext, MiddlewareFn, MiddlewareNext};
 use incurs::output::Format;
 
+mod explain;
 mod generate;
 mod plugin;
 mod plugin_install;
@@ -48,6 +49,7 @@ pub fn build_cli() -> Cli {
         })
         .use_middleware(tracing_middleware())
         .command("gen", gen_command())
+        .command("explain", explain_command())
         .group(plugin_group())
 }
 
@@ -93,6 +95,27 @@ fn gen_command() -> CommandDef {
     // Generation output is consumed by scripts and build steps, so it stays
     // JSON by default rather than the human-facing default format.
     .format(Format::Json)
+    .done()
+}
+
+/// `incurs explain` — the Rust authoring reference.
+fn explain_command() -> CommandDef {
+    CommandDef::typed::<explain::ExplainArgs, (), (), explain::ExplainOutput, _, _>(
+        "explain",
+        explain::run,
+    )
+    .description("Explain how to build an incurs CLI in Rust")
+    .hint("Run without a topic to list every topic.")
+    .examples(vec![
+        Example {
+            command: String::new(),
+            description: Some("List every topic".to_string()),
+        },
+        Example {
+            command: "typed-commands".to_string(),
+            description: Some("Read one topic".to_string()),
+        },
+    ])
     .done()
 }
 
