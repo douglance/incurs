@@ -46,6 +46,30 @@ authoring order of positional arguments. Local `$ref` pointers and nullable
 `anyOf` unions are resolved, so `schemars`-derived typed commands get the same
 controls as hand-written field metadata.
 
+## Bring your own interface
+
+This crate ships a reference application, not the only one. Everything it knows
+about a command graph comes from [`incurs-app-model`](../incurs-app-model),
+which has no user-interface dependency — the `bindings` module is the small
+amount that is genuinely toolkit-specific, and it is public.
+
+Three things make an interface an incurs interface, and none of them is a
+widget:
+
+- calls go through the tool catalog,
+- values are coerced by `FormState::arguments` rather than by the view,
+- field problems come back from the runtime rather than being invented.
+
+`bindings::pump_run` moves a call's updates onto the window's executor, and
+`bindings::install_skills` runs a skill install off the window thread. Compose
+your own components — from a component library, a design system, or by hand —
+and use those two.
+
+> A component library must target the same GPUI distribution this crate does
+> (`gpui` on crates.io). Libraries built on a different snapshot republish, such
+> as `gpui-pre`, define their own `App`, `Window` and `Element` types and cannot
+> interoperate.
+
 ## Platform
 
 GPUI is a large platform-specific dependency, which is why this crate lives in a

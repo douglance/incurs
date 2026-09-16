@@ -414,3 +414,11 @@ fn running_without_a_terminal_is_refused() {
         "the message must say what is wrong, got: {error}"
     );
 }
+
+/// Draining with nothing running applies nothing rather than panicking.
+#[test]
+fn draining_an_idle_session_applies_nothing() {
+    let mut app = app();
+
+    assert!(!app.drain(), "there is no call in flight");
+}

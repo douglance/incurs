@@ -32,6 +32,7 @@
 
 #![deny(missing_docs)]
 
+pub mod bindings;
 pub mod bundle;
 pub mod text_field;
 pub mod theme;

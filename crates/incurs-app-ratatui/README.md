@@ -92,6 +92,28 @@ a list, a repeat counter, a streaming command, a destructive one, and one that s
 a follow-up — the shapes that expose a wrong control. A fixture holding only strings
 proves nothing about a form.
 
+## Bring your own interface
+
+This crate ships a reference application, not the only one. Everything it knows
+about a command graph comes from [`incurs-app-model`](../incurs-app-model),
+which has no user-interface dependency — the `bindings` module is the small
+amount that is genuinely toolkit-specific, and it is public.
+
+Three things make an interface an incurs interface, and none of them is a
+widget:
+
+- calls go through the tool catalog,
+- values are coerced by `FormState::arguments` rather than by the view,
+- field problems come back from the runtime rather than being invented.
+
+`examples/custom_ui.rs` is a complete interface that uses none of `TerminalApp`,
+`App`, `view`, `input`, `editor` or `theme` — its own loop, its own widgets,
+about eighty lines.
+
+```sh
+cargo run -p incurs-app-ratatui --example custom_ui
+```
+
 ## Limits
 
 - Text editing is single-line. A list is entered as comma-separated values and a JSON

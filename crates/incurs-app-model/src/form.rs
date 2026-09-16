@@ -181,6 +181,18 @@ impl FormState {
         self.values.entry(name.to_string()).or_default()
     }
 
+    /// Writes a view's text buffers into the form state.
+    ///
+    /// A text control is the source of truth for its own buffer — a model that
+    /// also held text would let the two disagree. A view therefore collects its
+    /// buffers and writes them here immediately before
+    /// [`FormState::arguments`]. Skipping it is why typing reaches no command.
+    pub fn set_texts(&mut self, texts: impl IntoIterator<Item = (String, String)>) {
+        for (name, text) in texts {
+            self.value_mut(&name).text = text;
+        }
+    }
+
     /// Clears every field problem before a new attempt.
     pub fn clear_issues(&mut self) {
         for value in self.values.values_mut() {

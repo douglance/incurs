@@ -134,9 +134,7 @@ impl App {
             .iter()
             .map(|(name, editor)| (name.clone(), editor.text().to_string()))
             .collect();
-        for (name, text) in texts {
-            self.session.state_mut().value_mut(&name).text = text;
-        }
+        self.session.state_mut().set_texts(texts);
     }
 
     /// Starts the selected command.
@@ -169,19 +167,7 @@ impl App {
     /// Returns whether anything changed, so the caller can avoid redrawing a
     /// frame that would be identical.
     pub fn drain(&mut self) -> bool {
-        let mut changed = false;
-        let mut finished = false;
-        if let Some(handle) = self.handle.as_mut() {
-            while let Ok(update) = handle.updates.try_recv() {
-                finished |= matches!(update, incurs_app_model::RunUpdate::Finished(_));
-                self.session.receive(update);
-                changed = true;
-            }
-        }
-        if finished {
-            self.handle = None;
-        }
-        changed
+        crate::bindings::drain(&mut self.session, &mut self.handle)
     }
 
     /// Installs agent skills, reporting the outcome in the status bar.

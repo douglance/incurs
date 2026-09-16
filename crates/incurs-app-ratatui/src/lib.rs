@@ -25,6 +25,7 @@
 #![deny(missing_docs)]
 
 pub mod app;
+pub mod bindings;
 pub mod editor;
 pub mod input;
 pub mod theme;
@@ -112,12 +113,7 @@ impl TerminalApp {
         // arrive, so the loop would block forever. Refusing is the honest
         // answer, and it is what makes piping this a clear error rather than a
         // hang.
-        if !incurs::pager::stdout_is_interactive() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "the terminal interface needs a terminal; run this without redirecting output",
-            ));
-        }
+        bindings::require_terminal()?;
         let title = self
             .title
             .clone()

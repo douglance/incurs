@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use futures::StreamExt;
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, IntoElement, ParentElement, Render, SharedString,
     Styled, Task, Window, div, prelude::*, px,
@@ -22,6 +21,8 @@ use incurs_app_model::form::{FieldKind, FormModel};
 use incurs_app_model::rows::{DisplayRow, raw_json, rows_for};
 use incurs_app_model::session::{AppSession, RunState, SkillState};
 use incurs_app_model::{RunUpdate, SkillPublisher, SkillReport, ToolRunner};
+
+use crate::bindings;
 
 use crate::text_field::{TextField, TextFieldEvent};
 use crate::theme::{FIELD_HEIGHT, RADIUS, SIDEBAR_WIDTH, Theme};
@@ -194,27 +195,17 @@ impl Workbench {
             return;
         };
 
-        // Installation touches the filesystem, so it runs on the call runtime
-        // rather than blocking the window.
-        let (sender, receiver) = futures::channel::oneshot::channel();
-        self.session.runner().spawn(async move {
-            let _ = sender.send(match publisher.install().await {
-                Ok(result) => Ok(SkillReport::from_result(&result)),
-                Err(error) => Err(error.to_string()),
-            });
-        });
-
-        self.skill_task = Some(cx.spawn(async move |this, cx| {
-            let outcome = receiver.await;
-            let _ = this.update(cx, |this, cx| {
-                this.session.finish_skill_install(match outcome {
-                    Ok(result) => result,
-                    Err(_) => Err("Installation stopped unexpectedly.".to_string()),
-                });
+        let runner = self.session.runner().clone();
+        self.skill_task = Some(bindings::install_skills(
+            &runner,
+            publisher,
+            cx,
+            |this: &mut Self, outcome, cx| {
+                this.session.finish_skill_install(outcome);
                 this.skill_task = None;
                 cx.notify();
-            });
-        }));
+            },
+        ));
 
         cx.notify();
     }
@@ -229,9 +220,7 @@ impl Workbench {
             .iter()
             .map(|(name, control)| (name.clone(), control.read(cx).text().to_string()))
             .collect();
-        for (name, text) in texts {
-            self.session.state_mut().value_mut(&name).text = text;
-        }
+        self.session.state_mut().set_texts(texts);
     }
 
     /// Starts the selected command with the collected values.
@@ -249,15 +238,11 @@ impl Workbench {
         self.apply_issue_marks(cx);
         self.raw_open = false;
 
-        let mut updates = handle.updates;
-        self.run_task = Some(cx.spawn(async move |this, cx| {
-            while let Some(update) = updates.next().await {
-                let delivered = this.update(cx, |this, cx| this.receive(update, cx));
-                if delivered.is_err() {
-                    break;
-                }
-            }
-        }));
+        self.run_task = Some(bindings::pump_run(
+            handle,
+            cx,
+            |this: &mut Self, update, cx| this.receive(update, cx),
+        ));
 
         cx.notify();
     }
