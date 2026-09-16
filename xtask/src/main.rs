@@ -60,8 +60,8 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     // being unpacked and compiled from its own archive.
     let packages = vec![
         (root, "incurs-macros", "0.5.0"),
-        (root, "incurs", "0.6.0"),
-        (root, "incurs-cli", "0.6.0"),
+        (root, "incurs", "0.6.1"),
+        (root, "incurs-cli", "0.6.1"),
         (root, "incurs-extras", "0.6.0"),
         (root, "incurs-codemode", "0.3.0"),
         (root, "incurs-codemode-local", "0.3.0"),

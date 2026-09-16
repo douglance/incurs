@@ -230,6 +230,26 @@ installs its own policy resolver.
 | `codemode_decide` | Approve or reject one pending action |
 | `codemode_cancel` | Cancel a running or paused execution |
 
+## Terminal applications
+
+`incurs-app-ratatui` runs a command graph full-screen in a terminal: commands on
+the left, the selected command's inputs collected from its schema, results below.
+
+```rust
+use incurs_app_ratatui::TerminalApp;
+
+TerminalApp::from_cli(&cli)?.title("Todo").run()
+```
+
+The installed `incurs` tool does this for its own commands:
+
+```bash
+incurs --tui
+```
+
+See [its README](crates/incurs-app-ratatui/README.md) for the key map and the
+controls each schema type gets.
+
 ## Native desktop applications
 
 `incurs-app-gpui` ships the same command graph as a double-clickable application, for

@@ -1,5 +1,21 @@
 # incurs
 
+## 0.6.1
+
+- Added `incurs-app-model`, the toolkit-neutral interaction model behind
+  interactive surfaces: form lowering from a command's input schema, value
+  coercion back to contract types, result rows, and the run state machine.
+- Added `incurs-app-ratatui`, a terminal application surface. The same command
+  graph that serves a CLI, an MCP server, and a desktop window now runs
+  full-screen in a terminal, with every call going through `ToolCatalog`.
+- Added `incurs --tui`, which opens that surface over the `incurs` tool's own
+  command graph. It is behind the default-on `tui` feature.
+- Fixed the README quick start, which declared `std::io::Result<()>` while
+  `Cli::serve` returns `Result<(), Box<dyn Error>>` — the first example on the
+  crates.io page did not compile. It is now a built example.
+- Rewrote the README for people using incurs rather than working on it, and
+  moved the contributor material to `CONTRIBUTING.md`.
+
 ## 0.6.0
 
 - Rebuilt the `incurs` command-line tool with incurs itself. Its commands are

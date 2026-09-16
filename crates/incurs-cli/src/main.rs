@@ -24,9 +24,18 @@ mod generate;
 mod plugin;
 mod plugin_install;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    build_cli().serve().await
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `--tui` is recognised only as the first argument, so `incurs gen --tui`
+    // stays an ordinary unknown-option error rather than silently opening a
+    // full-screen application.
+    #[cfg(feature = "tui")]
+    if std::env::args().nth(1).as_deref() == Some("--tui") {
+        return Ok(incurs_app_ratatui::TerminalApp::from_cli(&build_cli())?.run()?);
+    }
+
+    // Deliberately not `#[tokio::main]`. The terminal surface builds its own
+    // Tokio runtime, and Tokio panics when a runtime is dropped inside another.
+    tokio::runtime::Runtime::new()?.block_on(build_cli().serve())
 }
 
 /// Builds the `incurs` command graph.
@@ -397,6 +406,21 @@ mod tests {
                 "`{expected}` must be callable as a tool, got {names:?}"
             );
         }
+    }
+
+    /// `--tui` is a first-argument flag, not a global option.
+    ///
+    /// Anywhere else it must stay an unknown option, or a typo after a command
+    /// would silently open a full-screen application instead of failing.
+    #[tokio::test]
+    async fn tui_is_not_accepted_after_a_command() {
+        let (exit, output) = observe(&["gen", "--tui", "--json"]).await;
+
+        assert!(exit.is_some(), "got: {output}");
+        assert!(
+            output.contains("tui"),
+            "the rejection names it, got: {output}"
+        );
     }
 
     /// Every command carries a description and an output schema.

@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "incurs"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1474,10 +1474,11 @@ dependencies = [
 
 [[package]]
 name = "incurs-cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "dirs",
  "incurs",
+ "incurs-app-ratatui",
  "schemars",
  "serde",
  "serde_json",

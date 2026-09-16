@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "incurs"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-stream",
  "async-trait",
