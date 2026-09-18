@@ -3473,43 +3473,26 @@ fn extract_builtin_flags(
             } else {
                 return Err("Missing value for flag: --format".into());
             }
-        } else if let Some(ref cfg) = cfg_flag {
-            if token == cfg {
-                if let Some(next) = argv.get(i + 1) {
-                    config_path = Some(next.clone());
-                    config_disabled = false;
-                    i += 1;
-                } else {
-                    return Err(format!("Missing value for flag: {cfg}").into());
-                }
-            } else if let Some(ref eq) = cfg_flag_eq {
-                if token.starts_with(eq.as_str()) {
-                    let value = &token[eq.len()..];
-                    if value.is_empty() {
-                        return Err(format!("Missing value for flag: {cfg}").into());
-                    }
-                    config_path = Some(value.to_string());
-                    config_disabled = false;
-                } else if let Some(ref no) = no_cfg_flag {
-                    if token == no {
-                        config_path = None;
-                        config_disabled = true;
-                    } else {
-                        rest.push(token.clone());
-                    }
-                } else {
-                    rest.push(token.clone());
-                }
-            } else if let Some(ref no) = no_cfg_flag {
-                if token == no {
-                    config_path = None;
-                    config_disabled = true;
-                } else {
-                    rest.push(token.clone());
-                }
+        } else if cfg_flag.as_deref() == Some(token.as_str()) {
+            if let Some(next) = argv.get(i + 1) {
+                config_path = Some(next.clone());
+                config_disabled = false;
+                i += 1;
             } else {
-                rest.push(token.clone());
+                return Err(format!("Missing value for flag: {token}").into());
             }
+        } else if let Some(value) = cfg_flag_eq
+            .as_ref()
+            .and_then(|eq| token.strip_prefix(eq.as_str()))
+        {
+            if value.is_empty() {
+                return Err(format!("Missing value for flag: {token}").into());
+            }
+            config_path = Some(value.to_owned());
+            config_disabled = false;
+        } else if no_cfg_flag.as_deref() == Some(token.as_str()) {
+            config_path = None;
+            config_disabled = true;
         } else if token == "--filter-output" {
             if let Some(next) = argv.get(i + 1) {
                 filter_output = Some(next.clone());
@@ -5942,6 +5925,37 @@ mod tests {
             "string"
         );
         assert!(parsed["properties"]["commands"]["properties"]["ping"].is_object());
+    }
+
+    /// Declaring a config file must not hide the token and filter builtins.
+    ///
+    /// The config arm used to match every remaining token and push anything it
+    /// did not recognise onto `rest`, so the four flags declared after it were
+    /// unreachable the moment a CLI called `.config(..)`.
+    #[tokio::test]
+    async fn test_config_does_not_swallow_later_builtin_flags() {
+        for flags in [
+            vec!["--token-count".to_string()],
+            vec!["--token-limit".to_string(), "50".to_string()],
+            vec!["--token-offset".to_string(), "1".to_string()],
+            vec!["--filter-output".to_string(), "message".to_string()],
+        ] {
+            let cli = Cli::create("app")
+                .command("ping", make_leaf_command("ping", Some("Ping")))
+                .config(ConfigOptions {
+                    flag: "config".to_string(),
+                    files: vec!["app.config.json".to_string()],
+                });
+            let mut argv = vec!["ping".to_string()];
+            argv.extend(flags.clone());
+
+            let mut output = Vec::new();
+            let result = cli.serve_to(argv, &mut output, false).await.unwrap();
+            assert_eq!(
+                result, None,
+                "{flags:?} was rejected when config is declared"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
