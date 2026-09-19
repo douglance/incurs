@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::schema::FieldMeta;
+#[cfg(feature = "agent-plugins-mcp")]
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,7 @@ pub fn matches_tool_filter(name: &str, filter: &McpToolFilter) -> bool {
     included && !excluded
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 struct RemoteToolHandler {
     client:
         std::sync::Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>>,
@@ -165,6 +167,7 @@ struct RemoteToolHandler {
     wrapper: Option<String>,
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 #[async_trait::async_trait]
 impl crate::command::CommandHandler for RemoteToolHandler {
     async fn run(&self, ctx: crate::command::CommandContext) -> crate::output::CommandResult {
@@ -293,6 +296,7 @@ fn remote_header_map(
     Ok(map)
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 pub(crate) async fn remote_commands_from_transport<T, E, A>(
     transport: T,
     options: &McpRemoteOptions,
@@ -333,6 +337,7 @@ where
     project_remote_commands(client).await
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 async fn project_remote_commands(
     client: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
@@ -420,6 +425,7 @@ async fn project_remote_commands(
     Ok(commands)
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 async fn discover_remote_tools(
     client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
 ) -> Result<Vec<rmcp::model::Tool>, crate::errors::Error> {
@@ -472,6 +478,7 @@ async fn discover_remote_tools(
     Ok(tools)
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, crate::errors::Error> {
     if result.is_error == Some(true) {
         return Err(remote_error(std::io::Error::other(
@@ -493,10 +500,12 @@ fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, cra
     }))
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 fn remote_error(error: impl std::fmt::Display) -> crate::errors::Error {
     crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
 }
 
+#[cfg(feature = "agent-plugins-mcp")]
 fn remote_field(name: &str, schema: &Value, required: bool) -> FieldMeta {
     let field_type = match schema.get("type").and_then(Value::as_str) {
         Some("boolean") => crate::schema::FieldType::Boolean,

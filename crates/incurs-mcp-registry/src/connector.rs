@@ -152,7 +152,7 @@ impl Connector for HealthAwareMcpConnector {
                 .map_or("it could not be reached", |report| report.summary());
             description.instructions = Some(format!(
                 "UNAVAILABLE: the {} server exposes no tools right now because {reason}. \
-                 Run `cmpst check` to see why, and do not invent its methods.",
+                 Do not invent its methods.",
                 self.namespace
             ));
         } else {

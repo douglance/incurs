@@ -38,7 +38,13 @@ impl Default for ClientLimits {
     fn default() -> Self {
         Self {
             per_server_calls: 8,
-            connect_timeout_ms: 30_000,
+            // Five seconds, not thirty. The only caller here is an agent, which
+            // reads the failure and picks another route; it does not benefit from
+            // patience the way a person watching a spinner might. A server that
+            // has not completed a local handshake in five seconds is not about to,
+            // and thirty seconds of waiting to learn that is thirty seconds the
+            // agent could have spent on the rest of the program.
+            connect_timeout_ms: 5_000,
             list_timeout_ms: 15_000,
             call_timeout_ms: 120_000,
             cache_ttl_ms: crate::cache::DEFAULT_TTL_MS,

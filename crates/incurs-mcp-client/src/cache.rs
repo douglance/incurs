@@ -27,7 +27,7 @@ pub const DEFAULT_TTL_MS: u64 = 24 * 60 * 60 * 1000;
 /// Without this, a machine with twenty unreachable servers pays their full
 /// connect timeout on every single execution, because a failure lives only in
 /// the process that saw it. Ten minutes is short on purpose: a server the
-/// developer has just fixed must come back on its own, and `cmpst refresh`
+/// developer has just fixed must come back on its own, and an explicit refresh
 /// ignores this entirely for anyone unwilling to wait.
 pub const NEGATIVE_TTL_MS: u64 = 10 * 60 * 1000;
 

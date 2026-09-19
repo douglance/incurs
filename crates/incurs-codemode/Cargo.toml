@@ -1,6 +1,6 @@
 [package]
 name = "incurs-codemode"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 license = "MIT"
 description = "Portable durable Code Mode runtime for incurs tools"

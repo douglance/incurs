@@ -263,7 +263,7 @@ async fn a_failed_connection_is_not_retried_by_the_next_process() {
     );
 
     // Suppressing the attempt is only half of it. An empty tool list that reads
-    // as `Healthy` is worse than the retry it saved: `cmpst check` would call a
+    // as `Healthy` is worse than the retry it saved: a health check would call a
     // dead server available, and the model would be told an empty namespace is
     // fine. The recorded reason has to survive the round trip.
     let report = health.get(second.id()).expect("a health report");
@@ -300,7 +300,7 @@ async fn an_explicit_refresh_ignores_a_recorded_failure() {
     assert_eq!(
         fixture.attempt_count(),
         2,
-        "`cmpst refresh` is the escape hatch and must always contact the server"
+        "an explicit refresh is the escape hatch and must always contact the server"
     );
 }
 

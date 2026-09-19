@@ -1,4 +1,4 @@
-use crate::{ConnectorDescription, generate_types, normalize_code};
+use crate::{ConnectorDescription, normalize_code};
 
 /// Adapter-specific settings for the shared Code Mode JavaScript harness.
 #[derive(Debug, Clone)]
@@ -35,12 +35,6 @@ pub fn build_program_source(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let type_comment = connectors
-        .iter()
-        .map(generate_types)
-        .collect::<Vec<_>>()
-        .join("\n\n")
-        .replace("*/", "*\\/");
     let run = if let Some(timeout_ms) = options.timeout_ms {
         format!(
             r#"await Promise.race([
@@ -52,10 +46,7 @@ pub fn build_program_source(
         "await __program()".to_string()
     };
     Ok(format!(
-        r#"/* Model-facing declarations:
-{type_comment}
-*/
-const __logs = [];
+        r#"const __logs = [];
 let __seq = 0;
 const console = {{
   log: (...values) => __logs.push(values.map(String).join(" ")),
