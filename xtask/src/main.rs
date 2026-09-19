@@ -73,20 +73,20 @@ enum Workspace {
 fn release_packages() -> Vec<(Workspace, String, String)> {
     [
         (Workspace::Root, "incurs-macros", "0.6.0"),
-        (Workspace::Root, "incurs", "0.7.1"),
+        (Workspace::Root, "incurs", "0.7.2"),
         (Workspace::Root, "incurs-cli", "0.7.0"),
         (Workspace::Root, "incurs-extras", "0.7.0"),
-        (Workspace::Root, "incurs-codemode", "0.4.1"),
-        (Workspace::Root, "incurs-codemode-local", "0.4.0"),
-        (Workspace::Root, "incurs-codemode-mcp", "0.4.0"),
+        (Workspace::Root, "incurs-codemode", "0.5.0"),
+        (Workspace::Root, "incurs-codemode-local", "0.5.0"),
+        (Workspace::Root, "incurs-codemode-mcp", "0.5.0"),
         (Workspace::Root, "incurs-mcp-protocol", "0.2.0"),
-        (Workspace::Root, "incurs-mcp-discovery", "0.1.0"),
-        (Workspace::Root, "incurs-mcp-client", "0.2.0"),
-        (Workspace::Root, "incurs-mcp-registry", "0.2.0"),
+        (Workspace::Root, "incurs-mcp-discovery", "0.1.1"),
+        (Workspace::Root, "incurs-mcp-client", "0.3.0"),
+        (Workspace::Root, "incurs-mcp-registry", "0.3.0"),
         (Workspace::Root, "incurs-remote", "0.3.0"),
         (Workspace::Root, "incurs-app-model", "0.2.0"),
         (Workspace::Root, "incurs-app-ratatui", "0.2.0"),
-        (Workspace::Cloudflare, "incurs-codemode-cloudflare", "0.4.0"),
+        (Workspace::Cloudflare, "incurs-codemode-cloudflare", "0.5.0"),
         (Workspace::Cloudflare, "incurs-mcp-cloudflare", "0.3.0"),
     ]
     .into_iter()

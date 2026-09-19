@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "incurs"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode-local"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "incurs",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "http",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-mcp-client"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1571,7 +1571,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-mcp-discovery"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "serde",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-mcp-registry"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "incurs-codemode",
