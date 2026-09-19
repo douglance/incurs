@@ -4,7 +4,7 @@
 //! and Code Mode. It preserves command schemas, annotations, middleware, and
 //! typed execution without converting a call back into CLI arguments.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -293,6 +293,9 @@ impl ToolCatalog {
                     .entry(name.clone())
                     .or_insert_with(|| value.clone());
             }
+        }
+        if let Some(error) = unknown_argument_error(tool, &self.globals_fields, &arguments) {
+            return error;
         }
         let globals = match resolve_globals(options.globals, &self.globals_fields) {
             Ok(globals) => globals,
@@ -619,6 +622,119 @@ fn resolve_globals(overrides: Option<Value>, fields: &[FieldMeta]) -> Result<Val
         .map_err(|error| error.to_string())
 }
 
+/// Returns the declared names a caller may use for one tool, in either spelling.
+///
+/// Both are accepted because both are published: the JSON schema names fields in
+/// snake_case and the CLI names the same field in kebab-case.
+fn declared_argument_names(tool: &ResolvedTool, globals: &[FieldMeta]) -> BTreeSet<String> {
+    tool.command
+        .args_fields
+        .iter()
+        .chain(&tool.command.options_fields)
+        .chain(globals)
+        .flat_map(|field| [field.name.to_string(), field.cli_name.clone()])
+        .collect()
+}
+
+/// Returns a declared name close enough to be what the caller meant.
+///
+/// One edit covers the mistakes that actually happen -- a plural (`args` for
+/// `arg`), a dropped letter, a transposition -- and stops well short of guessing.
+fn nearest_declared_name(candidate: &str, declared: &BTreeSet<String>) -> Option<String> {
+    declared
+        .iter()
+        .find(|name| within_one_edit(candidate, name))
+        .cloned()
+}
+
+/// Returns whether two names differ by at most one insertion, deletion or change.
+fn within_one_edit(left: &str, right: &str) -> bool {
+    let (left, right): (Vec<char>, Vec<char>) = (left.chars().collect(), right.chars().collect());
+    if left.len().abs_diff(right.len()) > 1 {
+        return false;
+    }
+    let (shorter, longer) = if left.len() <= right.len() {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    let mut short_index = 0;
+    let mut long_index = 0;
+    let mut edited = false;
+    while short_index < shorter.len() && long_index < longer.len() {
+        if shorter[short_index] == longer[long_index] {
+            short_index += 1;
+            long_index += 1;
+            continue;
+        }
+        if edited {
+            return false;
+        }
+        edited = true;
+        if shorter.len() == longer.len() {
+            short_index += 1;
+        }
+        long_index += 1;
+    }
+    true
+}
+
+/// Rejects an argument the tool does not declare.
+///
+/// A dropped key is the worst failure this surface has, because it does not look
+/// like a failure. Passing `args` where the schema says `arg` bound nothing, so
+/// the command ran with no arguments at all and the caller saw a program that
+/// hung rather than a name that was wrong. The CLI parser has always answered an
+/// unknown flag with `Unknown flag: --foo`; the typed path silently accepted it.
+fn unknown_argument_error(
+    tool: &ResolvedTool,
+    globals: &[FieldMeta],
+    arguments: &BTreeMap<String, Value>,
+) -> Option<ToolCallOutcome> {
+    // A command that declares no arguments of its own accepts whatever it is
+    // handed -- that is a real pattern, not an oversight, and checking it would
+    // reject callers that were always correct. Only a command that published a
+    // schema is held to it.
+    if tool.command.args_fields.is_empty() && tool.command.options_fields.is_empty() {
+        return None;
+    }
+    let declared = declared_argument_names(tool, globals);
+    let unknown: Vec<&String> = arguments
+        .keys()
+        .filter(|name| !declared.contains(*name))
+        .collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    let field_errors = unknown
+        .iter()
+        .map(|name| {
+            let suggestion = nearest_declared_name(name, &declared);
+            FieldError {
+                path: (*name).clone(),
+                expected: suggestion
+                    .clone()
+                    .unwrap_or_else(|| "a declared argument".to_string()),
+                received: (*name).clone(),
+                message: match suggestion {
+                    Some(nearest) => {
+                        format!("Unknown argument \"{name}\". Did you mean \"{nearest}\"?")
+                    }
+                    None => format!("Unknown argument \"{name}\"."),
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    Some(ToolCallOutcome::Error {
+        code: "VALIDATION_ERROR".to_string(),
+        message: "Validation failed".to_string(),
+        retryable: Some(false),
+        field_errors: Some(field_error_outputs(field_errors)),
+        cta: None,
+        exit_code: Some(1),
+    })
+}
+
 fn tool_error(code: &str, message: String) -> ToolCallOutcome {
     ToolCallOutcome::Error {
         code: code.to_string(),
@@ -826,6 +942,125 @@ mod tests {
                 })
             ),
             "{outcome:#?}"
+        );
+    }
+
+    /// Stands in for a command that publishes a schema.
+    ///
+    /// Written out rather than derived because the derive emits `incurs::` paths,
+    /// which do not resolve inside this crate.
+    struct RunArgv;
+
+    impl crate::schema::IncurSchema for RunArgv {
+        fn fields() -> Vec<FieldMeta> {
+            vec![
+                FieldMeta {
+                    name: "executable",
+                    cli_name: "executable".to_string(),
+                    description: None,
+                    field_type: FieldType::String,
+                    required: true,
+                    default: None,
+                    alias: None,
+                    deprecated: false,
+                    env_name: None,
+                },
+                FieldMeta {
+                    name: "arg",
+                    cli_name: "arg".to_string(),
+                    description: None,
+                    field_type: FieldType::Array(Box::new(FieldType::String)),
+                    required: false,
+                    default: None,
+                    alias: None,
+                    deprecated: false,
+                    env_name: None,
+                },
+            ]
+        }
+
+        fn from_raw(
+            _raw: &BTreeMap<String, Value>,
+        ) -> std::result::Result<Self, crate::errors::ValidationError> {
+            Ok(RunArgv)
+        }
+    }
+
+    struct Run;
+
+    #[async_trait::async_trait]
+    impl CommandHandler for Run {
+        async fn run(&self, ctx: CommandContext) -> CommandResult {
+            CommandResult::Ok {
+                data: ctx.args,
+                cta: None,
+                exit_code: None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_undeclared_argument_is_rejected_and_the_near_miss_named() {
+        // A dropped key does not look like a failure. `args` for `arg` bound
+        // nothing, so the command ran with no arguments at all and the caller saw
+        // a program that hung rather than a name that was wrong.
+        let catalog = Cli::create("demo")
+            .version("1.0.0")
+            .command(
+                "run",
+                CommandDef::build("run", Run).args::<RunArgv>().done(),
+            )
+            .tool_catalog();
+
+        let outcome = catalog
+            .call(
+                "run",
+                BTreeMap::from([
+                    ("executable".to_string(), Value::String("node".to_string())),
+                    ("args".to_string(), Value::Array(vec![])),
+                ]),
+                ToolCallOptions::default(),
+            )
+            .await;
+
+        let ToolCallOutcome::Error {
+            code, field_errors, ..
+        } = outcome
+        else {
+            panic!("an undeclared argument must not be silently dropped: {outcome:?}");
+        };
+        assert_eq!(code, "VALIDATION_ERROR");
+        let errors = field_errors.expect("field errors naming the argument");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].path, "args");
+        assert!(
+            errors[0].message.contains("Did you mean \"arg\""),
+            "the suggestion is the whole point: {}",
+            errors[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn a_declared_argument_still_passes() {
+        let catalog = Cli::create("demo")
+            .version("1.0.0")
+            .command(
+                "run",
+                CommandDef::build("run", Run).args::<RunArgv>().done(),
+            )
+            .tool_catalog();
+
+        let outcome = catalog
+            .call(
+                "run",
+                BTreeMap::from([("executable".to_string(), Value::String("node".to_string()))]),
+                ToolCallOptions::default(),
+            )
+            .await;
+
+        assert!(
+            matches!(&outcome, ToolCallOutcome::Ok { .. }),
+            "a declared argument must still be accepted: {outcome:?}"
         );
     }
 
