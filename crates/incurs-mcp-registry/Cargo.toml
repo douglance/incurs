@@ -1,0 +1,24 @@
+[package]
+name = "incurs-mcp-registry"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Aggregates discovered MCP servers into stable incurs Code Mode connector namespaces"
+repository = "https://github.com/douglance/incurs"
+readme = "README.md"
+
+[dependencies]
+async-trait = "0.1"
+incurs-codemode = { path = "../incurs-codemode", version = "0.4.0" }
+incurs-mcp-client = { path = "../incurs-mcp-client", version = "0.2.0" }
+incurs-mcp-discovery = { path = "../incurs-mcp-discovery", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+incurs-mcp-client = { path = "../incurs-mcp-client", features = ["testing"] }
+incurs-codemode-local = { path = "../incurs-codemode-local", version = "0.4.0" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

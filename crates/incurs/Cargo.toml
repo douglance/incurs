@@ -1,6 +1,6 @@
 [package]
 name = "incurs"
-version = "0.6.1"
+version = "0.7.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A declarative CLI framework for Rust with typed commands, agent discovery, HTTP, and MCP"
@@ -9,8 +9,8 @@ license = "MIT"
 repository = "https://github.com/douglance/incurs"
 
 [dependencies]
-incurs-macros = { path = "../incurs-macros", version = "0.5.0" }
-incurs-mcp-protocol = { path = "../incurs-mcp-protocol", version = "0.1.0" }
+incurs-macros = { path = "../incurs-macros", version = "0.6.0" }
+incurs-mcp-protocol = { path = "../incurs-mcp-protocol", version = "0.2.0" }
 tokio = { version = "1", default-features = false, features = ["sync", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

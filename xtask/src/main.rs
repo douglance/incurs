@@ -52,31 +52,72 @@ fn main() {
     }
 }
 
+/// Whether a release package lives in the root workspace or the extension one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Workspace {
+    /// The repository's own workspace.
+    Root,
+    /// `extensions/cloudflare`, which is its own workspace.
+    Cloudflare,
+}
+
+/// Every crate this repository publishes, with the version it publishes at.
+///
+/// Hand-maintained, and therefore covered by a test that derives the same set
+/// from the manifests: this list silently fell three versions behind, and a
+/// constant someone has to remember to update is not a guard.
+///
+/// `incurs-remote` is a root workspace member, so `cargo package --workspace`
+/// builds it. Leaving it out of this list meant it shipped without ever being
+/// unpacked and compiled from its own archive.
+fn release_packages() -> Vec<(Workspace, String, String)> {
+    [
+        (Workspace::Root, "incurs-macros", "0.6.0"),
+        (Workspace::Root, "incurs", "0.7.1"),
+        (Workspace::Root, "incurs-cli", "0.7.0"),
+        (Workspace::Root, "incurs-extras", "0.7.0"),
+        (Workspace::Root, "incurs-codemode", "0.4.1"),
+        (Workspace::Root, "incurs-codemode-local", "0.4.0"),
+        (Workspace::Root, "incurs-codemode-mcp", "0.4.0"),
+        (Workspace::Root, "incurs-mcp-protocol", "0.2.0"),
+        (Workspace::Root, "incurs-mcp-discovery", "0.1.0"),
+        (Workspace::Root, "incurs-mcp-client", "0.2.0"),
+        (Workspace::Root, "incurs-mcp-registry", "0.2.0"),
+        (Workspace::Root, "incurs-remote", "0.3.0"),
+        (Workspace::Root, "incurs-app-model", "0.2.0"),
+        (Workspace::Root, "incurs-app-ratatui", "0.2.0"),
+        (Workspace::Cloudflare, "incurs-codemode-cloudflare", "0.4.0"),
+        (Workspace::Cloudflare, "incurs-mcp-cloudflare", "0.3.0"),
+    ]
+    .into_iter()
+    .map(|(workspace, package, version)| {
+        (workspace, package.to_string(), version.to_string())
+    })
+    .collect()
+}
+
 fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
     let cloudflare = root.join("extensions/cloudflare");
-    // `incurs-remote` is a root workspace member, so `cargo package --workspace`
-    // builds it. Leaving it out of this list meant it shipped without ever
-    // being unpacked and compiled from its own archive.
-    let packages = vec![
-        (root, "incurs-macros", "0.5.0"),
-        (root, "incurs", "0.6.1"),
-        (root, "incurs-cli", "0.6.1"),
-        (root, "incurs-extras", "0.6.0"),
-        (root, "incurs-codemode", "0.3.0"),
-        (root, "incurs-codemode-local", "0.3.0"),
-        (root, "incurs-codemode-mcp", "0.3.0"),
-        (root, "incurs-mcp-protocol", "0.1.0"),
-        (root, "incurs-remote", "0.2.0"),
-        (root, "incurs-app-model", "0.1.0"),
-        (root, "incurs-app-ratatui", "0.1.0"),
-        (cloudflare.as_path(), "incurs-codemode-cloudflare", "0.3.0"),
-        (cloudflare.as_path(), "incurs-mcp-cloudflare", "0.2.0"),
-    ];
+    let declared = release_packages();
+    let packages: Vec<(&Path, &str, &str)> = declared
+        .iter()
+        .map(|(workspace, package, version)| {
+            let package_root = match workspace {
+                Workspace::Root => root,
+                Workspace::Cloudflare => cloudflare.as_path(),
+            };
+            (package_root, package.as_str(), version.as_str())
+        })
+        .collect();
     for (package_root, package, version) in &packages {
-        let archive = package_archive(package_root, package, version);
-        if archive.is_file() {
-            fs::remove_file(archive)?;
+        for candidate in [
+            package_archive(package_root, package, version),
+            package_archive(root, package, version),
+        ] {
+            if candidate.is_file() {
+                fs::remove_file(candidate)?;
+            }
         }
     }
     run(
@@ -146,7 +187,7 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|(_, package, _)| !deferred.contains(package))
         .copied()
         .collect();
-    let result = verify_archives(&temp, &verifiable);
+    let result = verify_archives(&temp, root, &verifiable);
     if result.is_ok() {
         fs::remove_dir_all(&temp)?;
     } else {
@@ -407,13 +448,18 @@ fn is_core_mcp_method(method: &str) -> bool {
 
 fn verify_archives(
     temp: &Path,
+    workspace_root: &Path,
     packages: &[(&Path, &str, &str)],
 ) -> Result<(), Box<dyn std::error::Error>> {
     for (root, package, version) in packages {
-        let archive = package_archive(root, package, version);
-        if !archive.is_file() {
-            return Err(format!("missing package archive {}", archive.display()).into());
-        }
+        let Some(archive) = locate_archive(root, workspace_root, package, version) else {
+            return Err(format!(
+                "missing package archive for {package} {version}: looked in {} and {}",
+                package_archive(root, package, version).display(),
+                package_archive(workspace_root, package, version).display()
+            )
+            .into());
+        };
         run(
             Command::new("tar")
                 .args(["-xzf"])
@@ -461,6 +507,28 @@ fn package_archive(root: &Path, package: &str, version: &str) -> PathBuf {
         .join(format!("{package}-{version}.crate"))
 }
 
+/// Finds a package archive, wherever cargo decided to put it.
+///
+/// A nested workspace does not reliably get its own `target/`: the directory
+/// depends on `CARGO_TARGET_DIR` and on whatever build wrapper is in front of
+/// cargo, and the Cloudflare extension's archives land in the root workspace's
+/// `target/package` on at least one common setup. Looking in both places is
+/// correct under either layout, where hard-coding one silently failed the whole
+/// release check on a path that was never the interesting part.
+fn locate_archive(
+    root: &Path,
+    workspace_root: &Path,
+    package: &str,
+    version: &str,
+) -> Option<PathBuf> {
+    [
+        package_archive(root, package, version),
+        package_archive(workspace_root, package, version),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
 fn run(command: &mut Command, label: &str) -> Result<(), Box<dyn std::error::Error>> {
     let status = command.status()?;
     if !status.success() {
@@ -473,4 +541,93 @@ fn workspace_root() -> &'static Path {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask must live below the workspace root")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Reads the `version` from a manifest without a TOML parser.
+    ///
+    /// The field is the first bare `version = "…"` before any `[section]` that
+    /// follows `[package]`, which is enough for these manifests and avoids a
+    /// dependency whose only user would be this test.
+    fn manifest_version(path: &Path) -> Option<String> {
+        let text = fs::read_to_string(path).ok()?;
+        let mut in_package = false;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with('[') {
+                in_package = line == "[package]";
+                continue;
+            }
+            if in_package && let Some(rest) = line.strip_prefix("version") {
+                let rest = rest.trim_start().strip_prefix('=')?.trim();
+                return rest.trim_matches('"').split('"').next().map(str::to_string);
+            }
+        }
+        None
+    }
+
+    /// Returns every path a workspace manifest lists as a member.
+    fn members(root: &Path) -> Vec<PathBuf> {
+        let text = fs::read_to_string(root.join("Cargo.toml")).expect("workspace manifest");
+        let Some(start) = text.find("members = [") else {
+            return Vec::new();
+        };
+        let body = &text[start..];
+        let end = body.find(']').expect("members list closes");
+        body[..end]
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim().trim_end_matches(',').trim_matches('"');
+                (!line.is_empty() && !line.starts_with("members")).then(|| root.join(line))
+            })
+            .filter(|path| path.join("Cargo.toml").is_file())
+            .collect()
+    }
+
+    /// The release list is a hand-maintained copy of every crate's version, and
+    /// it silently fell three versions behind. A list someone has to remember to
+    /// update is not a guard, so this derives the expectation from the manifests
+    /// instead of restating it.
+    #[test]
+    fn every_publishable_member_is_release_checked_at_its_manifest_version() {
+        let root = workspace_root();
+        let cloudflare = root.join("extensions/cloudflare");
+        let pinned = release_packages();
+
+        let mut missing = Vec::new();
+        let mut drifted = Vec::new();
+        for workspace in [root.to_path_buf(), cloudflare] {
+            for member in members(&workspace) {
+                let manifest = member.join("Cargo.toml");
+                let text = fs::read_to_string(&manifest).expect("member manifest");
+                if text.contains("publish = false") {
+                    continue;
+                }
+                let name = member
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("member directory name")
+                    .to_string();
+                let version = manifest_version(&manifest).expect("a version");
+                match pinned.iter().find(|(_, package, _)| *package == name) {
+                    None => missing.push(name),
+                    Some((_, _, pinned_version)) if *pinned_version != version => {
+                        drifted.push(format!("{name}: pinned {pinned_version}, manifest {version}"));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "publishable members absent from the release list: {missing:?}"
+        );
+        assert!(
+            drifted.is_empty(),
+            "the release list disagrees with the manifests: {drifted:?}"
+        );
+    }
 }
