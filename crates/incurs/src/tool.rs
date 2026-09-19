@@ -468,7 +468,6 @@ impl ToolCatalog {
         .map(Option::flatten)
     }
 
-    #[cfg(feature = "mcp")]
     pub(crate) fn resolved(&self) -> impl Iterator<Item = &ResolvedTool> {
         self.tools.values()
     }

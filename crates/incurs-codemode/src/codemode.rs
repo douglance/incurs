@@ -10,8 +10,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     ArtifactStore, CapabilitySnapshot, Clock, CodeExecutor, CodeModeRuntime, Connector,
-    DispatchRequest, DispatchSession, ExecutionEvent, ExecutionHost, ExecutionState,
-    ExecutionStatus, RuntimeStore, SearchOutput, SystemClock, ToolContext,
+    ConnectorDescription, DispatchRequest, DispatchSession, ExecutionEvent, ExecutionHost,
+    ExecutionState, ExecutionStatus, RuntimeStore, SearchOutput, SystemClock, ToolContext,
 };
 
 /// Transport context inherited by one Code Mode execution pass.
@@ -207,13 +207,27 @@ impl CodeMode {
         self.require(execution_id).await
     }
 
+    /// Names every connector without contacting any of them.
+    ///
+    /// The capability snapshot and the program's bindings both need to know which
+    /// namespaces exist, and nothing more. Building them from `describe` meant
+    /// connecting to every configured server before the program ran; a name-only
+    /// description carries exactly what they use, and the tools are resolved per
+    /// namespace on first call.
+    fn namespace_stubs(&self) -> Vec<ConnectorDescription> {
+        self.connectors
+            .iter()
+            .map(|connector| ConnectorDescription {
+                name: connector.name().to_string(),
+                instructions: None,
+                tools: Vec::new(),
+            })
+            .collect()
+    }
+
     /// Creates a durable running execution without driving its first pass.
     pub async fn start(&self, code: &str) -> Result<ExecutionState, String> {
-        let mut descriptions = Vec::new();
-        for connector in &self.connectors {
-            descriptions.push(connector.describe().await?);
-        }
-        let capabilities = CapabilitySnapshot::new(descriptions)?;
+        let capabilities = CapabilitySnapshot::new(self.namespace_stubs())?;
         let id = self
             .runtime
             .begin_with_capabilities(code, capabilities, self.clock.now_ms())
@@ -564,14 +578,9 @@ impl CodeMode {
         context: ToolContext,
     ) -> Result<Arc<DispatchSession>, String> {
         let state = self.require(execution_id).await?;
-        let descriptions = if let Some(capabilities) = state.capabilities {
-            capabilities.connectors
-        } else {
-            let mut descriptions = Vec::new();
-            for connector in &self.connectors {
-                descriptions.push(connector.describe().await?);
-            }
-            descriptions
+        let descriptions = match state.capabilities {
+            Some(capabilities) => capabilities.connectors,
+            None => self.namespace_stubs(),
         };
         Ok(Arc::new(
             DispatchSession::new_with_descriptions_and_context(
@@ -658,6 +667,10 @@ mod tests {
 
     #[async_trait]
     impl Connector for TestConnector {
+        fn name(&self) -> &str {
+            "test"
+        }
+
         async fn describe(&self) -> Result<ConnectorDescription, String> {
             Ok(ConnectorDescription {
                 name: "test".to_string(),

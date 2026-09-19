@@ -492,8 +492,42 @@ mod tests {
         right: i64,
     }
 
+    /// Stands in for a configured server that cannot be reached.
+    ///
+    /// Counts describes so a test can assert an untouched namespace is never
+    /// contacted, rather than inferring it from timing.
+    struct UnreachableConnector {
+        describes: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Connector for UnreachableConnector {
+        fn name(&self) -> &str {
+            "unreachable"
+        }
+
+        async fn describe(&self) -> Result<ConnectorDescription, String> {
+            self.describes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("connection refused".to_string())
+        }
+
+        async fn execute(
+            &self,
+            _method: &str,
+            _arguments: Value,
+            _context: &ToolContext,
+        ) -> Result<Value, String> {
+            Err("connection refused".to_string())
+        }
+    }
+
     #[async_trait::async_trait]
     impl Connector for MathConnector {
+        fn name(&self) -> &str {
+            "math"
+        }
+
         async fn describe(&self) -> Result<ConnectorDescription, String> {
             Ok(ConnectorDescription {
                 name: "math".to_string(),
@@ -583,6 +617,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Connector for ContextConnector {
+        fn name(&self) -> &str {
+            "context"
+        }
+
         async fn describe(&self) -> Result<ConnectorDescription, String> {
             Ok(ConnectorDescription {
                 name: "context".to_string(),
@@ -643,6 +681,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Connector for DelayConnector {
+        fn name(&self) -> &str {
+            "delay"
+        }
+
         async fn describe(&self) -> Result<ConnectorDescription, String> {
             Ok(ConnectorDescription {
                 name: "delay".to_string(),
@@ -686,6 +728,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Connector for WaitingConnector {
+        fn name(&self) -> &str {
+            "waiting"
+        }
+
         async fn describe(&self) -> Result<ConnectorDescription, String> {
             Ok(ConnectorDescription {
                 name: "waiting".to_string(),
@@ -974,6 +1020,80 @@ mod tests {
                 .await
                 .unwrap(),
             json!("x".repeat(MAX_DURABLE_VALUE_BYTES + 1))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_namespace_does_not_break_a_program_that_ignores_it() {
+        // The whole point of binding lazily: a configured server that is dead must
+        // cost nothing until something uses it. Describing every connector up front
+        // meant one unreachable server failed every execution, including the ones
+        // that never mentioned it -- an unactionable failure, because no program the
+        // agent could write would avoid it.
+        let describes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let codemode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            LocalExecutor::default(),
+            vec![
+                Arc::new(MathConnector::default()),
+                Arc::new(UnreachableConnector {
+                    describes: Arc::clone(&describes),
+                }),
+            ],
+        );
+
+        let execution = codemode
+            .execute("return (await math.sum({ left: 2, right: 3 })).sum")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            execution.status,
+            ExecutionStatus::Completed,
+            "a dead namespace the program never names must not fail it: {execution:?}"
+        );
+        assert_eq!(execution.result, Some(json!(5)));
+        assert_eq!(
+            describes.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "an untouched namespace must never be contacted"
+        );
+    }
+
+    #[tokio::test]
+    async fn using_an_unreachable_namespace_fails_with_its_own_error() {
+        // Fail fast, scoped: the failure surfaces when the program reaches for it,
+        // carrying the reason, so the agent can route around it.
+        let describes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let codemode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            LocalExecutor::default(),
+            vec![
+                Arc::new(MathConnector::default()),
+                Arc::new(UnreachableConnector {
+                    describes: Arc::clone(&describes),
+                }),
+            ],
+        );
+
+        let execution = codemode
+            .execute("return await unreachable.anything({})")
+            .await
+            .unwrap();
+
+        assert_eq!(execution.status, ExecutionStatus::Error, "{execution:?}");
+        assert!(
+            execution
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("connection refused")),
+            "the error must say why: {:?}",
+            execution.error
+        );
+        assert_eq!(
+            describes.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "a used namespace is described exactly once per pass"
         );
     }
 }

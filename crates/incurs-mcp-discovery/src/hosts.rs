@@ -157,6 +157,29 @@ impl HostPaths {
         })
     }
 
+    /// Resolves every host directory, rooted at an application home when given.
+    ///
+    /// An application that isolates its own state — a test, a sandbox, a second
+    /// instance — must not read the developer's real agent configuration. Without
+    /// this, discovery resolved from `dirs::home_dir()` regardless, so a caller
+    /// that had carefully moved its home still reached the real machine's servers.
+    ///
+    /// The rooted form still reads the process environment, so `${env:NAME}`
+    /// placeholders expand the same way; only the directories move.
+    ///
+    /// # Errors
+    /// Returns [`DiscoveryError::NoHome`] when no root is given and no home
+    /// directory can be found.
+    pub fn from_env_rooted(root: Option<&Path>) -> Result<Self, DiscoveryError> {
+        let Some(root) = root else {
+            return Self::from_env();
+        };
+        let mut paths = Self::rooted(root);
+        paths.project = std::env::current_dir().ok();
+        paths.env = std::env::vars().collect();
+        Ok(paths)
+    }
+
     /// Builds a path set rooted at one directory, for tests and fixtures.
     pub fn rooted(root: impl AsRef<Path>) -> Self {
         let home = root.as_ref().to_path_buf();

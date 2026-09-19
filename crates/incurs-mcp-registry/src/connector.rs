@@ -43,8 +43,14 @@ pub struct HealthAwareMcpConnector {
 /// it, so a synthetic method is dropped whenever the server already uses the
 /// name.
 const MCP_METHODS: [(&str, &str); 4] = [
-    ("mcp_resources", "List the resources this MCP server exposes."),
-    ("mcp_read_resource", "Read one resource from this MCP server by URI."),
+    (
+        "mcp_resources",
+        "List the resources this MCP server exposes.",
+    ),
+    (
+        "mcp_read_resource",
+        "Read one resource from this MCP server by URI.",
+    ),
     ("mcp_prompts", "List the prompts this MCP server exposes."),
     ("mcp_get_prompt", "Render one prompt from this MCP server."),
 ];
@@ -131,6 +137,10 @@ impl HealthAwareMcpConnector {
 
 #[async_trait]
 impl Connector for HealthAwareMcpConnector {
+    fn name(&self) -> &str {
+        &self.namespace
+    }
+
     async fn describe(&self) -> Result<ConnectorDescription, String> {
         let mut description = self.inner.describe().await?;
         description.name = self.namespace.clone();

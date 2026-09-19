@@ -273,7 +273,10 @@ async fn a_failed_connection_is_not_retried_by_the_next_process() {
         "a server answered from a recorded failure must not read as healthy"
     );
     assert_eq!(report.code, Some(HealthCode::SpawnNotFound));
-    assert!(report.from_cache, "the answer came from disk, not the server");
+    assert!(
+        report.from_cache,
+        "the answer came from disk, not the server"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -401,7 +404,9 @@ async fn an_sse_entry_is_refused_by_name_and_never_contacted() {
         refusal.summary()
     );
     assert!(
-        health.get(client.id()).is_none_or(|report| report.state != ServerHealth::Healthy),
+        health
+            .get(client.id())
+            .is_none_or(|report| report.state != ServerHealth::Healthy),
         "a refused entry must never be recorded healthy"
     );
 }

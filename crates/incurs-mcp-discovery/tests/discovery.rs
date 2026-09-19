@@ -429,3 +429,49 @@ fn a_credential_never_reaches_identity_or_any_rendered_form() {
     assert_eq!(stdio.env["API_TOKEN"].class(), EnvClass::Secret);
     assert_eq!(stdio.env["API_TOKEN"].expose(), CANARY);
 }
+
+/// An application that moves its own home must not reach the developer's real
+/// agent configuration.
+///
+/// Discovery resolved from `dirs::home_dir()` regardless of any application
+/// home, so an isolated caller still found whatever the real machine had
+/// configured. That is what made discovery look unsafe to enable by default,
+/// when the fault was that it ignored isolation.
+#[test]
+fn a_rooted_environment_never_reaches_the_real_home() {
+    let root = std::env::temp_dir().join(format!("incurs-rooted-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("root");
+    std::fs::write(
+        root.join(".claude.json"),
+        r#"{"mcpServers":{"only-here":{"command":"/nonexistent/only-here"}}}"#,
+    )
+    .expect("write config");
+
+    let rooted = HostPaths::from_env_rooted(Some(&root)).expect("rooted paths");
+    assert!(
+        rooted.home.starts_with(&root),
+        "every host directory must sit under the supplied root, got {:?}",
+        rooted.home
+    );
+
+    let found = discover(&rooted);
+    let names: Vec<&str> = found
+        .servers
+        .iter()
+        .map(|server| server.local_name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec!["only-here"],
+        "an isolated home must see only its own servers"
+    );
+
+    // The placeholder environment still resolves, so only directories moved.
+    assert!(
+        !rooted.env.is_empty(),
+        "the process environment is still read"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

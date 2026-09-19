@@ -133,6 +133,14 @@ pub struct ToolContext {
 /// A transport-neutral source of sandbox-callable tools.
 #[async_trait]
 pub trait Connector: Send + Sync {
+    /// Returns the namespace this connector is bound to.
+    ///
+    /// Separate from [`Connector::describe`] so a namespace can be named without
+    /// being contacted. `describe` reaches the underlying service, so deriving the
+    /// name from it meant every connector had to be connected to before any
+    /// program could be built — including the ones the program never mentions.
+    fn name(&self) -> &str;
+
     /// Returns connector metadata and schemas.
     async fn describe(&self) -> Result<ConnectorDescription, String>;
 
@@ -212,6 +220,10 @@ impl IncurConnector {
 
 #[async_trait]
 impl Connector for IncurConnector {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     async fn describe(&self) -> Result<ConnectorDescription, String> {
         Ok(ConnectorDescription {
             name: self.name.clone(),
@@ -348,6 +360,26 @@ pub trait McpClient: Send + Sync {
 
     /// Calls one remote MCP tool with object arguments.
     async fn call_tool(&self, name: &str, arguments: Value) -> Result<Value, String>;
+
+    /// Calls one remote MCP tool under an execution-scoped cancellation signal.
+    ///
+    /// The default implementation races [`McpClient::call_tool`] against the
+    /// token. That returns control to Code Mode promptly, but it cannot stop
+    /// work the peer has already accepted. An implementation backed by a real
+    /// MCP transport should override this to also inform the peer, so a
+    /// cancelled pass does not leave a downstream request running.
+    async fn call_tool_cancellable(
+        &self,
+        name: &str,
+        arguments: Value,
+        cancellation: &tokio_util::sync::CancellationToken,
+    ) -> Result<Value, String> {
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err("Call cancelled".to_string()),
+            result = self.call_tool(name, arguments) => result,
+        }
+    }
 }
 
 /// Exposes a remote MCP connection as a Code Mode connector.
@@ -406,6 +438,10 @@ impl McpConnector {
 
 #[async_trait]
 impl Connector for McpConnector {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     async fn describe(&self) -> Result<ConnectorDescription, String> {
         Ok(ConnectorDescription {
             name: self.name.clone(),
@@ -452,7 +488,7 @@ impl Connector for McpConnector {
         &self,
         method: &str,
         arguments: Value,
-        _context: &ToolContext,
+        context: &ToolContext,
     ) -> Result<Value, String> {
         let (_, tool) = self
             .tools()
@@ -460,7 +496,9 @@ impl Connector for McpConnector {
             .iter()
             .find(|(name, _)| name == method)
             .ok_or_else(|| format!("Tool \"{method}\" not found on {}", self.name))?;
-        self.client.call_tool(&tool.name, arguments).await
+        self.client
+            .call_tool_cancellable(&tool.name, arguments, &context.control.cancellation)
+            .await
     }
 }
 
@@ -543,6 +581,10 @@ impl OpenApiConnector {
 
 #[async_trait]
 impl Connector for OpenApiConnector {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
     async fn describe(&self) -> Result<ConnectorDescription, String> {
         let mut tools = vec![ConnectorTool {
             name: "request".to_string(),
@@ -833,5 +875,117 @@ mod policy_tests {
                 )
                 .requires_approval
         );
+    }
+}
+
+#[cfg(test)]
+mod mcp_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use async_trait::async_trait;
+    use incurs::tool::ToolCallControl;
+    use serde_json::{Value, json};
+
+    use super::{Connector, McpClient, McpConnector, McpTool, ToolContext};
+
+    /// A client implementing only the two required methods.
+    ///
+    /// It deliberately does not override `call_tool_cancellable`, so these
+    /// tests exercise the default implementation and prove the added method is
+    /// not a breaking change for an existing implementation.
+    struct HangingClient {
+        started: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl McpClient for HangingClient {
+        async fn list_tools(&self) -> Result<Vec<McpTool>, String> {
+            Ok(vec![McpTool {
+                name: "wait".to_string(),
+                description: None,
+                input_schema: json!({"type": "object"}),
+                output_schema: None,
+                annotations: None,
+            }])
+        }
+
+        async fn call_tool(&self, _name: &str, _arguments: Value) -> Result<Value, String> {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            // Never resolves; only cancellation can end this call.
+            std::future::pending::<()>().await;
+            unreachable!("pending future resolved")
+        }
+    }
+
+    fn context(control: ToolCallControl) -> ToolContext {
+        ToolContext {
+            execution_id: "exec_test".to_string(),
+            control,
+            request: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_reaches_a_client_that_only_implements_call_tool() {
+        let started = Arc::new(AtomicUsize::new(0));
+        let connector = McpConnector::new(
+            "hang",
+            Arc::new(HangingClient {
+                started: Arc::clone(&started),
+            }),
+        );
+        let control = ToolCallControl::default();
+        let cancellation = control.cancellation.clone();
+
+        // Cancel once the call is demonstrably in flight, so this asserts
+        // cancellation of an active call rather than a pre-invocation check.
+        let started_probe = Arc::clone(&started);
+        tokio::spawn(async move {
+            while started_probe.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+            cancellation.cancel();
+        });
+
+        let result = connector
+            .execute("wait", json!({}), &context(control))
+            .await;
+
+        assert_eq!(started.load(Ordering::SeqCst), 1, "the call never started");
+        assert_eq!(result, Err("Call cancelled".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_uncancelled_call_is_unaffected() {
+        struct Echo;
+
+        #[async_trait]
+        impl McpClient for Echo {
+            async fn list_tools(&self) -> Result<Vec<McpTool>, String> {
+                Ok(vec![McpTool {
+                    name: "echo".to_string(),
+                    description: None,
+                    input_schema: json!({"type": "object"}),
+                    output_schema: None,
+                    annotations: None,
+                }])
+            }
+
+            async fn call_tool(&self, _name: &str, arguments: Value) -> Result<Value, String> {
+                Ok(arguments)
+            }
+        }
+
+        let connector = McpConnector::new("echo", Arc::new(Echo));
+        let result = connector
+            .execute(
+                "echo",
+                json!({"v": 1}),
+                &context(ToolCallControl::default()),
+            )
+            .await;
+
+        assert_eq!(result, Ok(json!({"v": 1})));
     }
 }

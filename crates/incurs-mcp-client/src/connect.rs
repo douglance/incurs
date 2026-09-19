@@ -112,9 +112,7 @@ impl Connection {
         arguments: Map<String, Value>,
     ) -> Result<rmcp::model::GetPromptResult, String> {
         self.service
-            .get_prompt(
-                rmcp::model::GetPromptRequestParams::new(name).with_arguments(arguments),
-            )
+            .get_prompt(rmcp::model::GetPromptRequestParams::new(name).with_arguments(arguments))
             .await
             .map_err(|error| error.to_string())
     }

@@ -28,12 +28,86 @@ pub const TOOL_NAMES: [&str; 5] = [
     "codemode_cancel",
 ];
 
+/// How much of a durable execution crosses back to the model.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ExecutionProjection {
+    /// The complete execution state, including every recorded call payload.
+    #[default]
+    Full,
+    /// The terminal value, diagnostics, and pending approvals only.
+    ///
+    /// Intermediate call arguments and results become a per-step summary, and
+    /// the capability snapshot becomes a list of connector names.
+    ///
+    /// This is what makes a program that calls many tools cheaper than making
+    /// those calls through the model. Without it a two-hundred-call program
+    /// returns all two hundred payloads plus every schema of every connector,
+    /// which is more traffic than the calls would have cost individually.
+    Reduced,
+}
+
 /// Reusable MCP server handler for the Code Mode lifecycle.
 #[derive(Clone)]
 pub struct CodeModeMcpServer {
     service: Arc<dyn CodeModeService>,
     tools: Arc<Vec<Tool>>,
     standards: McpStandardSet,
+    projection: ExecutionProjection,
+    /// What this server calls itself during `initialize`.
+    ///
+    /// A host built on this facade is a product in its own right, and an agent
+    /// that connects should see that product's name rather than the name of the
+    /// crate that happens to implement the lifecycle.
+    identity: Implementation,
+}
+
+/// Reduces one serialized execution to what the model actually needs.
+///
+/// Operates on the serialized form rather than the typed state so the durable
+/// record keeps every payload it needs for deterministic replay; only the copy
+/// crossing the transport is trimmed.
+fn reduce_execution(mut value: Value) -> Value {
+    let Some(object) = value.as_object_mut() else {
+        return value;
+    };
+
+    // The capability snapshot carries every input and output schema of every
+    // tool of every connector. With twenty servers attached it is by far the
+    // largest thing here, and the model already has the declarations it needs
+    // from search.
+    object.remove("capabilities");
+
+    // The program is what the model just sent; echoing it back is pure cost.
+    object.remove("code");
+
+    if let Some(Value::Array(log)) = object.remove("log") {
+        let steps = log
+            .into_iter()
+            .map(|entry| {
+                let entry = entry.as_object().cloned().unwrap_or_default();
+                let mut step = Map::new();
+                for field in ["seq", "connector", "method", "state", "requiresApproval"] {
+                    if let Some(value) = entry.get(field) {
+                        step.insert(field.to_string(), value.clone());
+                    }
+                }
+                // Size rather than content: enough to reason about what
+                // happened, without carrying the payload itself.
+                let bytes = entry
+                    .get("result")
+                    .map(|result| serde_json::to_string(result).map_or(0, |text| text.len()));
+                if let Some(bytes) = bytes {
+                    step.insert("resultBytes".to_string(), json!(bytes));
+                }
+                Value::Object(step)
+            })
+            .collect::<Vec<_>>();
+        object.insert("steps".to_string(), Value::Array(steps));
+    }
+
+    // Events replay the same payloads the log already carried.
+    object.remove("events");
+    value
 }
 
 impl CodeModeMcpServer {
@@ -48,7 +122,29 @@ impl CodeModeMcpServer {
             service,
             tools: Arc::new(definitions()),
             standards,
+            projection: ExecutionProjection::default(),
+            identity: Implementation::new("incurs-codemode", env!("CARGO_PKG_VERSION")),
         }
+    }
+
+    /// Sets how much of an execution crosses back to the model.
+    ///
+    /// The default is [`ExecutionProjection::Full`], so an existing caller sees
+    /// exactly what it saw before.
+    #[must_use]
+    pub fn with_projection(mut self, projection: ExecutionProjection) -> Self {
+        self.projection = projection;
+        self
+    }
+
+    /// Sets the name and version this server reports during `initialize`.
+    ///
+    /// The default names this crate, so an existing caller sees exactly what it
+    /// saw before.
+    #[must_use]
+    pub fn with_identity(mut self, name: impl Into<String>, version: impl Into<String>) -> Self {
+        self.identity = Implementation::new(name.into(), version.into());
+        self
     }
 
     /// Returns the exact lifecycle tools exposed to MCP clients.
@@ -66,10 +162,7 @@ impl ServerHandler for CodeModeMcpServer {
                 .enable_resources()
                 .build(),
         )
-        .with_server_info(Implementation::new(
-            "incurs-codemode",
-            env!("CARGO_PKG_VERSION"),
-        ))
+        .with_server_info(self.identity.clone())
         .with_instructions(
             "Search for available methods, execute JavaScript, then inspect, decide, or cancel by execution ID.",
         )
@@ -204,8 +297,21 @@ impl ServerHandler for CodeModeMcpServer {
         let name = request.name.as_ref();
         let arguments = request.arguments.unwrap_or_default();
         let request = incur_request_context(name, context.extensions.get::<http::request::Parts>());
+        // A Code Mode execution is a durable resource, not a side effect of the
+        // request that started it: `codemode_execute` returns as soon as the
+        // execution is recorded and the pass keeps running behind it. Binding
+        // that pass to the request's cancellation token would therefore abandon
+        // it the moment the response was written, which no program making more
+        // than a handful of calls could survive. `codemode_cancel` is how a
+        // client stops an execution, and the durable state is how it observes
+        // one.
+        let detached = matches!(name, "codemode_execute" | "codemode_decide");
         let options = CodeModeRunOptions {
-            cancellation: context.ct,
+            cancellation: if detached {
+                tokio_util::sync::CancellationToken::new()
+            } else {
+                context.ct
+            },
             request: Some(request),
         };
         let result = match name {
@@ -261,8 +367,24 @@ impl ServerHandler for CodeModeMcpServer {
                 .and_then(to_value),
             _ => return Err(ErrorData::method_not_found::<CallToolRequestMethod>()),
         };
+        // Reduction applies only to the lifecycle tools that carry execution
+        // state. A retrieved artifact is exactly what the program asked for and
+        // a search result is already bounded, so neither is trimmed.
+        let reduce = self.projection == ExecutionProjection::Reduced
+            && matches!(
+                name,
+                "codemode_execute" | "codemode_decide" | "codemode_cancel"
+            )
+            || (self.projection == ExecutionProjection::Reduced
+                && name == "codemode_execution"
+                && optional_string(&arguments, "artifact_id")?.is_none());
+
         Ok(match result {
-            Ok(value) => CallToolResult::structured(value),
+            Ok(value) => CallToolResult::structured(if reduce {
+                reduce_execution(value)
+            } else {
+                value
+            }),
             Err(error) => CallToolResult::structured_error(json!({ "error": error })),
         }
         .into())
@@ -721,5 +843,247 @@ mod tests {
 
     fn call(name: &'static str, arguments: Value) -> CallToolRequestParams {
         CallToolRequestParams::new(name).with_arguments(object(arguments))
+    }
+
+    /// Serves one handler over an in-process transport and returns a client.
+    async fn connected(
+        server: CodeModeMcpServer,
+    ) -> (
+        rmcp::service::RunningService<rmcp::RoleClient, ClientInfo>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (server_transport, client_transport) = tokio::io::duplex(1024 * 1024);
+        let task = tokio::spawn(async move {
+            if let Ok(running) = server.serve(server_transport).await {
+                let _ = running.waiting().await;
+            }
+        });
+        let client = ClientInfo::default().serve(client_transport).await.unwrap();
+        (client, task)
+    }
+
+    /// Runs a program and polls until it reaches a terminal state.
+    ///
+    /// `codemode_execute` returns as soon as the execution is durable and drives
+    /// the pass in the background, so a caller observes the outcome through
+    /// `codemode_execution` — which is exactly what an agent does.
+    async fn run_to_completion(
+        client: &rmcp::service::RunningService<rmcp::RoleClient, ClientInfo>,
+        code: &str,
+    ) -> String {
+        let started = client
+            .call_tool(call("codemode_execute", json!({ "code": code })))
+            .await
+            .unwrap();
+        let id = started
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.get("id"))
+            .and_then(Value::as_str)
+            .expect("execution id")
+            .to_string();
+
+        for _ in 0..200 {
+            let snapshot = client
+                .call_tool(call("codemode_execution", json!({ "id": id.clone() })))
+                .await
+                .unwrap();
+            let status = snapshot
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("status"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if status != "running" {
+                return serde_json::to_string(&snapshot).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("execution did not reach a terminal state");
+    }
+
+    /// A marker returned by every downstream call, so a leak is unmistakable.
+    const PAYLOAD_MARKER: &str = "INTERMEDIATE-PAYLOAD-MARKER-9f2c";
+
+    /// A connector whose results are large and individually identifiable.
+    struct EchoConnector {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl incurs_codemode::Connector for EchoConnector {
+        fn name(&self) -> &str {
+            "fixture"
+        }
+
+        async fn describe(&self) -> Result<incurs_codemode::ConnectorDescription, String> {
+            Ok(incurs_codemode::ConnectorDescription {
+                name: "fixture".to_string(),
+                instructions: None,
+                tools: vec![incurs_codemode::ConnectorTool {
+                    name: "echo".to_string(),
+                    description: Some("Returns a large payload".to_string()),
+                    input_schema: json!({"type": "object"}),
+                    output_schema: None,
+                    instructions: None,
+                    examples: Vec::new(),
+                    annotations: incurs_codemode::ToolAnnotations {
+                        read_only: Some(true),
+                        destructive: Some(false),
+                        idempotent: Some(true),
+                        open_world: Some(false),
+                    },
+                    policy: incurs_codemode::ToolPolicy {
+                        requires_approval: false,
+                        replay: incurs_codemode::ReplayPolicy::Log,
+                    },
+                }],
+            })
+        }
+
+        async fn execute(
+            &self,
+            _method: &str,
+            arguments: Value,
+            _context: &incurs_codemode::ToolContext,
+        ) -> Result<Value, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let index = arguments.get("i").and_then(Value::as_i64).unwrap_or(0);
+            Ok(json!({
+                "index": index,
+                "blob": format!("{PAYLOAD_MARKER}-{index}-{}", "x".repeat(256)),
+            }))
+        }
+    }
+
+    fn echo_service(calls: Arc<std::sync::atomic::AtomicUsize>) -> Arc<dyn CodeModeService> {
+        Arc::new(
+            LocalCodeModeService::spawn(move || {
+                CodeMode::new(
+                    Arc::new(MemoryStore::default()),
+                    LocalExecutor::default(),
+                    vec![Arc::new(EchoConnector { calls })],
+                )
+            })
+            .unwrap(),
+        )
+    }
+
+    /// The program every projection test runs: twenty calls, one small answer.
+    const REDUCING_PROGRAM: &str = "async () => { \
+        let total = 0; \
+        for (let i = 0; i < 20; i++) { \
+            const r = await fixture.echo({ i }); \
+            total += r.blob.length; \
+        } \
+        return { calls: 20, totalBytes: total }; \
+    }";
+
+    #[tokio::test]
+    async fn a_multi_call_program_completes_without_a_transport() {
+        // Isolates the runtime from the MCP transport: if this completes but
+        // the transport test does not, the difference is the request lifetime.
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let service = echo_service(Arc::clone(&calls));
+        let started = service
+            .execute(REDUCING_PROGRAM.to_string(), CodeModeRunOptions::default())
+            .await
+            .unwrap();
+        for _ in 0..200 {
+            let state = service.execution(started.id.clone()).await.unwrap();
+            if !matches!(state.status, incurs_codemode::ExecutionStatus::Running) {
+                assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 20);
+                assert_eq!(state.result.unwrap()["calls"], json!(20));
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("direct execution never completed");
+    }
+
+    #[tokio::test]
+    async fn reduced_projection_withholds_intermediate_payloads() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let server = CodeModeMcpServer::new(echo_service(Arc::clone(&calls)))
+            .with_projection(ExecutionProjection::Reduced);
+        let (client, handle) = connected(server).await;
+
+        // Assert on the bytes that actually cross the transport: the claim is
+        // about the wire, not about a Rust field.
+        let wire = run_to_completion(&client, REDUCING_PROGRAM).await;
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            20,
+            "the program must really have made twenty downstream calls"
+        );
+        assert!(
+            !wire.contains(PAYLOAD_MARKER),
+            "an intermediate downstream payload reached the model: {wire}"
+        );
+        assert!(
+            wire.contains("totalBytes"),
+            "the program's own result must still be returned: {wire}"
+        );
+        assert!(
+            !wire.contains("input_schema") && !wire.contains("inputSchema"),
+            "the capability snapshot must not cross the wire: {wire}"
+        );
+        // The per-step summary still says what happened.
+        assert!(wire.contains("resultBytes"), "step sizes should survive");
+
+        client.cancel().await.unwrap();
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn full_projection_still_returns_the_whole_execution() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let server = CodeModeMcpServer::new(echo_service(Arc::clone(&calls)));
+        let (client, handle) = connected(server).await;
+
+        let wire = run_to_completion(&client, REDUCING_PROGRAM).await;
+        let _ = &calls;
+
+        // The default must be byte-for-byte what callers saw before, which is
+        // what makes the reduced projection safe to add.
+        assert!(
+            wire.contains(PAYLOAD_MARKER),
+            "the default projection must still carry the full log"
+        );
+        assert!(wire.contains("capabilities"));
+
+        client.cancel().await.unwrap();
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn reduced_projection_is_dramatically_smaller() {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let full_server = CodeModeMcpServer::new(echo_service(Arc::clone(&calls)));
+        let (full_client, full_handle) = connected(full_server).await;
+        let full = run_to_completion(&full_client, REDUCING_PROGRAM).await;
+        full_client.cancel().await.unwrap();
+        full_handle.abort();
+
+        let reduced_server = CodeModeMcpServer::new(echo_service(Arc::clone(&calls)))
+            .with_projection(ExecutionProjection::Reduced);
+        let (reduced_client, reduced_handle) = connected(reduced_server).await;
+        let reduced = run_to_completion(&reduced_client, REDUCING_PROGRAM).await;
+        reduced_client.cancel().await.unwrap();
+        reduced_handle.abort();
+
+        eprintln!("full={} reduced={}", full.len(), reduced.len());
+
+        // Measured rather than asserted against a remembered constant: the
+        // ratio is computed from the two payloads this run produced.
+        assert!(
+            reduced.len() * 4 < full.len(),
+            "reduction should be large, not marginal: {} vs {} bytes",
+            reduced.len(),
+            full.len()
+        );
     }
 }

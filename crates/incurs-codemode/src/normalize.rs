@@ -37,7 +37,9 @@ fn is_arrow(source: &str) -> bool {
         return false;
     };
     let prefix = source[..arrow].trim();
-    let prefix = prefix.strip_prefix("async ").map_or(prefix, str::trim_start);
+    let prefix = prefix
+        .strip_prefix("async ")
+        .map_or(prefix, str::trim_start);
     // The prefix has to be the arrow's own parameter list and nothing else.
     //
     // Testing only that it ends with `)` accepted any program whose first

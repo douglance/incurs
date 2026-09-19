@@ -92,7 +92,9 @@ mod tests {
         .unwrap();
         assert!(source.contains("const state"));
         assert!(source.contains("const response = await fetch("));
-        assert!(source.contains("kind: 'call'"));
+        // The dispatch shape moved from per-method bindings into the namespace proxy,
+        // so the harness spells it with double quotes now.
+        assert!(source.contains(r#"kind: "call""#));
         assert!(source.contains("Code execution timed out"));
     }
 }

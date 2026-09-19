@@ -19,23 +19,19 @@ pub fn build_program_source(
 ) -> Result<String, String> {
     validate_names(connectors)?;
     let code = normalize_code(code);
+    // One lazy binding per namespace rather than a materialized object of methods.
+    // Writing the methods out required every connector's tool list, which meant
+    // describing — and so connecting to — every configured server before any
+    // program could run, including the ones the program never mentions. The proxy
+    // needs only the name; the connection opens on the first call.
     let bindings = connectors
         .iter()
         .map(|connector| {
-            let methods = connector
-                .tools
-                .iter()
-                .map(|tool| {
-                    format!(
-                        "{}: async (args = {{}}) => __unwrap(await __dispatch({{ kind: 'call', seq: __seq++, connector: {}, method: {}, arguments: __encode(args) }}))",
-                        serde_json::to_string(&tool.name).unwrap(),
-                        serde_json::to_string(&connector.name).unwrap(),
-                        serde_json::to_string(&tool.name).unwrap(),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",\n");
-            format!("const {} = {{\n{methods}\n}};", connector.name)
+            format!(
+                "const {} = __namespace({});",
+                connector.name,
+                serde_json::to_string(&connector.name).unwrap(),
+            )
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -123,6 +119,25 @@ const __unwrap = (response) => {{
   if (response.__codemode_control__ === "error") throw new Error(response.message);
   return __decode(response.result);
 }};
+const __namespace = (name) => new Proxy({{}}, {{
+  get: (_target, method) => {{
+    // Only `then` is withheld, and only because a namespace must not look
+    // thenable: awaiting one, or returning it from an async function, probes
+    // `then` and would otherwise receive a dispatch function and hang. Every
+    // other name is forwarded, because anything withheld here silently deletes a
+    // tool that is legitimately called that -- `inspect` and `constructor` are
+    // both real tool names in this workspace.
+    if (typeof method !== "string" || method === "then") return undefined;
+    return async (args = {{}}) => __unwrap(await __dispatch({{
+      kind: "call",
+      seq: __seq++,
+      connector: name,
+      method,
+      arguments: __encode(args)
+    }}));
+  }},
+  has: () => true
+}});
 {bindings}
 const __callBuiltin = async (method, args) => __unwrap(await __dispatch({{
   kind: "call",
@@ -161,27 +176,98 @@ try {{
     ))
 }
 
+/// Names the generated program already binds, or that JavaScript refuses as a
+/// binding.
+///
+/// A connector taking one of these produces a `const` redeclaration or a parse
+/// error inside the sandbox, which surfaces far from its cause, so it is
+/// rejected here where the name is still attributable to a connector.
+pub(crate) const RESERVED_CONNECTOR_NAMES: &[&str] = &[
+    // Bindings emitted by `build_program_source`, in declaration order.
+    "__incursDispatch",
+    "__dispatch",
+    "__encode",
+    "__decode",
+    "__unwrap",
+    "__seq",
+    "__logs",
+    "__program",
+    "__result",
+    "__base64Encode",
+    "__base64Decode",
+    "__callBuiltin",
+    "codemode",
+    "console",
+    // Globals the harness itself calls.
+    "Promise",
+    "setTimeout",
+    "Error",
+    "fetch",
+    "JSON",
+    "Object",
+    "Array",
+    "String",
+    "Number",
+    "Boolean",
+    "BigInt",
+    "Uint8Array",
+    "Math",
+    "Symbol",
+    "globalThis",
+    // Reserved words. `valid_identifier` accepts these, but `const <word> = …`
+    // is a syntax error.
+    "await",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "implements",
+    "import",
+    "in",
+    "instanceof",
+    "interface",
+    "let",
+    "new",
+    "null",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "return",
+    "static",
+    "super",
+    "switch",
+    "this",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+    "yield",
+];
+
 fn validate_names(connectors: &[ConnectorDescription]) -> Result<(), String> {
-    const RESERVED: &[&str] = &[
-        "__incursDispatch",
-        "__dispatch",
-        "__encode",
-        "__decode",
-        "__unwrap",
-        "__seq",
-        "__logs",
-        "__program",
-        "__result",
-        "Promise",
-        "setTimeout",
-        "Error",
-        "console",
-        "codemode",
-        "fetch",
-    ];
     let mut seen = std::collections::BTreeSet::new();
     for connector in connectors {
-        if RESERVED.contains(&connector.name.as_str()) {
+        if RESERVED_CONNECTOR_NAMES.contains(&connector.name.as_str()) {
             return Err(format!("Connector name \"{}\" is reserved", connector.name));
         }
         if !valid_identifier(&connector.name) {
@@ -251,5 +337,66 @@ mod tests {
         assert!(source.contains("const state"));
         assert!(source.contains("const __dispatch = async (payload) => payload"));
         assert!(source.contains("step: async (name, fn)"));
+    }
+
+    fn named(name: &str) -> ConnectorDescription {
+        ConnectorDescription {
+            name: name.to_string(),
+            instructions: None,
+            tools: vec![ConnectorTool {
+                name: "read".to_string(),
+                description: None,
+                input_schema: json!({"type": "object"}),
+                output_schema: None,
+                instructions: None,
+                examples: Vec::new(),
+                annotations: ToolAnnotations::default(),
+                policy: crate::ToolPolicy::default(),
+            }],
+        }
+    }
+
+    fn build(name: &str) -> Result<String, String> {
+        build_program_source(
+            "return 1",
+            &[named(name)],
+            &ProgramSourceOptions {
+                dispatch: "async (payload) => payload".to_string(),
+                execution_id: "\"test\"".to_string(),
+                timeout_ms: None,
+            },
+        )
+    }
+
+    #[test]
+    fn rejects_names_the_harness_already_binds() {
+        // These are `const`-declared by `build_program_source` itself, so a
+        // connector taking one produces a redeclaration inside the sandbox.
+        for name in ["__callBuiltin", "__base64Encode", "__base64Decode"] {
+            assert!(
+                build(name).is_err(),
+                "{name} is bound by the harness but was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_reserved_words_that_cannot_be_bound() {
+        // `valid_identifier` accepts each of these, but `const class = {…}` is
+        // a syntax error that would surface far from the offending connector.
+        for name in ["class", "default", "delete", "new", "import", "return"] {
+            assert!(
+                build(name).is_err(),
+                "reserved word {name} was accepted as a connector name"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_an_ordinary_name_that_merely_resembles_a_reserved_one() {
+        // The guard is exact-match, so renaming around a collision works.
+        for name in ["mcp_fetch", "classroom", "defaults", "newRelic"] {
+            assert!(build(name).is_ok(), "{name} should be a usable namespace");
+        }
     }
 }

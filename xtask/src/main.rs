@@ -90,9 +90,7 @@ fn release_packages() -> Vec<(Workspace, String, String)> {
         (Workspace::Cloudflare, "incurs-mcp-cloudflare", "0.3.0"),
     ]
     .into_iter()
-    .map(|(workspace, package, version)| {
-        (workspace, package.to_string(), version.to_string())
-    })
+    .map(|(workspace, package, version)| (workspace, package.to_string(), version.to_string()))
     .collect()
 }
 
@@ -615,7 +613,9 @@ mod tests {
                 match pinned.iter().find(|(_, package, _)| *package == name) {
                     None => missing.push(name),
                     Some((_, _, pinned_version)) if *pinned_version != version => {
-                        drifted.push(format!("{name}: pinned {pinned_version}, manifest {version}"));
+                        drifted.push(format!(
+                            "{name}: pinned {pinned_version}, manifest {version}"
+                        ));
                     }
                     Some(_) => {}
                 }

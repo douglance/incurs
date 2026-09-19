@@ -127,18 +127,24 @@ impl McpRegistry {
             path.file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
         });
-        let servers: Vec<_> = found.servers.into_iter().filter(|server| {
-            let Some(own) = own_program.as_deref() else {
-                return true;
-            };
-            match &server.transport {
-                McpTransport::Stdio(stdio) => std::path::Path::new(&stdio.command)
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    != Some(own),
-                _ => true,
-            }
-        }).collect();
+        let servers: Vec<_> = found
+            .servers
+            .into_iter()
+            .filter(|server| {
+                let Some(own) = own_program.as_deref() else {
+                    return true;
+                };
+                match &server.transport {
+                    McpTransport::Stdio(stdio) => {
+                        std::path::Path::new(&stdio.command)
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            != Some(own)
+                    }
+                    _ => true,
+                }
+            })
+            .collect();
         let self_excluded = entry_count - servers.len();
 
         // Collapse entries that describe the same server. The earliest host in

@@ -23,7 +23,7 @@ pub use connector::{
     Connector, ConnectorDescription, ConnectorExample, ConnectorTool, DefaultToolPolicyResolver,
     IncurConnector, McpClient, McpConnector, McpTool, OpenApiClient, OpenApiConnector,
     OpenApiRequest, ReplayPolicy, ToolAnnotations, ToolContext, ToolOrigin, ToolPolicy,
-    ToolPolicyResolver,
+    ToolPolicyResolver, sanitize_namespace,
 };
 pub use dispatch::{DispatchResponse, DispatchSession, StepResponse};
 pub use engine::{Clock, CodeExecutor, DispatchRequest, ExecuteResult, ExecutionHost, SystemClock};

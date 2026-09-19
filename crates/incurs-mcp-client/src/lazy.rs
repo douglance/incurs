@@ -413,7 +413,9 @@ impl LazyMcpClient {
             cache_schema_version: crate::cache::CACHE_SCHEMA_VERSION,
             server_id: self.id.as_str().to_string(),
             config_fingerprint: self.fingerprint.as_str().to_string(),
-            instructions: existing.as_ref().and_then(|entry| entry.instructions.clone()),
+            instructions: existing
+                .as_ref()
+                .and_then(|entry| entry.instructions.clone()),
             protocol_version: existing
                 .as_ref()
                 .and_then(|entry| entry.protocol_version.clone()),

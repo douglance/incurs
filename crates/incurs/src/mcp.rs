@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 
 use crate::schema::FieldMeta;
-#[cfg(feature = "mcp")]
 use serde_json::Value;
 
 // ---------------------------------------------------------------------------
@@ -110,7 +109,6 @@ impl McpRemoteOptions {
     }
 }
 
-#[cfg(feature = "mcp")]
 fn rmcp_protocol_versions(
     standards: &incurs_mcp_protocol::McpStandardSet,
 ) -> Vec<rmcp::model::ProtocolVersion> {
@@ -160,7 +158,6 @@ pub fn matches_tool_filter(name: &str, filter: &McpToolFilter) -> bool {
     included && !excluded
 }
 
-#[cfg(feature = "mcp")]
 struct RemoteToolHandler {
     client:
         std::sync::Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>>,
@@ -168,7 +165,6 @@ struct RemoteToolHandler {
     wrapper: Option<String>,
 }
 
-#[cfg(feature = "mcp")]
 #[async_trait::async_trait]
 impl crate::command::CommandHandler for RemoteToolHandler {
     async fn run(&self, ctx: crate::command::CommandContext) -> crate::output::CommandResult {
@@ -233,7 +229,7 @@ impl crate::command::CommandHandler for RemoteToolHandler {
 }
 
 /// Connects to a remote MCP-over-HTTP server and projects its tools as commands.
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "http")]
 pub async fn remote_commands(
     uri: impl Into<String>,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
@@ -242,7 +238,7 @@ pub async fn remote_commands(
 
 /// Connects to a remote MCP-over-HTTP server using explicit exact standards
 /// and projects its tools as commands.
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "http")]
 pub async fn remote_commands_with(
     uri: impl Into<String>,
     options: &McpRemoteOptions,
@@ -266,7 +262,7 @@ pub async fn remote_commands_with(
 ///
 /// Reports the offending header by name, since a rejected header is otherwise
 /// indistinguishable from an authentication failure at the far end.
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "http")]
 fn remote_header_map(
     headers: &[(String, String)],
 ) -> Result<std::collections::HashMap<http::HeaderName, http::HeaderValue>, crate::errors::Error> {
@@ -297,7 +293,6 @@ fn remote_header_map(
     Ok(map)
 }
 
-#[cfg(feature = "mcp")]
 pub(crate) async fn remote_commands_from_transport<T, E, A>(
     transport: T,
     options: &McpRemoteOptions,
@@ -338,7 +333,6 @@ where
     project_remote_commands(client).await
 }
 
-#[cfg(feature = "mcp")]
 async fn project_remote_commands(
     client: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
@@ -426,7 +420,6 @@ async fn project_remote_commands(
     Ok(commands)
 }
 
-#[cfg(feature = "mcp")]
 async fn discover_remote_tools(
     client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
 ) -> Result<Vec<rmcp::model::Tool>, crate::errors::Error> {
@@ -479,7 +472,6 @@ async fn discover_remote_tools(
     Ok(tools)
 }
 
-#[cfg(feature = "mcp")]
 fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, crate::errors::Error> {
     if result.is_error == Some(true) {
         return Err(remote_error(std::io::Error::other(
@@ -501,12 +493,10 @@ fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, cra
     }))
 }
 
-#[cfg(feature = "mcp")]
 fn remote_error(error: impl std::fmt::Display) -> crate::errors::Error {
     crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
 }
 
-#[cfg(feature = "mcp")]
 fn remote_field(name: &str, schema: &Value, required: bool) -> FieldMeta {
     let field_type = match schema.get("type").and_then(Value::as_str) {
         Some("boolean") => crate::schema::FieldType::Boolean,
@@ -652,7 +642,6 @@ fn field_type_to_json_type(ft: &crate::schema::FieldType) -> String {
 // MCP Server (behind feature flag)
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "mcp")]
 mod server {
     use std::borrow::Cow;
     use std::collections::{BTreeMap, HashMap};
@@ -1593,7 +1582,7 @@ mod server {
 }
 
 /// Builds a stateless MCP-over-HTTP service for a CLI.
-#[cfg(all(feature = "mcp", feature = "http"))]
+#[cfg(feature = "http")]
 pub(crate) fn http_service(
     cli: &crate::cli::Cli,
 ) -> Result<
@@ -1607,7 +1596,6 @@ pub(crate) fn http_service(
 }
 
 /// Starts a stdio MCP server for a complete CLI.
-#[cfg(feature = "mcp")]
 pub async fn serve_cli(cli: &crate::cli::Cli) -> Result<(), crate::errors::Error> {
     server::serve(server::ServerSource::from_cli(cli), &cli.mcp_options).await
 }
@@ -1620,7 +1608,6 @@ pub async fn serve_cli(cli: &crate::cli::Cli) -> Result<(), crate::errors::Error
 /// This is the public entry point. It accepts the CLI command tree directly
 /// (rather than the standalone `mcp::CommandEntry` tree) so that it can
 /// resolve `Arc<CommandDef>` references for command execution.
-#[cfg(feature = "mcp")]
 pub async fn serve(
     name: &str,
     version: &str,
@@ -1645,7 +1632,6 @@ mod tests {
     use super::*;
     use crate::schema::{FieldType, to_kebab};
 
-    #[cfg(feature = "mcp")]
     #[test]
     fn test_tool_result_success_presents_declared_image_content() {
         use crate::command::McpResultContent;
@@ -1788,7 +1774,7 @@ mod tests {
         assert_eq!(field_type_to_json_type(&FieldType::Count), "number");
     }
 
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_remote_commands_discovers_progressive_catalog() {
         struct Ping;
@@ -1845,7 +1831,7 @@ mod tests {
         assert!(commands["ping"].output_schema.is_some());
     }
 
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     #[tokio::test]
     async fn test_mcp_calls_use_tool_catalog_config_defaults() {
         use rmcp::ServiceExt;
@@ -1972,7 +1958,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     #[test]
     fn remote_header_map_converts_valid_pairs() {
         let headers = vec![
@@ -1988,7 +1974,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     #[test]
     fn remote_header_map_names_the_offending_header() {
         // A rejected header would otherwise be indistinguishable from an auth
@@ -2002,7 +1988,7 @@ mod tests {
         assert!(error.to_string().contains("x-ok"), "got: {error}");
     }
 
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     #[test]
     fn bearer_options_carry_only_a_token() {
         let options = super::McpRemoteOptions::bearer("secret-token");

@@ -451,7 +451,7 @@ impl Cli {
     }
 
     /// Mounts tools from a remote MCP-over-HTTP server as a command group.
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     pub async fn remote_mcp(
         self,
         name: impl Into<String>,
@@ -472,7 +472,7 @@ impl Cli {
     ///
     /// Use this for a server behind a bearer token or custom headers; a private
     /// remote ledger is the usual case.
-    #[cfg(all(feature = "mcp", feature = "http"))]
+    #[cfg(feature = "http")]
     pub async fn remote_mcp_with(
         mut self,
         name: impl Into<String>,
@@ -716,16 +716,8 @@ impl Cli {
 
         // --- Step 2c: Handle --mcp ---
         if builtin.mcp {
-            #[cfg(feature = "mcp")]
-            {
-                crate::mcp::serve_cli(self).await?;
-                return Ok(());
-            }
-            #[cfg(not(feature = "mcp"))]
-            {
-                writeln_stdout("MCP support requires the 'mcp' feature flag.");
-                std::process::exit(1);
-            }
+            crate::mcp::serve_cli(self).await?;
+            return Ok(());
         }
 
         if let Some(output) = completion_output(
@@ -1891,16 +1883,8 @@ impl Cli {
 
         // --- Step 2c: Handle --mcp ---
         if builtin.mcp {
-            #[cfg(feature = "mcp")]
-            {
-                crate::mcp::serve_cli(self).await?;
-                return Ok(None);
-            }
-            #[cfg(not(feature = "mcp"))]
-            {
-                wln!("MCP support requires the 'mcp' feature flag.");
-                return Ok(Some(1));
-            }
+            crate::mcp::serve_cli(self).await?;
+            return Ok(None);
         }
 
         if let Some(output) = completion_output(
@@ -4101,7 +4085,8 @@ fn publish_agent_plugin(
 fn parse_plugin_build_options(rest: &[String]) -> Result<PluginBuildOptions, String> {
     let mut output = None;
     let mut depth = 1;
-    let mut include_mcp = cfg!(feature = "mcp");
+    // Every CLI serves MCP, so a bundled plugin includes it unless asked not to.
+    let mut include_mcp = true;
     let mut bundle_cli = false;
     let mut overwrite = false;
     let mut index = 0;
@@ -5506,7 +5491,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(options.output, std::path::PathBuf::from("dist/plugin"));
-        assert_eq!(options.include_mcp, cfg!(feature = "mcp"));
+        assert!(options.include_mcp);
         assert!(options.overwrite);
     }
 

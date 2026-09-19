@@ -74,6 +74,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Connector for FlakyConnector {
+        fn name(&self) -> &str {
+            "test"
+        }
+
         async fn describe(&self) -> Result<ConnectorDescription, String> {
             if self.descriptions.fetch_add(1, Ordering::SeqCst) == 0 {
                 Ok(ConnectorDescription {
@@ -113,12 +117,23 @@ mod tests {
 
     #[tokio::test]
     async fn drive_setup_errors_become_terminal_execution_errors() {
+        // Two connectors claiming one namespace. This used to be driven by a
+        // connector whose second `describe` failed, because session construction
+        // described every connector up front; namespaces now bind lazily, so a
+        // describe failure surfaces at the call that needs it rather than at setup.
+        // A duplicate namespace is still a genuine setup failure -- the bindings
+        // cannot be emitted at all -- so it exercises the same path.
         let runtime = CodeMode::with_clock(
             Arc::new(MemoryStore::default()),
             UnusedExecutor,
-            vec![Arc::new(FlakyConnector {
-                descriptions: AtomicUsize::new(0),
-            })],
+            vec![
+                Arc::new(FlakyConnector {
+                    descriptions: AtomicUsize::new(0),
+                }),
+                Arc::new(FlakyConnector {
+                    descriptions: AtomicUsize::new(0),
+                }),
+            ],
             FixedClock,
         );
         let running = runtime.start("1 + 1").await.unwrap();
@@ -129,12 +144,12 @@ mod tests {
             &FixedClock,
         )
         .await;
-        assert_eq!(result.unwrap_err(), "connector setup failed");
+        assert_eq!(result.unwrap_err(), "Duplicate connector name \"test\"");
         let failed = runtime.execution_snapshot(&running.id).await.unwrap();
         assert_eq!(failed.status, ExecutionStatus::Error);
         assert_eq!(
             failed.error.as_deref(),
-            Some("Code Mode drive failed: connector setup failed")
+            Some("Code Mode drive failed: Duplicate connector name \"test\"")
         );
     }
 }

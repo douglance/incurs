@@ -9,8 +9,8 @@ use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, GetPromptRequestParams,
     GetPromptResponse, GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult,
     ListToolsResult, PaginatedRequestParams, Prompt, PromptMessage, ReadResourceRequestParams,
-    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role,
-    ServerCapabilities, ServerInfo, Tool,
+    ReadResourceResponse, ReadResourceResult, Resource, ResourceContents, Role, ServerCapabilities,
+    ServerInfo, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt};
@@ -81,9 +81,7 @@ impl FixtureServer {
     pub fn with_resources(mut self, uris: &[&str]) -> Self {
         self.resources = Arc::new(
             uris.iter()
-                .map(|uri| {
-                    Resource::new((*uri).to_string(), (*uri).to_string())
-                })
+                .map(|uri| Resource::new((*uri).to_string(), (*uri).to_string()))
                 .collect(),
         );
         self
@@ -167,7 +165,7 @@ impl ServerHandler for FixtureServer {
                 .enable_prompts()
                 .build(),
         )
-            .with_server_info(Implementation::new(self.name.clone(), "0.0.0"))
+        .with_server_info(Implementation::new(self.name.clone(), "0.0.0"))
     }
 
     async fn list_tools(

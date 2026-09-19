@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -40,7 +40,8 @@ pub struct DispatchSession {
     context: ToolContext,
     connectors: BTreeMap<String, Arc<dyn Connector>>,
     descriptions: BTreeMap<String, ConnectorDescription>,
-    available: BTreeMap<String, BTreeSet<String>>,
+    /// Descriptions resolved so far, filled in as namespaces are first used.
+    described: tokio::sync::Mutex<BTreeMap<String, ConnectorDescription>>,
     sequence: AtomicU64,
 }
 
@@ -87,23 +88,14 @@ impl DispatchSession {
         connectors: Vec<Arc<dyn Connector>>,
         snapshot: Vec<ConnectorDescription>,
     ) -> Result<Self, String> {
+        // Namespaces are registered by name alone. Describing every connector here
+        // meant contacting every configured server before any program ran, so one
+        // slow or dead server delayed or failed executions that never mentioned it.
         let mut resolved = BTreeMap::new();
-        let mut available = BTreeMap::new();
         for connector in connectors {
-            let description = connector.describe().await?;
-            available.insert(
-                description.name.clone(),
-                description
-                    .tools
-                    .iter()
-                    .map(|tool| tool.name.clone())
-                    .collect(),
-            );
-            if resolved
-                .insert(description.name.clone(), connector)
-                .is_some()
-            {
-                return Err(format!("Duplicate connector name \"{}\"", description.name));
+            let name = connector.name().to_string();
+            if resolved.insert(name.clone(), connector).is_some() {
+                return Err(format!("Duplicate connector name \"{name}\""));
             }
         }
         let descriptions = snapshot
@@ -116,7 +108,7 @@ impl DispatchSession {
             context,
             connectors: resolved,
             descriptions,
-            available,
+            described: tokio::sync::Mutex::new(BTreeMap::new()),
             sequence: AtomicU64::new(0),
         })
     }
@@ -124,6 +116,49 @@ impl DispatchSession {
     /// Returns descriptions used to generate the child Worker bindings.
     pub fn descriptions(&self) -> Vec<ConnectorDescription> {
         self.descriptions.values().cloned().collect()
+    }
+
+    /// Returns one connector's description, contacting it at most once per pass.
+    ///
+    /// This is the whole of the laziness. A namespace the program never calls is
+    /// never described, so a server that is slow, unreachable or removed costs
+    /// nothing until something actually uses it, and cannot fail an execution that
+    /// does not touch it.
+    async fn describe_once(&self, name: &str) -> Result<ConnectorDescription, String> {
+        // The cache lock is scoped so it is never held across `describe`. A
+        // connector may reach back into this session -- a nested apoc invocation
+        // does exactly that -- and holding the lock across that await would
+        // deadlock the outer program against its own child.
+        {
+            let cache = self.described.lock().await;
+            if let Some(description) = cache.get(name) {
+                return Ok(description.clone());
+            }
+        }
+        let connector = self
+            .connectors
+            .get(name)
+            .ok_or_else(|| capability_unavailable(name, ""))?;
+        let description = connector.describe().await?;
+        self.described
+            .lock()
+            .await
+            .insert(name.to_string(), description.clone());
+        Ok(description)
+    }
+
+    /// Describes every connector, for the callers that genuinely need all of them.
+    ///
+    /// Only the in-sandbox `codemode.search` and `codemode.describe` use this: a
+    /// program asking what exists is asking to enumerate, so it pays for the
+    /// enumeration. Nothing on the ordinary dispatch path calls it.
+    async fn described_all(&self) -> Result<Vec<ConnectorDescription>, String> {
+        let names: Vec<String> = self.connectors.keys().cloned().collect();
+        let mut descriptions = Vec::with_capacity(names.len());
+        for name in names {
+            descriptions.push(self.describe_once(&name).await?);
+        }
+        Ok(descriptions)
     }
 
     /// Executes or replays one connector call under the runtime policy.
@@ -243,18 +278,12 @@ impl DispatchSession {
             .connectors
             .get(connector_name)
             .ok_or_else(|| capability_unavailable(connector_name, method))?;
-        let tool = self
-            .descriptions
-            .get(connector_name)
-            .and_then(|description| description.tools.iter().find(|tool| tool.name == method))
+        let description = self.describe_once(connector_name).await?;
+        let tool = description
+            .tools
+            .iter()
+            .find(|tool| tool.name == method)
             .ok_or_else(|| format!("Tool \"{method}\" not found on {connector_name}"))?;
-        if !self
-            .available
-            .get(connector_name)
-            .is_some_and(|tools| tools.contains(method))
-        {
-            return Err(capability_unavailable(connector_name, method));
-        }
         match self
             .runtime
             .decide(
@@ -328,7 +357,7 @@ impl DispatchSession {
                 message: None,
             }),
             ToolDecision::Execute(seq) => {
-                let connectors = self.descriptions();
+                let connectors = self.described_all().await?;
                 let snippets = self
                     .runtime
                     .snippets()
