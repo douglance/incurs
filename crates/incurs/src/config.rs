@@ -141,7 +141,15 @@ fn resolve_path(file_path: &str) -> String {
     if (file_path.starts_with("~/") || file_path == "~")
         && let Some(home) = dirs::home_dir()
     {
-        return home.join(&file_path[1..]).to_string_lossy().into_owned();
+        // Strip the separator as well as the tilde. `Path::join` with an
+        // absolute argument discards the base, so joining "/.config/x" onto the
+        // home directory silently produced "/.config/x" and every `~/` entry in
+        // a config search list resolved to a path that does not exist.
+        let rest = file_path.strip_prefix("~/").unwrap_or("");
+        if rest.is_empty() {
+            return home.to_string_lossy().into_owned();
+        }
+        return home.join(rest).to_string_lossy().into_owned();
     }
 
     // Resolve relative to current working directory
@@ -158,6 +166,26 @@ fn resolve_path(file_path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_tilde_path_resolves_inside_the_home_directory() {
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let resolved = resolve_path("~/.config/composite/config.json");
+        // The bug this guards: `Path::join` with an absolute argument discards
+        // the base, so the tilde form resolved to "/.config/..." and every
+        // home-relative entry in a config search list was silently unreachable.
+        assert!(
+            resolved.starts_with(&home.to_string_lossy().into_owned()),
+            "a ~/ path must resolve under the home directory, got {resolved}"
+        );
+        assert!(
+            resolved.ends_with(".config/composite/config.json"),
+            "{resolved}"
+        );
+        assert_eq!(resolve_path("~"), home.to_string_lossy().into_owned());
+    }
     use super::*;
 
     #[test]

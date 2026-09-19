@@ -1,0 +1,36 @@
+[package]
+name = "incurs-mcp-client"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+description = "Lazy process-lifecycle MCP client implementing the incurs Code Mode client contract"
+repository = "https://github.com/douglance/incurs"
+readme = "README.md"
+
+[features]
+default = []
+testing = []
+
+[dependencies]
+async-trait = "0.1"
+dirs = "6"
+http = "1"
+incurs = { path = "../incurs", version = "0.7.0", default-features = false }
+incurs-codemode = { path = "../incurs-codemode", version = "0.4.0" }
+incurs-mcp-discovery = { path = "../incurs-mcp-discovery", version = "0.1.0" }
+rmcp = { version = "=3.0.0-beta.5", features = [
+  "client",
+  "transport-child-process",
+  "transport-streamable-http-client-reqwest",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "time", "process"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+incurs-mcp-client = { path = ".", features = ["testing"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util"] }
+tokio-util = { version = "0.7" }

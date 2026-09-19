@@ -51,12 +51,7 @@ pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::
 /// Builds an Axum router with command routes and stateless MCP-over-HTTP.
 pub fn build_cli_router(cli: &Cli) -> Result<Router, crate::errors::Error> {
     let router = build_router(build_app_state(cli));
-    #[cfg(feature = "mcp")]
-    {
-        return Ok(router.nest_service("/mcp", crate::mcp::http_service(cli)?));
-    }
-    #[cfg(not(feature = "mcp"))]
-    Ok(router)
+    Ok(router.nest_service("/mcp", crate::mcp::http_service(cli)?))
 }
 
 /// Builds an Axum router from the CLI. Useful for testing without binding
@@ -694,7 +689,6 @@ mod tests {
     use std::collections::HashMap;
     use tower::ServiceExt;
 
-    #[cfg(feature = "mcp")]
     async fn mcp_request(cli: &Cli, body: Value) -> (StatusCode, Value) {
         let response = build_cli_router(cli)
             .unwrap()
@@ -917,7 +911,6 @@ mod tests {
         assert_eq!(response.headers()[header::CONTENT_TYPE], "application/yaml");
     }
 
-    #[cfg(feature = "mcp")]
     #[tokio::test]
     async fn test_stateless_mcp_http_rejects_get() {
         let cli = Cli::create("test").command("echo", make_echo_command("echo"));
@@ -935,7 +928,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
-    #[cfg(feature = "mcp")]
     #[tokio::test]
     async fn test_mcp_http_rejects_non_loopback_host() {
         let cli = Cli::create("test").command("echo", make_echo_command("echo"));
@@ -954,7 +946,6 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 
-    #[cfg(feature = "mcp")]
     #[tokio::test]
     async fn test_mcp_initialize_and_progressive_tools() {
         let cli = Cli::create("test")
@@ -1001,7 +992,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "mcp")]
     #[tokio::test]
     async fn test_mcp_direct_tool_call_executes_shared_command() {
         let cli = Cli::create("test")

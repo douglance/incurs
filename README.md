@@ -175,8 +175,7 @@ my-cli plugin build --bundle-cli --output ./dist/my-cli-plugin
 
 The package keeps its layers separate: `skills/<name>/SKILL.md` for agents to read,
 `mcp.json` declaring the tool surface, and `bin/my-cli` as the executable, all declared
-by a root `plugin.json`. Use `--plugin-no-mcp` for a skills-only package. Regeneration
-will not overwrite existing plugin artifacts without `--force`.
+by a root `plugin.json`. Use `--plugin-no-mcp` for a skills-only package.
 
 The `incurs` binary is also a client for those packages:
 
@@ -190,11 +189,10 @@ incurs plugin uninstall my-cli [--purge]
 ```
 
 Installation validates the package, checks its operating system and architecture, and
-installs the command into your executable directory. It tells you when that directory
-is not on `PATH`, and never edits a shell profile. Each MCP server connects
-independently, so one failure does not hide the tools from the others. The data
-directory you name is created before launch, persists across runs, and is never removed
-for you.
+installs the command into your executable directory, telling you when that directory is
+not on `PATH`. Each MCP server connects independently, so one failure does not hide the
+tools from the others. The data directory you name is created before launch and
+persists across runs.
 
 See [Agent Plugins compatibility](docs/agent-plugins.md) for the full behavior and
 failure-boundary matrix.
@@ -214,10 +212,6 @@ instead of making one tool call per step. It provides connector discovery, appro
 policy, immutable capability snapshots, deterministic replay, cancellation, ordered
 events, artifact-backed large values, rollback hooks, and bounded durable history. It
 can wrap an incurs catalog, a remote MCP client, or an authenticated OpenAPI client.
-
-Your command's own annotations decide policy: a read-only tool skips approval only when
-it is neither destructive nor open-world. Remote tools require approval unless the host
-installs its own policy resolver.
 
 `incurs-codemode-local` runs those programs in a resource-limited QuickJS runtime, and
 `incurs-codemode-mcp` exposes the lifecycle to MCP clients:
