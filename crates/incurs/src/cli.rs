@@ -3141,11 +3141,10 @@ struct RawTarget {
     middleware: Vec<MiddlewareFn>,
 }
 
-/// Flags the framework answers itself when they lead argv. Anything else in
-/// that position goes to a raw root command, when there is one.
+/// Flags the framework answers itself when they lead argv, even with a raw
+/// root command. They are the machine-facing surfaces; everything a person
+/// types, `--help` and `--version` included, belongs to the wrapped program.
 const LEADING_BUILTIN_FLAGS: &[&str] = &[
-    "--help",
-    "-h",
     "--llms",
     "--llms-full",
     "--mcp",
@@ -3164,9 +3163,10 @@ impl Cli {
     /// Selects the raw command argv names, if any.
     ///
     /// A command path made of leading tokens that resolves to a raw command
-    /// wins. Otherwise a raw root command takes argv when it is empty, starts
-    /// with a token that is not a framework flag, or starts with an unknown
-    /// command name. Framework flags and builtin commands keep their meaning.
+    /// wins. Otherwise a raw root command takes any argv the command tree
+    /// cannot run: empty argv, a leading flag other than the machine-facing
+    /// ones in [`LEADING_BUILTIN_FLAGS`], an unknown command at any depth, or a
+    /// group named without a subcommand. Builtin commands keep their meaning.
     fn resolve_raw(&self, argv: &[String]) -> Option<RawTarget> {
         let raw_root = || {
             self.root_command
@@ -3183,7 +3183,6 @@ impl Cli {
         };
         if first.starts_with('-') {
             let is_builtin = LEADING_BUILTIN_FLAGS.contains(&first.as_str())
-                || (first == "--version" && self.version.is_some())
                 || self.config.as_ref().is_some_and(|config| {
                     let flag = first.trim_start_matches("--");
                     let flag = flag.split('=').next().unwrap_or(flag);
@@ -3208,7 +3207,8 @@ impl Cli {
                     .any(|builtin| builtin.name == first.as_str());
                 if is_builtin_command { None } else { raw_root() }
             }
-            _ => None,
+            ResolvedCommand::Error { .. } | ResolvedCommand::Help { .. } => raw_root(),
+            ResolvedCommand::Leaf { .. } | ResolvedCommand::Gateway { .. } => None,
         }
     }
 

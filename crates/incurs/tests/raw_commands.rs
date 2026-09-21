@@ -133,6 +133,35 @@ async fn raw_root_takes_unknown_commands_and_unknown_leading_flags() {
         run_json(&cli, &["--verbose", "gen"]).await,
         json!({ "argv": ["--verbose", "gen"] })
     );
+    assert_eq!(
+        run_json(&cli, &["--help"]).await,
+        json!({ "argv": ["--help"] })
+    );
+    assert_eq!(
+        run_json(&cli, &["--version"]).await,
+        json!({ "argv": ["--version"] })
+    );
+}
+
+#[tokio::test]
+async fn raw_root_takes_groups_without_a_subcommand_and_unknown_subcommands() {
+    let auth = Cli::create("auth")
+        .description("Auth")
+        .command("login", raw("login"));
+    let cli = Cli::create("app").root(raw("app")).group(auth);
+
+    assert_eq!(
+        run_json(&cli, &["auth"]).await,
+        json!({ "argv": ["auth"] })
+    );
+    assert_eq!(
+        run_json(&cli, &["auth", "logn", "-x"]).await,
+        json!({ "argv": ["auth", "logn", "-x"] })
+    );
+    assert_eq!(
+        run_json(&cli, &["auth", "login", "-x"]).await,
+        json!({ "argv": ["auth", "login", "-x"] })
+    );
 }
 
 #[tokio::test]
@@ -147,8 +176,6 @@ async fn raw_root_leaves_framework_flags_and_builtin_commands_to_the_framework()
     assert!(llms.contains("gen"), "manifest should list gen: {llms}");
     assert!(!llms.contains("\"argv\""), "root must not run: {llms}");
 
-    let (help, _) = run(&cli, &["--help"]).await;
-    assert!(!help.contains("\"argv\""), "root must not run: {help}");
 
     let (completions, _) = run(&cli, &["completions", "bash"]).await;
     assert!(

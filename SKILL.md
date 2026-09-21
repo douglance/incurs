@@ -121,10 +121,11 @@ let build = CommandDef::build("build", Forward).description("Build").raw().done(
 - A handler that already wrote to the terminal returns `null` data with the
   wrapped program's exit code: `CommandResult::Ok { data: Value::Null, cta:
   None, exit_code: Some(code) }`. Nothing else is printed.
-- `Cli::root(def)` with a raw `def` also receives argv that is empty, starts
-  with an unknown command, or starts with a flag the framework does not own.
-  `--help`, `--llms`, `--mcp`, and builtin commands such as `completions`
-  still reach the framework.
+- `Cli::root(def)` with a raw `def` receives any argv the command tree cannot
+  run: empty argv, an unknown command at any depth, a group named without a
+  subcommand, and leading flags such as `--help` and `--version`. The
+  machine-facing flags (`--llms`, `--mcp`, `--schema`, `--format`, ...) and
+  builtin commands such as `completions` still reach the framework.
 
 `Cli::default_command("run")` on a CLI mounted with `.group(...)` runs `run`
 when the next token names no subcommand, without consuming that token:

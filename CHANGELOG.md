@@ -7,8 +7,9 @@
   `ctx.args["argv"]`, built-in flags included, and a `null` result prints
   nothing and passes its exit code through. Tool calls pass an `arguments`
   array, prefixed with the command path.
-- A raw root command (`Cli::root`) also receives empty argv, unknown commands,
-  and leading flags the framework does not own.
+- A raw root command (`Cli::root`) receives any argv the command tree cannot
+  run, including `--help` and `--version`; the machine-facing flags and
+  builtin commands stay with the framework.
 - Added `Cli::default_command`, so a mounted group runs a named subcommand when
   the next token names none, without consuming that token.
 - Added `CommandBuilder::hidden`, which keeps a command out of help,
