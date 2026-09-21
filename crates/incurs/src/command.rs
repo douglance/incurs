@@ -144,6 +144,11 @@ pub struct CommandDef {
     pub middleware: Vec<MiddlewareFn>,
     /// JSON Schema for the command's output type (used by `--schema`).
     pub output_schema: Option<Value>,
+    /// Whether the command receives its argv verbatim. See [`CommandBuilder::raw`].
+    pub raw: bool,
+    /// Whether the command is left out of help, completions, skills, and tool catalogs.
+    /// See [`CommandBuilder::hidden`].
+    pub hidden: bool,
 }
 
 impl CommandDef {
@@ -190,6 +195,8 @@ impl CommandDef {
                 handler: Box::new(handler),
                 middleware: Vec::new(),
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
             mcp: None,
         }
@@ -507,6 +514,36 @@ impl CommandBuilder {
         self
     }
 
+    /// Makes this a raw command: the CLI hands it every token after the program
+    /// name unchanged, and prints nothing of its own around the handler.
+    ///
+    /// Built-in flags (`--help`, `--format`, `--json`, ...) and option
+    /// validation are skipped once argv names a raw command, so the handler
+    /// owns them. The handler receives `ctx.args` as `{"argv": [...]}`:
+    ///
+    /// - from the CLI, `argv` is every token after the program name, exactly
+    ///   as typed, including the command path;
+    /// - from a tool call, `argv` is the command path followed by the
+    ///   `arguments` array the caller passed.
+    ///
+    /// On the CLI, a successful result with `null` data prints nothing and
+    /// exits with the result's exit code, for handlers that already wrote to
+    /// the terminal (for example by running another program with inherited
+    /// stdio). Any other result is rendered as usual.
+    pub fn raw(mut self) -> Self {
+        self.def.raw = true;
+        self.def.args_fields = Vec::new();
+        self.def.options_fields = vec![raw_arguments_field()];
+        self
+    }
+
+    /// Hides this command from help, completions, skills, `--llms`, and tool
+    /// catalogs. It still runs when invoked by name.
+    pub fn hidden(mut self) -> Self {
+        self.def.hidden = true;
+        self
+    }
+
     /// Finishes building and returns the [`CommandDef`].
     pub fn done(mut self) -> CommandDef {
         if let Some(options) = self.mcp {
@@ -516,6 +553,24 @@ impl CommandBuilder {
             });
         }
         self.def
+    }
+}
+
+/// The one option a raw command declares: the tokens a tool caller would
+/// otherwise have typed after the command path.
+fn raw_arguments_field() -> FieldMeta {
+    FieldMeta {
+        name: "arguments",
+        cli_name: "arguments".to_string(),
+        description: Some(
+            "Arguments passed to the command unchanged, as they would be typed after the command name",
+        ),
+        field_type: crate::schema::FieldType::Array(Box::new(crate::schema::FieldType::String)),
+        required: false,
+        default: None,
+        alias: None,
+        deprecated: false,
+        env_name: None,
     }
 }
 
@@ -754,37 +809,42 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
     let has_middleware = !middlewares.is_empty();
 
     let command_inner = Arc::clone(&command);
+    let path_inner = path.clone();
     let run_command = move || -> middleware::BoxFuture<()> {
         let command = command_inner;
         Box::pin(async move {
             // --- Step 1: Parse args and options based on parse_mode ---
-            let parsed = match parse_mode {
-                ParseMode::Argv => {
-                    // CLI mode: parse both args and options from argv tokens.
-                    // The parser module handles this; we provide a stub that
-                    // passes through as JSON values.
-                    parse_argv_mode(
-                        &argv,
-                        &command.args_fields,
-                        &command.options_fields,
-                        &command.aliases,
-                        &defaults,
-                    )
-                }
-                ParseMode::Split => {
-                    // HTTP mode: args from argv, options from input_options.
-                    let args = parse_args_from_argv(&argv, &command.args_fields);
-                    let parsed_options = input_options_to_value(&input_options);
-                    validate_parsed_input(args, parsed_options, &command)
-                }
-                ParseMode::Flat => {
-                    // MCP mode: split input_options into args vs options by field names.
-                    let (args, parsed_options) = split_flat_params(
-                        &input_options,
-                        &command.args_fields,
-                        &command.options_fields,
-                    );
-                    validate_parsed_input(args, parsed_options, &command)
+            let parsed = if command.raw {
+                raw_input(parse_mode, &argv, &path_inner, &input_options)
+            } else {
+                match parse_mode {
+                    ParseMode::Argv => {
+                        // CLI mode: parse both args and options from argv tokens.
+                        // The parser module handles this; we provide a stub that
+                        // passes through as JSON values.
+                        parse_argv_mode(
+                            &argv,
+                            &command.args_fields,
+                            &command.options_fields,
+                            &command.aliases,
+                            &defaults,
+                        )
+                    }
+                    ParseMode::Split => {
+                        // HTTP mode: args from argv, options from input_options.
+                        let args = parse_args_from_argv(&argv, &command.args_fields);
+                        let parsed_options = input_options_to_value(&input_options);
+                        validate_parsed_input(args, parsed_options, &command)
+                    }
+                    ParseMode::Flat => {
+                        // MCP mode: split input_options into args vs options by field names.
+                        let (args, parsed_options) = split_flat_params(
+                            &input_options,
+                            &command.args_fields,
+                            &command.options_fields,
+                        );
+                        validate_parsed_input(args, parsed_options, &command)
+                    }
                 }
             };
             let (args, parsed_options) = match parsed {
@@ -977,6 +1037,56 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
 // ---------------------------------------------------------------------------
 // Internal parsing helpers
 // ---------------------------------------------------------------------------
+
+/// Builds a raw command's input: `{"argv": [...]}` and no options.
+///
+/// CLI and HTTP invocations pass their tokens through unchanged. A tool call
+/// has no argv of its own, so the command path is prepended to the caller's
+/// `arguments`, giving the handler the same token list a terminal user would
+/// have typed.
+fn raw_input(
+    parse_mode: ParseMode,
+    argv: &[String],
+    path: &str,
+    input_options: &BTreeMap<String, Value>,
+) -> Result<(Value, Value), InputError> {
+    let tokens: Vec<Value> = match parse_mode {
+        ParseMode::Argv | ParseMode::Split => argv.iter().cloned().map(Value::String).collect(),
+        ParseMode::Flat => {
+            let mut tokens: Vec<Value> = path
+                .split_whitespace()
+                .map(|segment| Value::String(segment.to_string()))
+                .collect();
+            match input_options.get("arguments") {
+                None | Some(Value::Null) => {}
+                Some(Value::Array(items)) => {
+                    for item in items {
+                        match item {
+                            Value::String(_) => tokens.push(item.clone()),
+                            other => {
+                                return Err(InputError {
+                                    message: format!("arguments must be strings, received {other}"),
+                                    field_errors: None,
+                                });
+                            }
+                        }
+                    }
+                }
+                Some(other) => {
+                    return Err(InputError {
+                        message: format!("arguments must be an array of strings, received {other}"),
+                        field_errors: None,
+                    });
+                }
+            }
+            tokens
+        }
+    };
+    Ok((
+        serde_json::json!({ "argv": tokens }),
+        Value::Object(serde_json::Map::new()),
+    ))
+}
 
 /// Parses args and options from argv tokens (CLI mode).
 ///

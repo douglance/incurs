@@ -98,6 +98,9 @@ pub enum CommandEntry {
         middleware: Vec<MiddlewareFn>,
         /// Output policy inherited by child commands.
         output_policy: Option<OutputPolicy>,
+        /// Subcommand that runs when the next token names no subcommand.
+        /// See [`Cli::default_command`].
+        default_command: Option<String>,
     },
     /// A fetch gateway that proxies to an HTTP handler.
     FetchGateway {
@@ -113,6 +116,11 @@ pub enum CommandEntry {
 }
 
 impl CommandEntry {
+    /// Whether this entry is a hidden command. See [`crate::command::CommandBuilder::hidden`].
+    pub fn is_hidden(&self) -> bool {
+        matches!(self, CommandEntry::Leaf(def) if def.hidden)
+    }
+
     /// Returns the description of this entry, regardless of variant.
     pub fn description(&self) -> Option<&str> {
         match self {
@@ -183,6 +191,8 @@ pub struct Cli {
     extra_formats: Vec<Format>,
     /// MCP server instructions, discovery, and filtering options.
     pub(crate) mcp_options: crate::mcp::McpServeOptions,
+    /// Subcommand used when this CLI is mounted as a group and argv names none.
+    default_command: Option<String>,
 }
 
 impl Cli {
@@ -206,6 +216,7 @@ impl Cli {
             format: None,
             extra_formats: Vec::new(),
             mcp_options: crate::mcp::McpServeOptions::default(),
+            default_command: None,
         }
     }
 
@@ -269,6 +280,17 @@ impl Cli {
     /// Configures MCP server instructions, discovery, and tool filtering.
     pub fn mcp(mut self, options: crate::mcp::McpServeOptions) -> Self {
         self.mcp_options = options;
+        self
+    }
+
+    /// Names the subcommand that runs when this CLI is mounted as a group and
+    /// the token after the group names none of its subcommands.
+    ///
+    /// With `test` mounted as a group whose default is `run`, both
+    /// `app test` and `app test Foo` resolve to `app test run`, and `Foo` is
+    /// passed to `run`. Tokens are never consumed on the default's behalf.
+    pub fn default_command(mut self, name: impl Into<String>) -> Self {
+        self.default_command = Some(name.into());
         self
     }
 
@@ -391,6 +413,7 @@ impl Cli {
             commands: cli.commands,
             middleware: cli.middleware,
             output_policy: cli.output_policy,
+            default_command: cli.default_command,
         };
         self.commands.insert(cli.name, entry);
         self
@@ -492,6 +515,7 @@ impl Cli {
                 commands,
                 middleware: Vec::new(),
                 output_policy: None,
+                default_command: None,
             },
         );
         Ok(self)
@@ -519,6 +543,7 @@ impl Cli {
                 commands: entries,
                 middleware: Vec::new(),
                 output_policy: None,
+                default_command: None,
             },
         );
         Ok(self)
@@ -1810,6 +1835,13 @@ impl Cli {
             }};
         }
 
+        // --- Step 0: A raw command owns its argv, built-in flags included ---
+        if let Some(target) = self.resolve_raw(&argv) {
+            return Ok(self
+                .run_raw(target, argv, display_name, env, human, writer)
+                .await);
+        }
+
         // --- Step 1: Extract built-in flags ---
         let mut builtin = match extract_builtin_flags(&argv, config_flag, &self.extra_formats) {
             Ok(b) => b,
@@ -3099,6 +3131,173 @@ impl Cli {
 }
 
 // ---------------------------------------------------------------------------
+// Raw commands
+// ---------------------------------------------------------------------------
+
+/// A raw command selected from argv before built-in flag extraction.
+struct RawTarget {
+    command: Arc<CommandDef>,
+    path: String,
+    middleware: Vec<MiddlewareFn>,
+}
+
+/// Flags the framework answers itself when they lead argv. Anything else in
+/// that position goes to a raw root command, when there is one.
+const LEADING_BUILTIN_FLAGS: &[&str] = &[
+    "--help",
+    "-h",
+    "--llms",
+    "--llms-full",
+    "--mcp",
+    "--schema",
+    "--config-schema",
+    "--json",
+    "--format",
+    "--full-output",
+    "--filter-output",
+    "--token-count",
+    "--token-limit",
+    "--token-offset",
+];
+
+impl Cli {
+    /// Selects the raw command argv names, if any.
+    ///
+    /// A command path made of leading tokens that resolves to a raw command
+    /// wins. Otherwise a raw root command takes argv when it is empty, starts
+    /// with a token that is not a framework flag, or starts with an unknown
+    /// command name. Framework flags and builtin commands keep their meaning.
+    fn resolve_raw(&self, argv: &[String]) -> Option<RawTarget> {
+        let raw_root = || {
+            self.root_command
+                .as_ref()
+                .filter(|command| command.raw)
+                .map(|command| RawTarget {
+                    command: Arc::clone(command),
+                    path: self.name.clone(),
+                    middleware: Vec::new(),
+                })
+        };
+        let Some(first) = argv.first() else {
+            return raw_root();
+        };
+        if first.starts_with('-') {
+            let is_builtin = LEADING_BUILTIN_FLAGS.contains(&first.as_str())
+                || (first == "--version" && self.version.is_some())
+                || self.config.as_ref().is_some_and(|config| {
+                    let flag = first.trim_start_matches("--");
+                    let flag = flag.split('=').next().unwrap_or(flag);
+                    flag == config.flag || flag == format!("no-{}", config.flag)
+                });
+            return if is_builtin { None } else { raw_root() };
+        }
+        match resolve_command(&self.commands, argv) {
+            ResolvedCommand::Leaf {
+                command,
+                path,
+                collected_middleware,
+                ..
+            } if command.raw => Some(RawTarget {
+                command,
+                path,
+                middleware: collected_middleware,
+            }),
+            ResolvedCommand::Error { path, .. } if path.is_empty() => {
+                let is_builtin_command = builtin_commands(&self.name)
+                    .iter()
+                    .any(|builtin| builtin.name == first.as_str());
+                if is_builtin_command { None } else { raw_root() }
+            }
+            _ => None,
+        }
+    }
+
+    /// Runs a raw command with argv unchanged and reports its exit code.
+    async fn run_raw(
+        &self,
+        target: RawTarget,
+        argv: Vec<String>,
+        display_name: String,
+        env: HashMap<String, String>,
+        human: bool,
+        writer: &mut dyn std::io::Write,
+    ) -> Option<i32> {
+        let RawTarget {
+            command,
+            path,
+            middleware,
+        } = target;
+        let format = if human { Format::Toon } else { Format::Json };
+        let middlewares: Vec<MiddlewareFn> = self
+            .middleware
+            .iter()
+            .cloned()
+            .chain(middleware)
+            .chain(command.middleware.iter().cloned())
+            .collect();
+        let result = command::execute(
+            Arc::clone(&command),
+            ExecuteOptions {
+                agent: !human,
+                argv,
+                defaults: None,
+                display_name,
+                env_fields: self.env_fields.clone(),
+                env_source: env,
+                format,
+                format_explicit: false,
+                globals: Value::Object(serde_json::Map::new()),
+                input_options: BTreeMap::new(),
+                middlewares,
+                name: self.name.clone(),
+                parse_mode: ParseMode::Argv,
+                path,
+                request: None,
+                vars_fields: self.vars_fields.clone(),
+                version: self.version.clone(),
+            },
+        )
+        .await;
+        match result {
+            InternalResult::Ok {
+                data: Value::Null,
+                exit_code,
+                ..
+            } => exit_code,
+            InternalResult::Ok {
+                data, exit_code, ..
+            } => {
+                writeln!(writer, "{}", format_value(&data, format)).ok();
+                exit_code
+            }
+            InternalResult::Error {
+                code,
+                message,
+                exit_code,
+                ..
+            } => {
+                if human {
+                    writeln!(writer, "{}", format_human_error(&code, &message)).ok();
+                } else {
+                    let error = serde_json::json!({ "code": code, "message": message });
+                    writeln!(writer, "{}", format_value(&error, format)).ok();
+                }
+                Some(exit_code.unwrap_or(1))
+            }
+            InternalResult::Stream(_) | InternalResult::RecordStream(_) => {
+                writeln!(
+                    writer,
+                    "{}",
+                    format_human_error("UNSUPPORTED", "Raw commands cannot return a stream")
+                )
+                .ok();
+                Some(1)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Command resolution
 // ---------------------------------------------------------------------------
 
@@ -3124,6 +3323,7 @@ fn insert_generated_command(
             commands: BTreeMap::new(),
             middleware: Vec::new(),
             output_policy: None,
+            default_command: None,
         });
     if let CommandEntry::Group { commands, .. } = entry {
         insert_generated_command(commands, &tail.join(" "), command);
@@ -3305,36 +3505,41 @@ fn resolve_command<'a>(
                 commands: sub_commands,
                 middleware,
                 output_policy,
+                default_command,
             } => {
                 if let Some(policy) = output_policy {
                     inherited_output_policy = Some(*policy);
                 }
                 collected_middleware.extend(middleware.iter().cloned());
 
-                let next = match remaining.first() {
-                    Some(n) => n,
-                    None => {
-                        return ResolvedCommand::Help {
-                            path: path.join(" "),
-                            description: description.clone(),
-                            commands: sub_commands,
-                        };
-                    }
-                };
-
-                match lookup_entry(sub_commands, next.as_str()) {
-                    Some((child_name, child)) => {
-                        path.push(child_name);
-                        remaining = &remaining[1..];
-                        current = child;
-                    }
-                    None => {
-                        return ResolvedCommand::Error {
-                            error: next.clone(),
-                            path: path.join(" "),
-                        };
-                    }
+                let named_child = remaining
+                    .first()
+                    .and_then(|next| lookup_entry(sub_commands, next.as_str()));
+                if let Some((child_name, child)) = named_child {
+                    path.push(child_name);
+                    remaining = &remaining[1..];
+                    current = child;
+                    continue;
                 }
+                if let Some((child_name, child)) = default_command
+                    .as_deref()
+                    .and_then(|name| sub_commands.get_key_value(name))
+                {
+                    path.push(child_name.as_str());
+                    current = child;
+                    continue;
+                }
+                return match remaining.first() {
+                    None => ResolvedCommand::Help {
+                        path: path.join(" "),
+                        description: description.clone(),
+                        commands: sub_commands,
+                    },
+                    Some(next) => ResolvedCommand::Error {
+                        error: next.clone(),
+                        path: path.join(" "),
+                    },
+                };
             }
             CommandEntry::FetchGateway {
                 base_path,
@@ -3677,6 +3882,7 @@ fn format_human_cta(cta: &FormattedCtaBlock) -> String {
 fn collect_help_commands(commands: &BTreeMap<String, CommandEntry>) -> Vec<CommandSummary> {
     let mut result: Vec<CommandSummary> = commands
         .iter()
+        .filter(|(_, entry)| !entry.is_hidden())
         .map(|(name, entry)| CommandSummary {
             name: name.clone(),
             description: entry.description().map(|s| s.to_string()),
@@ -3707,6 +3913,7 @@ fn collect_command_info(
         let mut path_parts: Vec<&str> = prefix.to_vec();
         path_parts.push(name);
         match entry {
+            CommandEntry::Leaf(def) if def.hidden => {}
             CommandEntry::Leaf(def) => {
                 result.push(skill_command_info(path_parts.join(" "), def));
             }
@@ -3725,6 +3932,7 @@ fn collect_all_command_info(
 ) -> Vec<skill::CommandInfo> {
     let mut result = root
         .into_iter()
+        .filter(|command| !command.hidden)
         .map(|command| skill_command_info(String::new(), command))
         .collect::<Vec<_>>();
     result.extend(collect_command_info(commands, &[]));
@@ -3808,6 +4016,7 @@ fn build_llms_manifest(
             let mut path = prefix.to_vec();
             path.push(name.clone());
             match entry {
+                CommandEntry::Leaf(command) if command.hidden => {}
                 CommandEntry::Leaf(command) => {
                     let mut value = serde_json::Map::new();
                     value.insert("name".to_string(), Value::String(path.join(" ")));
@@ -4468,6 +4677,7 @@ fn convert_to_completion_commands(
 
     for (name, entry) in commands {
         match entry {
+            CommandEntry::Leaf(def) if def.hidden => {}
             CommandEntry::Leaf(def) => {
                 result.insert(
                     name.clone(),
@@ -5061,6 +5271,8 @@ mod tests {
                 handler: Box::new(NoopHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             })),
         );
 
@@ -5100,6 +5312,8 @@ mod tests {
                 handler: Box::new(NoopHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             })),
         );
 
@@ -5111,6 +5325,7 @@ mod tests {
                 commands: sub_commands,
                 middleware: vec![],
                 output_policy: None,
+                default_command: None,
             },
         );
 
@@ -5163,6 +5378,8 @@ mod tests {
                 handler: Box::new(NoopHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             })),
         );
         commands.insert(
@@ -5172,6 +5389,7 @@ mod tests {
                 commands: BTreeMap::new(),
                 middleware: vec![],
                 output_policy: None,
+                default_command: None,
             },
         );
 
@@ -5401,6 +5619,8 @@ mod tests {
             handler: Box::new(NoopHandler),
             middleware: vec![],
             output_schema: None,
+            raw: false,
+            hidden: false,
         }
     }
 
@@ -5888,6 +6108,8 @@ mod tests {
                 handler: Box::new(NoopHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             })
             .command("ping", make_leaf_command("ping", Some("Ping the server")))
             .config(ConfigOptions {
@@ -6208,6 +6430,8 @@ mod tests {
                 handler: Box::new(NoopHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             })),
         );
 
@@ -6239,6 +6463,7 @@ mod tests {
                 commands: sub_commands,
                 middleware: vec![],
                 output_policy: None,
+                default_command: None,
             },
         );
 

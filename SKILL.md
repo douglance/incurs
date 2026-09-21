@@ -104,6 +104,35 @@ Required means: not `Option<T>`, not `Vec<T>`, not `bool`, not `count`, and no
 `default`. A `bool` is always optional and defaults to `false`, so an absent
 flag parses rather than failing.
 
+## Wrapping another program
+
+A raw command hands its argv to the handler unchanged, so an incurs CLI can
+front an existing program without re-declaring its flags.
+
+```rust
+let build = CommandDef::build("build", Forward).description("Build").raw().done();
+```
+
+- Once argv names a raw command, built-in flags (`--help`, `--json`,
+  `--format`, ...) and option validation are skipped. The handler owns them.
+- The handler reads `ctx.args["argv"]`. From the CLI it is every token after
+  the program name, as typed. From a tool call it is the command path followed
+  by the caller's `arguments` array, the only option a raw command declares.
+- A handler that already wrote to the terminal returns `null` data with the
+  wrapped program's exit code: `CommandResult::Ok { data: Value::Null, cta:
+  None, exit_code: Some(code) }`. Nothing else is printed.
+- `Cli::root(def)` with a raw `def` also receives argv that is empty, starts
+  with an unknown command, or starts with a flag the framework does not own.
+  `--help`, `--llms`, `--mcp`, and builtin commands such as `completions`
+  still reach the framework.
+
+`Cli::default_command("run")` on a CLI mounted with `.group(...)` runs `run`
+when the next token names no subcommand, without consuming that token:
+`app test Foo` runs `app test run` and passes `Foo` along.
+
+`.hidden()` keeps a command out of help, completions, skills, `--llms`, and
+tool catalogs. It still runs when invoked by name.
+
 ## Output and errors
 
 Return `TypedResult::ok(value)` for success. The command's stdout is the

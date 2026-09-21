@@ -252,6 +252,8 @@ mod tests {
             handler: Box::new(NoopHandler),
             middleware: vec![],
             output_schema: None,
+            raw: false,
+            hidden: false,
         }))
     }
 
@@ -320,6 +322,7 @@ mod tests {
                 commands: sub_commands,
                 middleware: vec![],
                 output_policy: None,
+                default_command: None,
             },
         );
 

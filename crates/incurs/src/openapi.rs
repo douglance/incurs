@@ -492,6 +492,8 @@ pub async fn generate_commands(
                 handler: Box::new(handler),
                 middleware: Vec::new(),
                 output_schema,
+                raw: false,
+                hidden: false,
             };
 
             commands.insert(name, cmd_def);

@@ -60,6 +60,8 @@ fn build_cli(name: &str) -> Cli {
         handler: Box::new(Noop),
         middleware: Vec::new(),
         output_schema: None,
+        raw: false,
+        hidden: false,
     };
 
     Cli::create(name)

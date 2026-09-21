@@ -84,6 +84,8 @@ fn session() -> AppSession {
         handler: Box::new(EchoHandler),
         middleware: Vec::new(),
         output_schema: None,
+        raw: false,
+        hidden: false,
     };
 
     let cli = Cli::create("things")

@@ -791,6 +791,8 @@ mod tests {
             handler: Box::new(EchoHandler),
             middleware: Vec::new(),
             output_schema: None,
+            raw: false,
+            hidden: false,
         }
     }
 
@@ -810,6 +812,8 @@ mod tests {
             handler: Box::new(StreamHandler),
             middleware: Vec::new(),
             output_schema: None,
+            raw: false,
+            hidden: false,
         }
     }
 
@@ -1363,6 +1367,7 @@ mod tests {
                 commands: sub_commands,
                 middleware: Vec::new(),
                 output_policy: None,
+                default_command: None,
             },
         );
 

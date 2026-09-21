@@ -675,6 +675,8 @@ fn create_app() -> Cli {
                 handler: Box::new(AuthLoginHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -694,6 +696,8 @@ fn create_app() -> Cli {
                 handler: Box::new(StaticHandler(serde_json::json!({"loggedOut": true}))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -713,6 +717,8 @@ fn create_app() -> Cli {
                 handler: Box::new(AuthStatusHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         );
 
@@ -778,6 +784,8 @@ fn create_app() -> Cli {
                 handler: Box::new(DeployCreateHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -802,6 +810,8 @@ fn create_app() -> Cli {
                 handler: Box::new(DeployStatusHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -826,6 +836,8 @@ fn create_app() -> Cli {
                 handler: Box::new(DeployRollbackHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         );
 
@@ -892,6 +904,8 @@ fn create_app() -> Cli {
                 handler: Box::new(ProjectListHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -911,6 +925,8 @@ fn create_app() -> Cli {
                 handler: Box::new(ProjectGetHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -943,6 +959,8 @@ fn create_app() -> Cli {
                 handler: Box::new(ProjectCreateHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -976,6 +994,8 @@ fn create_app() -> Cli {
                 handler: Box::new(ProjectDeleteHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .group(deploy);
@@ -1008,6 +1028,8 @@ fn create_app() -> Cli {
             handler: Box::new(ConfigHandler),
             middleware: vec![],
             output_schema: None,
+            raw: false,
+            hidden: false,
         });
 
     // --- top-level CLI ---
@@ -1031,6 +1053,8 @@ fn create_app() -> Cli {
                 handler: Box::new(StaticHandler(serde_json::json!({"pong": true}))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1081,6 +1105,8 @@ fn create_app() -> Cli {
                 handler: Box::new(EchoHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1100,6 +1126,8 @@ fn create_app() -> Cli {
                 handler: Box::new(SlowHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1121,6 +1149,8 @@ fn create_app() -> Cli {
                 }),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1144,6 +1174,8 @@ fn create_app() -> Cli {
                 }),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1163,6 +1195,8 @@ fn create_app() -> Cli {
                 handler: Box::new(VoidHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1182,6 +1216,8 @@ fn create_app() -> Cli {
                 handler: Box::new(StreamHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1201,6 +1237,8 @@ fn create_app() -> Cli {
                 handler: Box::new(StreamTextHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1220,6 +1258,8 @@ fn create_app() -> Cli {
                 handler: Box::new(StreamOkHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .command(
@@ -1239,6 +1279,8 @@ fn create_app() -> Cli {
                 handler: Box::new(StreamErrorHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         .group(auth)
@@ -1406,6 +1448,8 @@ mod routing {
                 handler: Box::new(StaticHandler(serde_json::json!([]))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         );
         let r = serve(&cli, &["statu"]).await;
@@ -1594,6 +1638,8 @@ mod output_formats {
                 handler: Box::new(StaticHandler(serde_json::json!({"pong": true}))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         );
         let r = serve(&cli, &["ping"]).await;
@@ -1620,6 +1666,8 @@ mod output_formats {
                 handler: Box::new(StaticHandler(serde_json::json!({"pong": true}))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         );
         let r = serve(&cli, &["ping"]).await;
@@ -1658,6 +1706,8 @@ mod output_formats {
                 handler: Box::new(OptionsEchoHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         );
         // --verbose must reach the command (not be swallowed as a global flag),
@@ -1693,6 +1743,8 @@ mod command_aliases {
                 handler: Box::new(StaticHandler(serde_json::json!({"items": []}))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
     }
@@ -2152,6 +2204,8 @@ mod root_command_with_subcommands {
                 handler: Box::new(RootHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             })
             .command(
                 "info",
@@ -2170,6 +2224,8 @@ mod root_command_with_subcommands {
                     handler: Box::new(StaticHandler(serde_json::json!({"info": true}))),
                     middleware: vec![],
                     output_schema: None,
+                    raw: false,
+                    hidden: false,
                 },
             )
             .command(
@@ -2189,6 +2245,8 @@ mod root_command_with_subcommands {
                     handler: Box::new(StaticHandler(serde_json::json!({"version": "1.0.0"}))),
                     middleware: vec![],
                     output_schema: None,
+                    raw: false,
+                    hidden: false,
                 },
             )
     }
@@ -2332,6 +2390,8 @@ mod token_pagination {
                 handler: Box::new(StaticHandler(serde_json::Value::String(long))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
     }
@@ -2436,6 +2496,8 @@ mod deprecation_warnings {
                 handler: Box::new(StaticHandler(serde_json::json!({"ok": true}))),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
     }

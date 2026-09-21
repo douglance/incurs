@@ -520,7 +520,7 @@ fn collect(
         match entry {
             CommandEntry::Leaf(command) => {
                 let mcp = command.handler.mcp_options().cloned().unwrap_or_default();
-                if !mcp.enabled {
+                if !mcp.enabled || command.hidden {
                     continue;
                 }
                 let name = mcp.name.clone().unwrap_or_else(|| path.join("_"));

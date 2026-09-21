@@ -1,3 +1,25 @@
+# Migrating to the next incurs release
+
+`CommandDef` has two new public fields, `raw` and `hidden`, and
+`CommandEntry::Group` has a new field, `default_command`. Struct literals of
+either no longer compile until you add them:
+
+```rust
+CommandDef {
+    // ...existing fields...
+    raw: false,
+    hidden: false,
+}
+
+CommandEntry::Group {
+    // ...existing fields...
+    default_command: None,
+}
+```
+
+`false`, `false`, and `None` keep the previous behavior. Commands built with
+`CommandDef::build` or `CommandDef::typed` need no change.
+
 # Migrating from incurs 0.5 to 0.6
 
 Version 0.6 builds the `incurs` CLI with incurs itself. That exercise found

@@ -419,6 +419,8 @@ async fn project_remote_commands(
                 output_schema: tool
                     .output_schema
                     .map(|schema| Value::Object((*schema).clone())),
+                raw: false,
+                hidden: false,
             },
         );
     }
@@ -1822,6 +1824,8 @@ mod tests {
                     "type": "object",
                     "properties": { "pong": { "type": "boolean" } },
                 })),
+                raw: false,
+                hidden: false,
             },
         );
         let app = axum::Router::new().nest_service("/mcp", http_service(&cli).unwrap());

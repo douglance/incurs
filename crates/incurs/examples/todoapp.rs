@@ -294,6 +294,8 @@ pub fn build_cli() -> Cli {
                 handler: Box::new(AddHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         // --- list command ---
@@ -354,6 +356,8 @@ pub fn build_cli() -> Cli {
                 handler: Box::new(ListHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         // --- get command ---
@@ -387,6 +391,8 @@ pub fn build_cli() -> Cli {
                 handler: Box::new(GetHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         // --- complete command ---
@@ -420,6 +426,8 @@ pub fn build_cli() -> Cli {
                 handler: Box::new(CompleteHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         // --- stats command ---
@@ -440,6 +448,8 @@ pub fn build_cli() -> Cli {
                 handler: Box::new(StatsHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
         // --- stream command ---
@@ -460,6 +470,8 @@ pub fn build_cli() -> Cli {
                 handler: Box::new(StreamHandler),
                 middleware: vec![],
                 output_schema: None,
+                raw: false,
+                hidden: false,
             },
         )
 }

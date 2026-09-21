@@ -1,5 +1,22 @@
 # incurs
 
+## Unreleased
+
+- Added raw commands (`CommandBuilder::raw`) for fronting an existing program.
+  Once argv names one, the handler receives every token unchanged in
+  `ctx.args["argv"]`, built-in flags included, and a `null` result prints
+  nothing and passes its exit code through. Tool calls pass an `arguments`
+  array, prefixed with the command path.
+- A raw root command (`Cli::root`) also receives empty argv, unknown commands,
+  and leading flags the framework does not own.
+- Added `Cli::default_command`, so a mounted group runs a named subcommand when
+  the next token names none, without consuming that token.
+- Added `CommandBuilder::hidden`, which keeps a command out of help,
+  completions, skills, `--llms`, and tool catalogs while leaving it callable.
+- `CommandDef` gained the public fields `raw` and `hidden`, and
+  `CommandEntry::Group` gained `default_command`. Code that builds either with
+  a struct literal must set them; see MIGRATION.md.
+
 ## 0.6.1
 
 - Added `incurs-app-model`, the toolkit-neutral interaction model behind

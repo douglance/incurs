@@ -107,6 +107,8 @@ fn command(
         handler,
         middleware: Vec::new(),
         output_schema: None,
+        raw: false,
+        hidden: false,
     }
 }
 
