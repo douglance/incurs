@@ -1065,6 +1065,98 @@ mod tests {
     }
 
     #[test]
+    fn tool_catalog_definitions_honor_mcp_input_schema_override() {
+        let published = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "executable": {"type": "string"},
+                "arg": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["executable"],
+        });
+        let catalog = Cli::create("demo")
+            .command(
+                "run",
+                CommandDef::build("run", Run)
+                    .args::<RunArgv>()
+                    .mcp(McpCommandOptions {
+                        input_schema: Some(published.clone()),
+                        ..McpCommandOptions::default()
+                    })
+                    .done(),
+            )
+            .tool_catalog();
+
+        let definition = catalog.definitions().remove(0);
+        assert_eq!(definition.input_schema, published);
+    }
+
+    #[test]
+    fn tool_catalog_definitions_derive_schema_without_override() {
+        let catalog = Cli::create("demo")
+            .command(
+                "run",
+                CommandDef::build("run", Run).args::<RunArgv>().done(),
+            )
+            .tool_catalog();
+
+        let definition = catalog.definitions().remove(0);
+        let properties = definition.input_schema["properties"]
+            .as_object()
+            .expect("derived schema has properties");
+        assert!(properties.contains_key("executable"));
+        assert!(properties.contains_key("arg"));
+    }
+
+    #[tokio::test]
+    async fn mcp_input_schema_override_does_not_relax_the_undeclared_argument_gate() {
+        // The override changes what tools/list advertises, not what a call
+        // may bind: validation still runs against the command's declared
+        // args/options fields, per McpCommandOptions::input_schema.
+        let published = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "executable": {"type": "string"},
+                "arg": {"type": "array", "items": {"type": "string"}},
+                "extra": {"type": "string"},
+            },
+        });
+        let catalog = Cli::create("demo")
+            .command(
+                "run",
+                CommandDef::build("run", Run)
+                    .args::<RunArgv>()
+                    .mcp(McpCommandOptions {
+                        input_schema: Some(published),
+                        ..McpCommandOptions::default()
+                    })
+                    .done(),
+            )
+            .tool_catalog();
+
+        let outcome = catalog
+            .call(
+                "run",
+                BTreeMap::from([
+                    ("executable".to_string(), Value::String("node".to_string())),
+                    ("extra".to_string(), Value::String("unused".to_string())),
+                ]),
+                ToolCallOptions::default(),
+            )
+            .await;
+
+        let ToolCallOutcome::Error { code, .. } = outcome else {
+            panic!(
+                "a property the override advertises but the command never declared must still be rejected: {outcome:?}"
+            );
+        };
+        assert_eq!(code, "VALIDATION_ERROR");
+    }
+
+    #[test]
     fn exposes_examples_and_rejects_duplicate_tool_names() {
         let command = || {
             CommandDef::build("echo", Echo)

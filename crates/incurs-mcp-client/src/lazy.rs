@@ -239,7 +239,7 @@ impl LazyMcpClient {
                 serde_json::to_value(list).map_err(|error| error.to_string())
             })
             .await;
-        Ok(unsupported_is_empty(result)?)
+        unsupported_is_empty(result)
     }
 
     /// Reads one resource by URI.
@@ -267,7 +267,7 @@ impl LazyMcpClient {
                 serde_json::to_value(list).map_err(|error| error.to_string())
             })
             .await;
-        Ok(unsupported_is_empty(result)?)
+        unsupported_is_empty(result)
     }
 
     /// Renders one prompt with arguments.

@@ -45,6 +45,12 @@ pub struct CommandEntry {
     pub options_fields: Vec<FieldMeta>,
     /// JSON Schema for the command's output.
     pub output_schema: Option<serde_json::Value>,
+    /// Exact MCP `inputSchema` to publish for this command, overriding the
+    /// schema [`collect_tools`] would otherwise derive from `args_fields`
+    /// and `options_fields`. See
+    /// [`McpCommandOptions::input_schema`](crate::command::McpCommandOptions::input_schema)
+    /// for the constraint on top-level property names.
+    pub input_schema: Option<serde_json::Value>,
 }
 
 /// MCP tool discovery strategy.
@@ -556,7 +562,10 @@ pub fn collect_tools(
             result.extend(collect_tools(&entry.commands, &path));
         } else {
             let tool_name = path.join("_");
-            let input_schema = build_tool_schema(&entry.args_fields, &entry.options_fields);
+            let input_schema = entry
+                .input_schema
+                .clone()
+                .unwrap_or_else(|| build_tool_schema(&entry.args_fields, &entry.options_fields));
             result.push(ToolEntry {
                 name: tool_name,
                 description: entry.description.clone(),
@@ -1690,6 +1699,14 @@ mod tests {
             args_fields: vec![],
             options_fields: vec![],
             output_schema: None,
+            input_schema: None,
+        }
+    }
+
+    fn make_leaf_with_input_schema(desc: &str, input_schema: serde_json::Value) -> CommandEntry {
+        CommandEntry {
+            input_schema: Some(input_schema),
+            ..make_leaf(desc)
         }
     }
 
@@ -1701,6 +1718,7 @@ mod tests {
             args_fields: vec![],
             options_fields: vec![],
             output_schema: None,
+            input_schema: None,
         }
     }
 
@@ -1731,6 +1749,31 @@ mod tests {
         assert_eq!(tools[0].name, "deploy_app");
         assert_eq!(tools[1].name, "deploy_config");
         assert_eq!(tools[2].name, "status");
+    }
+
+    #[test]
+    fn test_collect_tools_honors_input_schema_override() {
+        let published = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+            },
+        });
+        let mut commands = BTreeMap::new();
+        commands.insert(
+            "run".to_string(),
+            make_leaf_with_input_schema("Run steps", published.clone()),
+        );
+        commands.insert("status".to_string(), make_leaf("Show status"));
+
+        let tools = collect_tools(&commands, &[]);
+        assert_eq!(tools[0].name, "run");
+        assert_eq!(tools[0].input_schema, published);
+        // The fallback path is unaffected: no override still derives from fields.
+        assert_ne!(tools[1].input_schema, published);
     }
 
     #[test]

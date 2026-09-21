@@ -1,6 +1,6 @@
 [package]
 name = "incurs-mcp-client"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT"
@@ -16,8 +16,8 @@ testing = []
 async-trait = "0.1"
 dirs = "6"
 http = "1"
-incurs = { path = "../incurs", version = "0.8.0", default-features = false }
-incurs-codemode = { path = "../incurs-codemode", version = "0.6.0" }
+incurs = { path = "../incurs", version = "0.9.0", default-features = false }
+incurs-codemode = { path = "../incurs-codemode", version = "0.7.0" }
 incurs-mcp-discovery = { path = "../incurs-mcp-discovery", version = "0.1.0" }
 rmcp = { version = "=3.0.0-beta.5", features = [
   "client",

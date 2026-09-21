@@ -1,5 +1,31 @@
 # incurs
 
+## 0.9.0
+
+incurs 0.9.0 adds a public field to `McpCommandOptions` and to `mcp::CommandEntry`,
+so the crates built on it move with it: incurs-cli and incurs-extras 0.9.0;
+incurs-codemode, incurs-codemode-local, incurs-codemode-mcp, and
+incurs-codemode-cloudflare 0.7.0; incurs-mcp-client, incurs-mcp-registry,
+incurs-remote, and incurs-mcp-cloudflare 0.5.0; incurs-app-model and
+incurs-app-ratatui 0.4.0. None of them change behavior.
+
+- A command can now publish its own MCP `inputSchema`, overriding the schema
+  incurs derives from `args`/`options` field metadata. `FieldMeta` has no way
+  to express a nested object, an array of objects, or a union, so a command
+  that needs one sets `McpCommandOptions::input_schema` (or the
+  `CommandBuilder::mcp_input_schema` shorthand) and every listing surface that
+  reads through `ToolCatalog` — stdio and HTTP `tools/list`, and Code Mode's
+  tool search — publishes it unchanged. The command's declared `args`/`options`
+  fields are still what a tool call is validated against, so the override's
+  top-level property names must match them.
+- The standalone `mcp::CommandEntry`/`mcp::collect_tools` pair (a lighter,
+  handler-free tool listing used outside the real command tree) gained the
+  same `input_schema` field, so a hand-built entry can carry the same
+  override.
+- `McpCommandOptions` gained the public field `input_schema`, and
+  `mcp::CommandEntry` gained a field of the same name. Code that builds either
+  with a struct literal must set it; see MIGRATION.md.
+
 ## 0.8.0
 
 incurs 0.8.0 adds public fields to `CommandDef` and `CommandEntry::Group`, so the

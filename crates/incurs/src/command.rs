@@ -95,6 +95,18 @@ pub struct McpCommandOptions {
     pub result_content: Vec<McpResultContent>,
     /// Whether skill output should require user confirmation before execution.
     pub destructive: bool,
+    /// Exact MCP `inputSchema` to publish for this command, overriding the
+    /// schema incurs would otherwise derive from `args`/`options` field
+    /// metadata. Use this for shapes `FieldMeta` cannot express: nested
+    /// objects, arrays of objects, or unions.
+    ///
+    /// The schema's top-level `properties` names must match the command's
+    /// declared args and options (by `name` or `cli_name`) exactly, because
+    /// tool-call argument validation is checked against those declared
+    /// fields, not against this schema. A property this schema advertises
+    /// under a name the command does not declare is rejected as an unknown
+    /// argument at call time.
+    pub input_schema: Option<Value>,
 }
 
 impl Default for McpCommandOptions {
@@ -107,6 +119,7 @@ impl Default for McpCommandOptions {
             annotations: None,
             result_content: Vec::new(),
             destructive: false,
+            input_schema: None,
         }
     }
 }
@@ -514,6 +527,15 @@ impl CommandBuilder {
         self
     }
 
+    /// Publishes an exact MCP `inputSchema` for this command, overriding the
+    /// schema incurs would otherwise derive from `args`/`options` field
+    /// metadata. See [`McpCommandOptions::input_schema`] for the constraint
+    /// on top-level property names.
+    pub fn mcp_input_schema(mut self, schema: Value) -> Self {
+        self.mcp.get_or_insert_with(Default::default).input_schema = Some(schema);
+        self
+    }
+
     /// Makes this a raw command: the CLI hands it every token after the program
     /// name unchanged, and prints nothing of its own around the handler.
     ///
@@ -590,7 +612,10 @@ impl CommandHandler for McpHandler {
     }
 
     fn mcp_input_schema(&self) -> Option<&Value> {
-        self.handler.mcp_input_schema()
+        self.options
+            .input_schema
+            .as_ref()
+            .or_else(|| self.handler.mcp_input_schema())
     }
 }
 

@@ -1,3 +1,53 @@
+# Migrating from incurs 0.8 to 0.9
+
+Every crate built on incurs moves to a new minor version with it (see
+CHANGELOG.md); require them together so one copy of incurs is in the graph.
+
+`McpCommandOptions` has one new public field, `input_schema`, and the
+standalone `mcp::CommandEntry` (the type `mcp::collect_tools` walks) has a new
+field of the same name. Struct literals of either no longer compile until you
+add it:
+
+```rust
+McpCommandOptions {
+    // ...existing fields...
+    input_schema: None,
+}
+
+mcp::CommandEntry {
+    // ...existing fields...
+    input_schema: None,
+}
+```
+
+`None` keeps the previous behavior: the schema incurs derives from `args` and
+`options` field metadata. Options built with `..McpCommandOptions::default()`
+need no change.
+
+## Publish an exact MCP input schema
+
+A command can now publish its own `inputSchema` for MCP tool listings, for
+shapes `FieldMeta` cannot express — nested objects, arrays of objects, or
+unions:
+
+```rust
+CommandDef::build("run", RunHandler)
+    .args::<RunArgs>()
+    .mcp_input_schema(serde_json::json!({
+        "type": "object",
+        "properties": {
+            "steps": { "type": "array", "items": { "type": "object" } },
+        },
+    }))
+    .done()
+```
+
+The schema's top-level `properties` names must still match the command's
+declared `args`/`options` field names (or `cli_name`s) exactly: a tool call is
+validated against those declared fields, not against this schema, so a
+property this schema advertises under an undeclared name is rejected as an
+unknown argument at call time.
+
 # Migrating from incurs 0.7 to 0.8
 
 Every crate built on incurs moves to a new minor version with it (see
