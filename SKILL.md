@@ -14,7 +14,7 @@ Define a command once and expose the same validated behavior through CLI, HTTP, 
 
 ```toml
 [dependencies]
-incurs = "0.6"
+incurs = "0.8"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

@@ -1,4 +1,7 @@
-# Migrating to the next incurs release
+# Migrating from incurs 0.7 to 0.8
+
+Every crate built on incurs moves to a new minor version with it (see
+CHANGELOG.md); require them together so one copy of incurs is in the graph.
 
 `CommandDef` has two new public fields, `raw` and `hidden`, and
 `CommandEntry::Group` has a new field, `default_command`. Struct literals of

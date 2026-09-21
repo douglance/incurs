@@ -9,7 +9,7 @@ operation, a skill file an agent can read, a shell completion, and a window.
 
 ```toml
 [dependencies]
-incurs = "0.6"
+incurs = "0.8"
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
@@ -109,7 +109,7 @@ The default format is [TOON](https://crates.io/crates/toon-format). Table and CS
 deliberately opt-in, through a separate crate:
 
 ```toml
-incurs-extras = "0.6"
+incurs-extras = "0.8"
 ```
 
 ```rust
@@ -121,7 +121,7 @@ let cli = cli.default_extra_format(ExtraFormat::Table);
 ## Feature flags
 
 ```toml
-incurs = { version = "0.6", features = ["http", "mcp", "openapi"] }
+incurs = { version = "0.8", features = ["http", "mcp", "openapi"] }
 ```
 
 | Feature | Adds |

@@ -3166,7 +3166,7 @@ checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 
 [[package]]
 name = "incurs"
-version = "0.7.4"
+version = "0.8.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -3189,7 +3189,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-app-gpui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -3206,7 +3206,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-app-model"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",

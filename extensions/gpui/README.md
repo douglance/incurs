@@ -24,7 +24,7 @@ shared command graph + schemas
 
 ```toml
 [dependencies]
-incurs = "0.5"
+incurs = "0.8"
 incurs-app-gpui = { path = "extensions/gpui/crates/incurs-app-gpui" }
 ```
 

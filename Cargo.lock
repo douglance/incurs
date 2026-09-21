@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "incurs"
-version = "0.7.4"
+version = "0.8.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1443,7 +1443,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-app-model"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1457,7 +1457,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-app-ratatui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1474,7 +1474,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-cli"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dirs",
  "incurs",
@@ -1489,7 +1489,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1504,7 +1504,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode-local"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "incurs",
@@ -1517,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-codemode-mcp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "http",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-extras"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "incurs",
  "serde_json",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-mcp-client"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-mcp-registry"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "incurs-codemode",
@@ -1607,7 +1607,7 @@ dependencies = [
 
 [[package]]
 name = "incurs-remote"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "incurs",

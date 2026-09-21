@@ -1,6 +1,13 @@
 # incurs
 
-## Unreleased
+## 0.8.0
+
+incurs 0.8.0 adds public fields to `CommandDef` and `CommandEntry::Group`, so the
+crates built on it move with it: incurs-cli and incurs-extras 0.8.0; incurs-codemode,
+incurs-codemode-local, incurs-codemode-mcp, and incurs-codemode-cloudflare 0.6.0;
+incurs-mcp-client, incurs-mcp-registry, incurs-remote, and incurs-mcp-cloudflare
+0.4.0; incurs-app-model and incurs-app-ratatui 0.3.0. None of them change behavior.
+
 
 - Added raw commands (`CommandBuilder::raw`) for fronting an existing program.
   Once argv names one, the handler receives every token unchanged in

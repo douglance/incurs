@@ -1,6 +1,6 @@
 [package]
 name = "incurs-codemode-cloudflare"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 description = "Cloudflare WorkerLoader and Durable Object adapters for incurs Code Mode"
@@ -9,8 +9,8 @@ readme = "README.md"
 
 [dependencies]
 async-trait = "0.1"
-incurs = { path = "../../../../crates/incurs", version = "0.7.0", default-features = false }
-incurs-codemode = { path = "../../../../crates/incurs-codemode", version = "0.5.0" }
+incurs = { path = "../../../../crates/incurs", version = "0.8.0", default-features = false }
+incurs-codemode = { path = "../../../../crates/incurs-codemode", version = "0.6.0" }
 incurs-mcp-protocol = { path = "../../../../crates/incurs-mcp-protocol", version = "0.2.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -24,5 +24,5 @@ wasm-bindgen-futures = "0.4"
 worker = "0.8.5"
 
 [dev-dependencies]
-incurs-codemode-mcp = { path = "../../../../crates/incurs-codemode-mcp", version = "0.5.0" }
+incurs-codemode-mcp = { path = "../../../../crates/incurs-codemode-mcp", version = "0.6.0" }
 tokio = { version = "1", features = ["macros", "rt"] }

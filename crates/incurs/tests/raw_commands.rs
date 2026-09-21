@@ -71,23 +71,14 @@ async fn run_json(cli: &Cli, argv: &[&str]) -> Value {
 async fn raw_command_receives_framework_flags_unchanged() {
     let cli = Cli::create("app").command("gen", raw("gen"));
     let argv = [
-        "gen",
-        "--json",
-        "--help",
-        "--format",
-        "dot",
-        "-x",
-        "--",
-        "tail",
+        "gen", "--json", "--help", "--format", "dot", "-x", "--", "tail",
     ];
     assert_eq!(run_json(&cli, &argv).await, json!({ "argv": argv }));
 }
 
 #[tokio::test]
 async fn raw_command_with_null_result_prints_nothing_and_passes_the_exit_code() {
-    let command = CommandDef::build("build", AlreadyRendered(64))
-        .raw()
-        .done();
+    let command = CommandDef::build("build", AlreadyRendered(64)).raw().done();
     let cli = Cli::create("app").command("build", command);
     assert_eq!(
         run(&cli, &["build", "--bogus"]).await,
@@ -108,10 +99,7 @@ async fn default_subcommand_takes_unmatched_tokens_without_consuming_them() {
         run_json(&cli, &["test", "Foo", "--retry", "2"]).await,
         json!({ "argv": ["test", "Foo", "--retry", "2"] })
     );
-    assert_eq!(
-        run_json(&cli, &["test"]).await,
-        json!({ "argv": ["test"] })
-    );
+    assert_eq!(run_json(&cli, &["test"]).await, json!({ "argv": ["test"] }));
     assert_eq!(
         run_json(&cli, &["test", "list", "--json"]).await,
         json!({ "argv": ["test", "list", "--json"] })
@@ -150,10 +138,7 @@ async fn raw_root_takes_groups_without_a_subcommand_and_unknown_subcommands() {
         .command("login", raw("login"));
     let cli = Cli::create("app").root(raw("app")).group(auth);
 
-    assert_eq!(
-        run_json(&cli, &["auth"]).await,
-        json!({ "argv": ["auth"] })
-    );
+    assert_eq!(run_json(&cli, &["auth"]).await, json!({ "argv": ["auth"] }));
     assert_eq!(
         run_json(&cli, &["auth", "logn", "-x"]).await,
         json!({ "argv": ["auth", "logn", "-x"] })
@@ -176,7 +161,6 @@ async fn raw_root_leaves_framework_flags_and_builtin_commands_to_the_framework()
     assert!(llms.contains("gen"), "manifest should list gen: {llms}");
     assert!(!llms.contains("\"argv\""), "root must not run: {llms}");
 
-
     let (completions, _) = run(&cli, &["completions", "bash"]).await;
     assert!(
         !completions.contains("\"argv\""),
@@ -198,16 +182,14 @@ async fn default_subcommand_applies_to_ordinary_commands() {
 
 #[tokio::test]
 async fn hidden_commands_run_but_are_not_listed() {
-    let cli = Cli::create("app")
-        .command("shown", raw("shown"))
-        .command(
-            "secret",
-            CommandDef::build("secret", EchoArgv)
-                .description("Internal plumbing")
-                .raw()
-                .hidden()
-                .done(),
-        );
+    let cli = Cli::create("app").command("shown", raw("shown")).command(
+        "secret",
+        CommandDef::build("secret", EchoArgv)
+            .description("Internal plumbing")
+            .raw()
+            .hidden()
+            .done(),
+    );
 
     let (help, _) = run(&cli, &["--help"]).await;
     assert!(help.contains("shown"), "{help}");
