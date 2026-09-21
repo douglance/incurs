@@ -10,6 +10,27 @@ use serde_json::Value;
 use crate::errors::ParseError;
 use crate::schema::{FieldMeta, FieldType, to_kebab, to_snake};
 
+/// Refuses a positional token no args field claims. Without this a value
+/// meant for an array option, written `--tag a b`, is silently dropped.
+fn reject_extra_positionals(
+    positionals: &[String],
+    args_fields: &[FieldMeta],
+) -> Result<(), ParseError> {
+    let variadic = args_fields
+        .last()
+        .is_some_and(|field| matches!(field.field_type, FieldType::Array(_)));
+    if variadic || positionals.len() <= args_fields.len() {
+        return Ok(());
+    }
+    let extra = &positionals[args_fields.len()];
+    Err(ParseError {
+        message: format!(
+            "Unexpected argument: {extra}. Repeat the flag for each value, such as --name a --name b."
+        ),
+        cause: None,
+    })
+}
+
 /// Options controlling how [`parse`] interprets argv tokens.
 pub struct ParseOptions {
     /// Field metadata for positional args (order matters).
@@ -237,8 +258,16 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
                     raw_options.insert(name, Value::Number((prev + 1).into()));
                     i += 1;
                 } else if names.is_boolean(&name) {
-                    raw_options.insert(name, Value::Bool(true));
-                    i += 1;
+                    // `--flag true` and `--flag false` are both written in the
+                    // wild; anything else after the flag belongs to someone
+                    // else, so the flag alone means true.
+                    let spelled = argv.get(i + 1).and_then(|next| match next.as_str() {
+                        "true" => Some(true),
+                        "false" => Some(false),
+                        _ => None,
+                    });
+                    raw_options.insert(name, Value::Bool(spelled.unwrap_or(true)));
+                    i += if spelled.is_some() { 2 } else { 1 };
                 } else {
                     let value = argv.get(i + 1).ok_or_else(|| ParseError {
                         message: format!("Missing value for flag: {}", token),
@@ -298,6 +327,7 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
     // Assign positionals to args fields in order. A final array field is
     // variadic and collects all remaining positional values.
     let mut args: BTreeMap<String, Value> = BTreeMap::new();
+    reject_extra_positionals(&positionals, &options.args_fields)?;
     for (idx, field) in options.args_fields.iter().enumerate() {
         if matches!(field.field_type, FieldType::Array(_)) {
             if idx != options.args_fields.len() - 1 {
@@ -918,6 +948,70 @@ mod tests {
         let result = parse(&argv(&["foo", "bar"]), &opts).unwrap();
         assert_eq!(result.args["source"], Value::String("foo".into()));
         assert_eq!(result.args["dest"], Value::String("bar".into()));
+    }
+
+    #[test]
+    fn test_extra_positional_is_an_error() {
+        // A value meant for an array option, written `--tag a b`, used to
+        // leave `b` unclaimed and silently dropped.
+        let opts = ParseOptions {
+            args_fields: vec![field("source", FieldType::String)],
+            options_fields: vec![],
+            aliases: HashMap::new(),
+            defaults: None,
+        };
+        let error = parse(&argv(&["foo", "bar"]), &opts).unwrap_err();
+        assert!(error.message.contains("bar"), "{}", error.message);
+    }
+
+    #[test]
+    fn test_boolean_flag_takes_a_spelled_value() {
+        let opts = ParseOptions {
+            args_fields: vec![],
+            options_fields: vec![field("dry", FieldType::Boolean)],
+            aliases: HashMap::new(),
+            defaults: None,
+        };
+        let on = parse(&argv(&["--dry", "true"]), &opts).unwrap();
+        assert_eq!(on.options["dry"], Value::Bool(true));
+        let off = parse(&argv(&["--dry", "false"]), &opts).unwrap();
+        assert_eq!(off.options["dry"], Value::Bool(false));
+        let bare = parse(&argv(&["--dry"]), &opts).unwrap();
+        assert_eq!(bare.options["dry"], Value::Bool(true));
+    }
+
+    #[test]
+    fn test_positional_with_no_args_schema_is_an_error() {
+        let opts = ParseOptions {
+            args_fields: vec![],
+            options_fields: vec![field("tag", FieldType::Array(Box::new(FieldType::String)))],
+            aliases: HashMap::new(),
+            defaults: None,
+        };
+        let error = parse(&argv(&["--tag", "a", "b"]), &opts).unwrap_err();
+        assert!(error.message.contains('b'), "{}", error.message);
+    }
+
+    #[test]
+    fn test_variadic_arg_still_takes_every_positional() {
+        let opts = ParseOptions {
+            args_fields: vec![field(
+                "paths",
+                FieldType::Array(Box::new(FieldType::String)),
+            )],
+            options_fields: vec![],
+            aliases: HashMap::new(),
+            defaults: None,
+        };
+        let result = parse(&argv(&["a", "b", "c"]), &opts).unwrap();
+        assert_eq!(
+            result.args["paths"],
+            Value::Array(vec![
+                Value::String("a".into()),
+                Value::String("b".into()),
+                Value::String("c".into()),
+            ])
+        );
     }
 
     #[test]
