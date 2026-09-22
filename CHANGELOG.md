@@ -1,5 +1,11 @@
 # incurs
 
+## 0.10.3
+
+Markdown output lists an array of plain values under its key. `{"terms":
+["a", "b"]}` rendered `## terms` with nothing beneath it; it now renders
+`a, b`.
+
 ## 0.10.2
 
 A command whose last arg is variadic no longer panics when argv holds fewer
