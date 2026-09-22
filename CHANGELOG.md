@@ -1,5 +1,22 @@
 # incurs
 
+## 0.10.0
+
+An argument no field claims is now an error. `--tag a b` left `b` unclaimed
+and dropped it silently, so a caller who meant two values got one and no
+warning; the error names the token and the repeated-flag form,
+`--tag a --tag b`. A variadic final arg still takes every remaining token.
+
+A boolean flag now takes a spelled `true` or `false` (`--dry false`), which
+previously appeared to work only because the value was the token being
+dropped.
+
+Every crate built on incurs moves with it: incurs-cli and incurs-extras
+0.10.0; incurs-codemode, incurs-codemode-local, incurs-codemode-mcp and
+incurs-codemode-cloudflare 0.8.0; incurs-mcp-client, incurs-mcp-registry,
+incurs-remote and incurs-mcp-cloudflare 0.6.0; incurs-app-model,
+incurs-app-ratatui and incurs-app-gpui 0.5.0.
+
 ## 0.9.0
 
 incurs 0.9.0 adds a public field to `McpCommandOptions` and to `mcp::CommandEntry`,

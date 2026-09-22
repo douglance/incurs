@@ -1,3 +1,20 @@
+# Migrating from incurs 0.9 to 0.10
+
+A command that was tolerant of stray argv tokens now fails on them. Before,
+`mycli find --paths a b` parsed as `paths: ["a"]` and dropped `b`; now it is
+a validation error naming `b`. Callers pass several values by repeating the
+flag:
+
+```
+mycli find --paths a --paths b
+```
+
+A command that genuinely wants the rest of argv declares a variadic final
+arg (an array as the last args field), which is unchanged.
+
+Boolean flags accept `--flag true` and `--flag false`; a bare `--flag` still
+means true.
+
 # Migrating from incurs 0.8 to 0.9
 
 Every crate built on incurs moves to a new minor version with it (see
