@@ -23,6 +23,8 @@
 - **Detached execution uses the host lifetime primitive** — adapters that return a durable running state before execution completes must register the pass with their host's request-lifetime mechanism.
 - **Streamable HTTP validates before dispatch** — MCP HTTP adapters must enforce method, Origin, Accept, content type, protocol-version, JSON-RPC, and initialization requirements before invoking shared tool dispatch. Partition durable state by an authenticated tenant boundary; a singleton object is only acceptable for an explicitly local fixture.
 
+- **MCP errors preserve machine-readable details** — retain the stable code, retryability, exit code, and field errors at the MCP boundary, with isError true. Keep the first text block valid JSON even when follow-up guidance is present; test both structured and text-only replies.
+
 ## Testing Conventions
 
 - **The CLI surface is pinned by full-observation goldens** — `crates/incurs/tests/cli_surface.rs` records exit code and stdout together, not selected fields. Regenerate with `UPDATE_GOLDEN=1` and review the diff as the wire-format change it is.

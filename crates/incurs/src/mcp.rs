@@ -1135,36 +1135,24 @@ mod server {
         result
     }
 
+    #[cfg(test)]
+    mod error_tests;
+
     fn tool_result_error(
         name: &str,
-        message: String,
+        data: Value,
         cta: Option<crate::output::CtaBlock>,
+        structured: bool,
     ) -> CallToolResult {
         let cta = cta.map(|cta| formatted_cta(name, cta));
-        let text = cta
-            .as_ref()
-            .map(|cta| format!("{message}\n\n{}", render_cta(cta)))
-            .unwrap_or(message);
-        CallToolResult::error(vec![ContentBlock::text(text)]).with_meta(
-            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)]))),
-        )
-    }
-
-    fn field_errors_text(field_errors: Vec<crate::output::FieldErrorOutput>) -> String {
-        serde_json::to_string(
-            &field_errors
-                .into_iter()
-                .map(|error| {
-                    serde_json::json!({
-                        "path": error.path,
-                        "expected": error.expected,
-                        "received": error.received,
-                        "message": error.message,
-                    })
-                })
-                .collect::<Vec<_>>(),
-        )
-        .unwrap_or_default()
+        let mut result = CallToolResult::error(vec![ContentBlock::text(data.to_string())]);
+        if let Some(cta) = &cta {
+            result.content.push(ContentBlock::text(render_cta(cta)));
+        }
+        result.structured_content = structured.then_some(data);
+        result.meta =
+            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)])));
+        result
     }
 
     fn tool_call_result(
@@ -1178,21 +1166,28 @@ mod server {
                 tool_result_success(name, data, cta, structured, presentation)
             }
             ToolCallOutcome::Error {
+                code,
                 message,
+                retryable,
                 field_errors,
                 cta,
-                ..
+                exit_code,
             } => {
-                let mut text = if message.is_empty() {
+                let message = if message.is_empty() {
                     "Command failed".to_string()
                 } else {
                     message
                 };
-                if let Some(field_errors) = field_errors {
-                    text.push_str("\n\n");
-                    text.push_str(&field_errors_text(field_errors));
+                let mut data = serde_json::json!(crate::output::ExecuteError {
+                    code,
+                    message,
+                    retryable,
+                    field_errors,
+                });
+                if let Some(exit_code) = exit_code {
+                    data["exit_code"] = serde_json::json!(exit_code);
                 }
-                tool_result_error(name, text, cta)
+                tool_result_error(name, data, cta, structured)
             }
         }
     }
