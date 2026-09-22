@@ -339,7 +339,11 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
                     cause: None,
                 });
             }
-            let values = positionals[idx..]
+            // Fewer positionals than fields leaves the variadic empty; a
+            // missing earlier arg is reported by validation, not a panic here.
+            let values = positionals
+                .get(idx..)
+                .unwrap_or_default()
                 .iter()
                 .cloned()
                 .map(Value::String)
@@ -1011,6 +1015,32 @@ mod tests {
                 Value::String("b".into()),
                 Value::String("c".into()),
             ])
+        );
+    }
+
+    #[test]
+    fn test_variadic_after_a_positional_tolerates_short_argv() {
+        let opts = ParseOptions {
+            args_fields: vec![
+                field("query", FieldType::String),
+                field("more", FieldType::Array(Box::new(FieldType::String))),
+            ],
+            options_fields: vec![],
+            aliases: HashMap::new(),
+            defaults: None,
+        };
+        let none = parse(&argv(&[]), &opts).unwrap();
+        assert!(!none.args.contains_key("query"));
+        assert!(!none.args.contains_key("more"));
+
+        let one = parse(&argv(&["a"]), &opts).unwrap();
+        assert_eq!(one.args["query"], Value::String("a".into()));
+        assert!(!one.args.contains_key("more"));
+
+        let three = parse(&argv(&["a", "b", "c"]), &opts).unwrap();
+        assert_eq!(
+            three.args["more"],
+            Value::Array(vec![Value::String("b".into()), Value::String("c".into())])
         );
     }
 
