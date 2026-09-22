@@ -73,7 +73,7 @@ enum Workspace {
 fn release_packages() -> Vec<(Workspace, String, String)> {
     [
         (Workspace::Root, "incurs-macros", "0.6.0"),
-        (Workspace::Root, "incurs", "0.10.0"),
+        (Workspace::Root, "incurs", "0.10.1"),
         (Workspace::Root, "incurs-cli", "0.10.0"),
         (Workspace::Root, "incurs-extras", "0.10.0"),
         (Workspace::Root, "incurs-codemode", "0.8.0"),
