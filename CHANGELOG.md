@@ -1,5 +1,15 @@
 # incurs
 
+## 0.10.2
+
+A command whose last arg is variadic no longer panics when argv holds fewer
+positionals than it has args fields. `search <query> [more...]` called with no
+words crashed with an index out of range; it now reports the missing `query`.
+
+## 0.10.1
+
+MCP tool errors keep their structured details.
+
 ## 0.10.0
 
 An argument no field claims is now an error. `--tag a b` left `b` unclaimed
