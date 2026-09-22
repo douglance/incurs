@@ -280,7 +280,9 @@ fn format_markdown(value: &Value, path: &[String]) -> String {
                             format_markdown(val, &child_path)
                         }
                     } else {
-                        format!("## {}\n\n{}", child_path.join("."), scalar_to_string(val))
+                        // An array of scalars: `scalar_to_string` would render
+                        // it empty, so let the array branch list its values.
+                        format_markdown(val, &child_path)
                     }
                 })
                 .collect();
@@ -625,6 +627,13 @@ mod tests {
         assert!(result.contains("| age"));
         assert!(result.contains("alice"));
         assert!(result.contains("bob"));
+    }
+
+    #[test]
+    fn test_markdown_lists_scalar_arrays_under_a_key() {
+        let value = json!({"terms": ["incurs", "upgrade"], "budget": 2000});
+        let output = format_markdown(&value, &[]);
+        assert!(output.contains("## terms\n\nincurs, upgrade"), "{output}");
     }
 
     #[test]
