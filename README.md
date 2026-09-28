@@ -197,6 +197,18 @@ persists across runs.
 See [Agent Plugins compatibility](docs/agent-plugins.md) for the full behavior and
 failure-boundary matrix.
 
+## Cloudflare Workers
+
+Every feature runs in a Cloudflare Worker. Build with
+`default-features = false`, serve `http::build_cli_router_with` through the
+Workers SDK, pass the Worker's variables as the environment, and set a
+`RequestGuard`. `/mcp` is served without an async runtime, and outbound calls go
+through `incurs_mcp_cloudflare::WorkersHttpClient`. Commands that install into
+the local machine (`skills add`, `mcp add`, `plugin build`, `--mcp` over stdio)
+answer with a coded error there.
+`extensions/cloudflare/examples/feature-worker` exercises every feature under
+`wrangler dev`.
+
 ## Calling commands without a CLI
 
 `Cli::tool_catalog()` exposes every MCP-visible command as a transport-neutral Rust
