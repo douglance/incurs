@@ -57,7 +57,9 @@ pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::
 ///
 /// Native builds serve `/mcp` with the rmcp-based server. wasm32 builds, which
 /// have no async runtime for it, serve the runtime-free
-/// [`crate::mcp::McpHttpServer`] with its default configuration.
+/// [`crate::mcp::McpHttpServer`] with its default configuration. A wasm32 host
+/// has no process environment, so env-backed fields read as absent here; a
+/// Worker passes its environment through [`build_cli_router_with`].
 pub fn build_cli_router(cli: &Cli) -> Result<Router, crate::errors::Error> {
     let router = build_router(build_app_state(cli));
     #[cfg(not(target_arch = "wasm32"))]
@@ -192,12 +194,30 @@ pub fn mcp_router(server: crate::mcp::McpHttpServer) -> Router {
         .with_state(server)
 }
 
+/// Reads up to `cap` bytes of a body and drops the rest unread.
+async fn read_bounded(body: Body, cap: usize) -> Result<Vec<u8>, axum::Error> {
+    let mut stream = body.into_data_stream();
+    let mut bytes = Vec::new();
+    while bytes.len() < cap {
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
+        let chunk = chunk?;
+        let take = chunk.len().min(cap - bytes.len());
+        bytes.extend_from_slice(&chunk[..take]);
+    }
+    Ok(bytes)
+}
+
 async fn handle_mcp(
     State(server): State<crate::mcp::McpHttpServer>,
     request: axum::extract::Request,
 ) -> Response {
     let (parts, body) = request.into_parts();
-    let Ok(body) = axum::body::to_bytes(body, usize::MAX).await else {
+    // Read at most one byte past the limit, so an oversized body is never
+    // buffered whole; the server still answers it `413` in its usual order.
+    let Ok(body) = read_bounded(body, server.max_request_body_bytes().saturating_add(1)).await
+    else {
         return (StatusCode::BAD_REQUEST, "Failed to read request body").into_response();
     };
     let headers = parts
@@ -1346,6 +1366,51 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn an_oversized_mcp_body_is_refused_without_reading_it_all() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const CHUNK: usize = 512;
+        const CHUNKS: usize = 10_000;
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&pulled);
+        let body = Body::from_stream(futures::stream::iter(0..CHUNKS).map(move |_| {
+            counter.fetch_add(CHUNK, Ordering::SeqCst);
+            Ok::<_, std::convert::Infallible>(vec![b' '; CHUNK])
+        }));
+        let cli =
+            Cli::create("bounded").command("echo", CommandDef::build("echo", EchoHandler).done());
+        let router = build_cli_router_with(
+            &cli,
+            RouterOptions {
+                mcp: crate::mcp::McpHttpConfig {
+                    max_request_body_bytes: 1024,
+                    ..crate::mcp::McpHttpConfig::default()
+                },
+                ..RouterOptions::default()
+            },
+        )
+        .unwrap();
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("host", "localhost")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(body)
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let pulled = pulled.load(Ordering::SeqCst);
+        assert!(
+            pulled <= 1024 + 2 * CHUNK,
+            "read {pulled} of {} bytes",
+            CHUNK * CHUNKS
+        );
     }
 
     #[tokio::test]

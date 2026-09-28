@@ -226,6 +226,12 @@ impl McpHttpServer {
     /// first JSON-RPC message is ready, because its HTTP status depends on it.
     /// Dropping the returned future or an event-stream body cancels the tool
     /// call behind it.
+    /// Largest request body this server accepts. A transport should stop
+    /// reading one byte past it: the server answers `413` for any longer body.
+    pub fn max_request_body_bytes(&self) -> usize {
+        self.config.max_request_body_bytes
+    }
+
     pub async fn handle(&self, request: McpHttpRequest) -> McpHttpResponse {
         let headers = Headers(&request.headers);
         if let Err(response) = self.validate_host_and_origin(&headers) {
@@ -1417,6 +1423,41 @@ mod tests {
         );
         assert!(parse_authority("local host").is_none());
         assert!(parse_authority("host:99999").is_none());
+    }
+
+    fn null_origin_ping(config: McpHttpConfig) -> u16 {
+        let cli = crate::cli::Cli::create("origin");
+        let server = McpHttpServer::from_cli(&cli, config).unwrap();
+        let request = McpHttpRequest {
+            method: "POST".to_string(),
+            path: "/mcp".to_string(),
+            headers: vec![
+                ("host".to_string(), "localhost".to_string()),
+                ("origin".to_string(), "null".to_string()),
+                ("content-type".to_string(), "application/json".to_string()),
+                (
+                    "accept".to_string(),
+                    "application/json, text/event-stream".to_string(),
+                ),
+            ],
+            body: br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec(),
+        };
+        futures::executor::block_on(server.handle(request)).status
+    }
+
+    #[test]
+    fn a_null_origin_is_refused_unless_explicitly_allowed() {
+        // Sandboxed frames and file pages send `Origin: null`. With the default
+        // host allowlist nothing vouches for them, so they are refused; a host
+        // that wants them lists "null".
+        assert_eq!(null_origin_ping(McpHttpConfig::default()), 403);
+        assert_eq!(
+            null_origin_ping(McpHttpConfig {
+                allowed_origins: Some(vec!["null".to_string()]),
+                ..McpHttpConfig::default()
+            }),
+            200
+        );
     }
 
     #[test]

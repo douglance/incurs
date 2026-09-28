@@ -408,6 +408,11 @@ fn corpus() -> Vec<Case> {
         case("bad-json-415", base_headers(), b"{not json".to_vec()),
         case("batch-415", base_headers(), b"[]".to_vec()),
         case(
+            "batch-nonempty",
+            base_headers(),
+            br#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"ping"}]"#.to_vec(),
+        ),
+        case(
             "wrong-jsonrpc-version-415",
             base_headers(),
             br#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#.to_vec(),

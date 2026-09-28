@@ -314,8 +314,17 @@ pub(crate) fn discovery_result(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_lowercase();
-            let offset = arguments.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let limit = arguments.get("limit").and_then(Value::as_u64).unwrap_or(5) as usize;
+            // Saturate rather than truncate: `usize` is 32 bits on wasm32, and
+            // a wrapped offset would page differently than a native server.
+            let page_arg = |name: &str, default: u64| {
+                let value = arguments
+                    .get(name)
+                    .and_then(Value::as_u64)
+                    .unwrap_or(default);
+                usize::try_from(value).unwrap_or(usize::MAX)
+            };
+            let offset = page_arg("offset", 0);
+            let limit = page_arg("limit", 5);
             let mut matches = tools
                 .values()
                 .filter(|tool| {
