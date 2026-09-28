@@ -1,0 +1,17 @@
+{
+  "name": "incurs-feature-worker",
+  "main": "build/worker/shim.mjs",
+  "compatibility_date": "2026-06-11",
+  "vars": {
+    "GREETING_STYLE": "warm",
+    // Base URL the OpenAPI-generated commands call, and where the spec is
+    // downloaded from. The smoke test serves both on this address.
+    "OPENAPI_BASE": "http://127.0.0.1:8801",
+    // This Worker's own address. Remote MCP commands and the plugin's HTTP MCP
+    // server both point back at its /api/mcp route.
+    "SELF_URL": "http://127.0.0.1:8799"
+  },
+  "build": {
+    "command": "worker-build --release"
+  }
+}

@@ -3,5 +3,6 @@ members = [
   "crates/incurs-mcp-cloudflare",
   "crates/incurs-codemode-cloudflare",
   "examples/codemode-worker",
+  "examples/feature-worker",
 ]
 resolver = "2"

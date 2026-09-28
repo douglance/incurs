@@ -1,14 +1,26 @@
 //! MCP (Model Context Protocol) stdio server.
 //!
 //! Exposes CLI commands as MCP tools over a stdio
-//! transport. The actual server implementation uses the `rmcp` crate and is
-//! gated behind the `mcp` feature flag.
+//! transport. The actual server implementation uses the `rmcp` crate. It is
+//! built on every target except wasm32, where there is no stdio to serve on;
+//! a wasm32 host such as a Cloudflare Worker serves tools through its own
+//! adapter over [`crate::tool::ToolCatalog`].
 
 use std::collections::BTreeMap;
 
 use crate::schema::FieldMeta;
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 use serde_json::Value;
+
+#[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
+mod parity_tests;
+mod portable_server;
+mod shared;
+
+pub use portable_server::{
+    DEFAULT_MAX_REQUEST_BODY_BYTES, McpHttpBody, McpHttpConfig, McpHttpRequest, McpHttpResponse,
+    McpHttpServer,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,6 +128,7 @@ impl McpRemoteOptions {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn rmcp_protocol_versions(
     standards: &incurs_mcp_protocol::McpStandardSet,
 ) -> Vec<rmcp::model::ProtocolVersion> {
@@ -165,15 +178,219 @@ pub fn matches_tool_filter(name: &str, filter: &McpToolFilter) -> bool {
     included && !excluded
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+/// A remote tool definition, independent of the client that listed it.
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+struct RemoteTool {
+    name: String,
+    description: Option<String>,
+    input_schema: Value,
+    output_schema: Option<Value>,
+    read_only: bool,
+}
+
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+impl RemoteTool {
+    /// Reads an MCP tool object.
+    fn from_value(value: &Value) -> Result<Self, crate::errors::Error> {
+        let name = value
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| remote_error("MCP tool has no name"))?;
+        let input_schema = value
+            .get("inputSchema")
+            .filter(|schema| schema.is_object())
+            .cloned()
+            .ok_or_else(|| remote_error(format!("MCP tool `{name}` has no inputSchema object")))?;
+        Ok(Self {
+            name: name.to_string(),
+            description: value
+                .get("description")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            input_schema,
+            output_schema: value
+                .get("outputSchema")
+                .filter(|schema| schema.is_object())
+                .cloned(),
+            read_only: value
+                .pointer("/annotations/readOnlyHint")
+                .and_then(Value::as_bool)
+                == Some(true),
+        })
+    }
+}
+
+#[cfg(all(
+    any(feature = "http", feature = "agent-plugins-mcp"),
+    not(target_arch = "wasm32")
+))]
+impl From<rmcp::model::Tool> for RemoteTool {
+    fn from(tool: rmcp::model::Tool) -> Self {
+        Self {
+            name: tool.name.to_string(),
+            description: tool.description.map(|description| description.to_string()),
+            input_schema: Value::Object((*tool.input_schema).clone()),
+            output_schema: tool
+                .output_schema
+                .map(|schema| Value::Object((*schema).clone())),
+            read_only: tool
+                .annotations
+                .as_ref()
+                .and_then(|annotations| annotations.read_only_hint)
+                == Some(true),
+        }
+    }
+}
+
+/// A remote tool call result, reduced to what projection reads.
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+struct RemoteCallResult {
+    is_error: bool,
+    structured_content: Option<Value>,
+    first_text: Option<String>,
+}
+
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+impl RemoteCallResult {
+    /// Reads an MCP `CallToolResult` object.
+    fn from_value(value: &Value) -> Self {
+        Self {
+            is_error: value.get("isError").and_then(Value::as_bool) == Some(true),
+            structured_content: value
+                .get("structuredContent")
+                .filter(|content| !content.is_null())
+                .cloned(),
+            first_text: value
+                .pointer("/content/0")
+                .filter(|content| content.get("type").and_then(Value::as_str) == Some("text"))
+                .and_then(|content| content.get("text"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        }
+    }
+
+    /// The command data of a successful call: structured content, else the
+    /// first text block parsed as JSON, else null.
+    fn data(self) -> Value {
+        self.structured_content.unwrap_or_else(|| {
+            self.first_text
+                .and_then(|text| serde_json::from_str(&text).ok())
+                .unwrap_or(Value::Null)
+        })
+    }
+
+    /// The message of a failed call.
+    fn failure_message(self) -> String {
+        self.first_text
+            .unwrap_or_else(|| "Remote MCP tool failed".to_string())
+    }
+}
+
+#[cfg(all(
+    any(feature = "http", feature = "agent-plugins-mcp"),
+    not(target_arch = "wasm32")
+))]
+impl From<rmcp::model::CallToolResult> for RemoteCallResult {
+    fn from(result: rmcp::model::CallToolResult) -> Self {
+        Self {
+            is_error: result.is_error == Some(true),
+            first_text: result
+                .content
+                .first()
+                .and_then(|content| content.as_text())
+                .map(|text| text.text.clone()),
+            structured_content: result.structured_content,
+        }
+    }
+}
+
+/// A connected MCP client that projected remote commands call through.
+///
+/// Native builds implement it with `rmcp`; every target implements it with
+/// the portable [`crate::mcp_client::McpHttpClient`].
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+#[async_trait::async_trait]
+trait RemoteToolClient: Send + Sync {
+    /// Lists every tool the server exposes.
+    async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error>;
+
+    /// Reads one tool object returned by a progressive catalog.
+    fn remote_parse_tool(&self, value: Value) -> Result<RemoteTool, crate::errors::Error>;
+
+    /// Calls one tool; a failed request is reported by its display text.
+    async fn remote_call_tool(
+        &self,
+        name: String,
+        arguments: serde_json::Map<String, Value>,
+    ) -> Result<RemoteCallResult, String>;
+}
+
+#[cfg(all(
+    any(feature = "http", feature = "agent-plugins-mcp"),
+    not(target_arch = "wasm32")
+))]
+#[async_trait::async_trait]
+impl RemoteToolClient for rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo> {
+    async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error> {
+        let tools = rmcp::service::Peer::<rmcp::RoleClient>::list_all_tools(self)
+            .await
+            .map_err(remote_error)?;
+        Ok(tools.into_iter().map(RemoteTool::from).collect())
+    }
+
+    fn remote_parse_tool(&self, value: Value) -> Result<RemoteTool, crate::errors::Error> {
+        serde_json::from_value::<rmcp::model::Tool>(value)
+            .map(RemoteTool::from)
+            .map_err(remote_error)
+    }
+
+    async fn remote_call_tool(
+        &self,
+        name: String,
+        arguments: serde_json::Map<String, Value>,
+    ) -> Result<RemoteCallResult, String> {
+        rmcp::service::Peer::<rmcp::RoleClient>::call_tool(
+            self,
+            rmcp::model::CallToolRequestParams::new(name).with_arguments(arguments),
+        )
+        .await
+        .map(RemoteCallResult::from)
+        .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+#[async_trait::async_trait]
+impl RemoteToolClient for crate::mcp_client::McpHttpClient {
+    async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error> {
+        let tools = crate::mcp_client::sendable(self.list_tools()).await?;
+        tools.iter().map(RemoteTool::from_value).collect()
+    }
+
+    fn remote_parse_tool(&self, value: Value) -> Result<RemoteTool, crate::errors::Error> {
+        RemoteTool::from_value(&value)
+    }
+
+    async fn remote_call_tool(
+        &self,
+        name: String,
+        arguments: serde_json::Map<String, Value>,
+    ) -> Result<RemoteCallResult, String> {
+        crate::mcp_client::sendable(self.call_tool(&name, arguments))
+            .await
+            .map(|result| RemoteCallResult::from_value(&result))
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 struct RemoteToolHandler {
-    client:
-        std::sync::Arc<rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>>,
+    client: std::sync::Arc<dyn RemoteToolClient>,
     tool: String,
     wrapper: Option<String>,
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 #[async_trait::async_trait]
 impl crate::command::CommandHandler for RemoteToolHandler {
     async fn run(&self, ctx: crate::command::CommandContext) -> crate::output::CommandResult {
@@ -194,41 +411,25 @@ impl crate::command::CommandHandler for RemoteToolHandler {
         } else {
             (self.tool.clone(), arguments)
         };
-        let result = self
-            .client
-            .call_tool(rmcp::model::CallToolRequestParams::new(name).with_arguments(arguments))
-            .await;
-        match result {
-            Ok(result) if result.is_error != Some(true) => {
-                let data = result.structured_content.unwrap_or_else(|| {
-                    result
-                        .content
-                        .first()
-                        .and_then(|content| content.as_text())
-                        .and_then(|text| serde_json::from_str(&text.text).ok())
-                        .unwrap_or(Value::Null)
-                });
-                crate::output::CommandResult::Ok {
-                    data,
-                    cta: None,
-                    exit_code: None,
-                }
-            }
+        match self.client.remote_call_tool(name, arguments).await {
+            // The tool ran and succeeded.
+            Ok(result) if !result.is_error => crate::output::CommandResult::Ok {
+                data: result.data(),
+                cta: None,
+                exit_code: None,
+            },
+            // The tool ran and reported a failure.
             Ok(result) => crate::output::CommandResult::Error {
                 code: "REMOTE_MCP_ERROR".to_string(),
-                message: result
-                    .content
-                    .first()
-                    .and_then(|content| content.as_text())
-                    .map(|text| text.text.clone())
-                    .unwrap_or_else(|| "Remote MCP tool failed".to_string()),
+                message: result.failure_message(),
                 retryable: false,
                 exit_code: Some(1),
                 cta: None,
             },
-            Err(error) => crate::output::CommandResult::Error {
+            // The request failed or the server rejected it.
+            Err(message) => crate::output::CommandResult::Error {
                 code: "REMOTE_MCP_ERROR".to_string(),
-                message: error.to_string(),
+                message,
                 retryable: true,
                 exit_code: Some(1),
                 cta: None,
@@ -238,6 +439,9 @@ impl crate::command::CommandHandler for RemoteToolHandler {
 }
 
 /// Connects to a remote MCP-over-HTTP server and projects its tools as commands.
+///
+/// Native builds connect with `rmcp`; wasm32 builds connect with the portable
+/// [`crate::mcp_client::McpHttpClient`]. Both project identical commands.
 #[cfg(feature = "http")]
 pub async fn remote_commands(
     uri: impl Into<String>,
@@ -247,31 +451,54 @@ pub async fn remote_commands(
 
 /// Connects to a remote MCP-over-HTTP server using explicit exact standards
 /// and projects its tools as commands.
+///
+/// Native builds connect with `rmcp`; wasm32 builds connect with the portable
+/// [`crate::mcp_client::McpHttpClient`]. Both project identical commands.
 #[cfg(feature = "http")]
 pub async fn remote_commands_with(
     uri: impl Into<String>,
     options: &McpRemoteOptions,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
-    use rmcp::transport::StreamableHttpClientTransport;
-    use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rmcp::transport::StreamableHttpClientTransport;
+        use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 
-    let mut config = StreamableHttpClientTransportConfig::with_uri(uri.into());
-    if let Some(token) = &options.auth_token {
-        config = config.auth_header(token.clone());
-    }
-    if !options.headers.is_empty() {
-        config = config.custom_headers(remote_header_map(&options.headers)?);
-    }
+        let mut config = StreamableHttpClientTransportConfig::with_uri(uri.into());
+        if let Some(token) = &options.auth_token {
+            config = config.auth_header(token.clone());
+        }
+        if !options.headers.is_empty() {
+            config = config.custom_headers(remote_header_map(&options.headers)?);
+        }
 
-    remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options)
-        .await
+        remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options)
+            .await
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let client = crate::mcp_client::McpHttpClient::connect(&uri.into(), options).await?;
+        remote_commands_from_client(client).await
+    }
+}
+
+/// Projects the tools of a connected portable client as commands.
+///
+/// Each command calls its tool through `client`. A server that exposes the
+/// incurs progressive catalog (`search_tools`, `get_tool_details`,
+/// `call_read_tool`, `call_write_tool`) is expanded into its underlying tools.
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+pub async fn remote_commands_from_client(
+    client: crate::mcp_client::McpHttpClient,
+) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
+    project_remote_commands(std::sync::Arc::new(client)).await
 }
 
 /// Converts plain `(name, value)` pairs into the transport's header map.
 ///
 /// Reports the offending header by name, since a rejected header is otherwise
 /// indistinguishable from an authentication failure at the far end.
-#[cfg(feature = "http")]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 fn remote_header_map(
     headers: &[(String, String)],
 ) -> Result<std::collections::HashMap<http::HeaderName, http::HeaderValue>, crate::errors::Error> {
@@ -302,7 +529,10 @@ fn remote_header_map(
     Ok(map)
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(all(
+    any(feature = "http", feature = "agent-plugins-mcp"),
+    not(target_arch = "wasm32")
+))]
 pub(crate) async fn remote_commands_from_transport<T, E, A>(
     transport: T,
     options: &McpRemoteOptions,
@@ -340,20 +570,18 @@ where
         .map_err(|error| {
             crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
         })?;
-    project_remote_commands(client).await
+    project_remote_commands(std::sync::Arc::new(client)).await
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 async fn project_remote_commands(
-    client: rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
+    client: std::sync::Arc<dyn RemoteToolClient>,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
-    let listed = client.list_all_tools().await.map_err(|error| {
-        crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
-    })?;
+    let listed = client.remote_list_tools().await?;
     let progressive = {
         let names = listed
             .iter()
-            .map(|tool| tool.name.as_ref())
+            .map(|tool| tool.name.as_str())
             .collect::<std::collections::HashSet<_>>();
         listed.len() == 4
             && [
@@ -366,11 +594,10 @@ async fn project_remote_commands(
             .all(|name| names.contains(name))
     };
     let tools = if progressive {
-        discover_remote_tools(&client).await?
+        discover_remote_tools(client.as_ref()).await?
     } else {
         listed
     };
-    let client = std::sync::Arc::new(client);
     let mut commands = std::collections::BTreeMap::new();
     for tool in tools {
         let required = tool
@@ -390,12 +617,12 @@ async fn project_remote_commands(
             .flat_map(|properties| properties.iter())
             .map(|(name, schema)| remote_field(name, schema, required.contains(name)))
             .collect();
-        let name = tool.name.to_string();
+        let name = tool.name;
         commands.insert(
             name.clone(),
             crate::command::CommandDef {
                 name: name.clone(),
-                description: tool.description.map(|description| description.to_string()),
+                description: tool.description,
                 args_fields: Vec::new(),
                 options_fields: fields,
                 env_fields: Vec::new(),
@@ -408,12 +635,7 @@ async fn project_remote_commands(
                 handler: Box::new(RemoteToolHandler {
                     client: std::sync::Arc::clone(&client),
                     wrapper: progressive.then(|| {
-                        if tool
-                            .annotations
-                            .as_ref()
-                            .and_then(|annotations| annotations.read_only_hint)
-                            == Some(true)
-                        {
+                        if tool.read_only {
                             "call_read_tool".to_string()
                         } else {
                             "call_write_tool".to_string()
@@ -422,9 +644,7 @@ async fn project_remote_commands(
                     tool: name,
                 }),
                 middleware: Vec::new(),
-                output_schema: tool
-                    .output_schema
-                    .map(|schema| Value::Object((*schema).clone())),
+                output_schema: tool.output_schema,
                 raw: false,
                 hidden: false,
             },
@@ -433,22 +653,21 @@ async fn project_remote_commands(
     Ok(commands)
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 async fn discover_remote_tools(
-    client: &rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo>,
-) -> Result<Vec<rmcp::model::Tool>, crate::errors::Error> {
+    client: &dyn RemoteToolClient,
+) -> Result<Vec<RemoteTool>, crate::errors::Error> {
     let mut tools = Vec::new();
     let mut offset = 0_u64;
     loop {
         let search = client
-            .call_tool(
-                rmcp::model::CallToolRequestParams::new("search_tools").with_arguments(
-                    serde_json::Map::from_iter([
-                        ("query".to_string(), Value::String(String::new())),
-                        ("limit".to_string(), Value::from(20)),
-                        ("offset".to_string(), Value::from(offset)),
-                    ]),
-                ),
+            .remote_call_tool(
+                "search_tools".to_string(),
+                serde_json::Map::from_iter([
+                    ("query".to_string(), Value::String(String::new())),
+                    ("limit".to_string(), Value::from(20)),
+                    ("offset".to_string(), Value::from(offset)),
+                ]),
             )
             .await
             .map_err(remote_error)?;
@@ -460,18 +679,16 @@ async fn discover_remote_tools(
             .filter_map(|tool| tool["name"].as_str())
         {
             let details = client
-                .call_tool(
-                    rmcp::model::CallToolRequestParams::new("get_tool_details").with_arguments(
-                        serde_json::Map::from_iter([(
-                            "name".to_string(),
-                            Value::String(name.to_string()),
-                        )]),
-                    ),
+                .remote_call_tool(
+                    "get_tool_details".to_string(),
+                    serde_json::Map::from_iter([(
+                        "name".to_string(),
+                        Value::String(name.to_string()),
+                    )]),
                 )
                 .await
                 .map_err(remote_error)?;
-            tools
-                .push(serde_json::from_value(remote_result_value(details)?).map_err(remote_error)?);
+            tools.push(client.remote_parse_tool(remote_result_value(details)?)?);
         }
         let Some(next) = value.get("nextOffset").and_then(Value::as_u64) else {
             break;
@@ -486,34 +703,22 @@ async fn discover_remote_tools(
     Ok(tools)
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
-fn remote_result_value(result: rmcp::model::CallToolResult) -> Result<Value, crate::errors::Error> {
-    if result.is_error == Some(true) {
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+fn remote_result_value(result: RemoteCallResult) -> Result<Value, crate::errors::Error> {
+    if result.is_error {
         return Err(remote_error(std::io::Error::other(
-            result
-                .content
-                .first()
-                .and_then(|content| content.as_text())
-                .map(|text| text.text.clone())
-                .unwrap_or_else(|| "Remote MCP tool failed".to_string()),
+            result.failure_message(),
         )));
     }
-    Ok(result.structured_content.unwrap_or_else(|| {
-        result
-            .content
-            .first()
-            .and_then(|content| content.as_text())
-            .and_then(|text| serde_json::from_str(&text.text).ok())
-            .unwrap_or(Value::Null)
-    }))
+    Ok(result.data())
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 fn remote_error(error: impl std::fmt::Display) -> crate::errors::Error {
     crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
 }
 
-#[cfg(feature = "agent-plugins-mcp")]
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 fn remote_field(name: &str, schema: &Value, required: bool) -> FieldMeta {
     let field_type = match schema.get("type").and_then(Value::as_str) {
         Some("boolean") => crate::schema::FieldType::Boolean,
@@ -659,12 +864,12 @@ fn field_type_to_json_type(ft: &crate::schema::FieldType) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// MCP Server (behind feature flag)
+// MCP Server (every target except wasm32)
 // ---------------------------------------------------------------------------
 
+#[cfg(not(target_arch = "wasm32"))]
 mod server {
     use std::borrow::Cow;
-    use std::collections::{BTreeMap, HashMap};
     use std::sync::Arc;
 
     use serde_json::Value;
@@ -672,430 +877,29 @@ mod server {
     use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
-        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
-        Implementation, InitializeRequestParams, InitializeResult, ListPromptsResult,
-        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, MetaObject,
-        PaginatedRequestParams, ProgressNotificationParam, ProtocolVersion, ServerCapabilities,
-        ServerInfo, Tool, ToolAnnotations,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, Implementation,
+        InitializeRequestParams, InitializeResult, ListPromptsResult, ListResourceTemplatesResult,
+        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProgressNotificationParam,
+        ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
     };
     use rmcp::service::{RequestContext, RoleServer};
 
-    use crate::cli::ConfigOptions;
+    #[cfg(test)]
     use crate::command::McpResultContent;
-    use crate::schema::FieldMeta;
-    use crate::tool::{
-        ConfigSource, EnvironmentSource, ToolCallControl, ToolCallOptions, ToolCallOutcome,
-        ToolCatalog, ToolDefinition, ToolEvent, ToolEventSink,
-    };
+    #[cfg(test)]
+    use crate::tool::ToolCallOutcome;
+    use crate::tool::{EnvironmentSource, ToolCallControl, ToolEvent, ToolEventSink};
 
-    use super::{McpDiscovery, McpServeOptions, McpToolFilter};
+    use super::McpServeOptions;
+    pub(super) use super::shared::ServerSource;
+    use super::shared::{self, CallContext, ToolServer};
 
-    // -----------------------------------------------------------------------
-    // Tool resolution from the CLI command tree
-    // -----------------------------------------------------------------------
-
-    /// A resolved tool metadata entry. Execution goes through [`ToolCatalog`].
-    struct ResolvedTool {
-        /// Tool name (path segments joined with `_`).
-        name: String,
-        /// Human-readable description.
-        description: String,
-        /// Merged JSON Schema for the tool's input (as a JSON Map).
-        input_schema: Arc<serde_json::Map<String, Value>>,
-        /// JSON Schema for structured MCP output when object-shaped.
-        output_schema: Option<Arc<serde_json::Map<String, Value>>>,
-        /// Behavioral annotations exposed to clients.
-        annotations: Option<ToolAnnotations>,
-        /// Tool-specific instructions exposed through metadata.
-        instructions: Option<String>,
-        /// Rich content derived from the successful structured result.
-        result_content: Vec<McpResultContent>,
+    /// Converts a shared `CallToolResult` wire value into the `rmcp` model.
+    fn call_tool_result(value: Value) -> CallToolResult {
+        serde_json::from_value(value).expect("shared CallToolResult wire value is valid")
     }
 
-    fn tool_definition(definition: &ToolDefinition) -> ResolvedTool {
-        ResolvedTool {
-            name: definition.name.clone(),
-            description: definition.description.clone(),
-            input_schema: Arc::new(
-                definition
-                    .input_schema
-                    .as_object()
-                    .cloned()
-                    .unwrap_or_default(),
-            ),
-            output_schema: definition
-                .output_schema
-                .as_ref()
-                .and_then(|schema| schema.as_object().cloned().map(Arc::new)),
-            annotations: definition.annotations.as_ref().map(|annotations| {
-                ToolAnnotations::from_raw(
-                    annotations.title.clone(),
-                    annotations.read_only_hint,
-                    annotations.destructive_hint,
-                    annotations.idempotent_hint,
-                    annotations.open_world_hint,
-                )
-            }),
-            instructions: definition.instructions.clone(),
-            result_content: definition.result_content.clone(),
-        }
-    }
-
-    /// Resolves the shared transport-neutral catalog for MCP discovery and calls.
-    fn resolve_catalog(
-        name: String,
-        version: Option<String>,
-        commands: &BTreeMap<String, crate::cli::CommandEntry>,
-        root_middleware: &[crate::middleware::MiddlewareFn],
-        env_fields: &[FieldMeta],
-        globals_fields: &[FieldMeta],
-        config: Option<&ConfigOptions>,
-    ) -> Result<ToolCatalog, crate::errors::Error> {
-        ToolCatalog::from_parts(
-            name,
-            version,
-            commands,
-            root_middleware,
-            env_fields,
-            globals_fields,
-            config,
-        )
-        .map_err(|error| {
-            crate::errors::Error::Other(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                error.to_string(),
-            )))
-        })
-    }
-
-    fn collect_resolved_tools(catalog: &ToolCatalog) -> Vec<ResolvedTool> {
-        catalog
-            .resolved()
-            .map(|tool| tool_definition(&tool.definition))
-            .collect()
-    }
-
-    pub(super) struct ServerSource<'a> {
-        name: &'a str,
-        version: &'a str,
-        commands: &'a BTreeMap<String, crate::cli::CommandEntry>,
-        root_middleware: &'a [crate::middleware::MiddlewareFn],
-        env_fields: &'a [FieldMeta],
-        globals_fields: &'a [FieldMeta],
-        config: Option<&'a ConfigOptions>,
-    }
-
-    impl<'a> ServerSource<'a> {
-        pub(super) fn from_cli(cli: &'a crate::cli::Cli) -> Self {
-            Self {
-                name: &cli.name,
-                version: cli.version.as_deref().unwrap_or("0.0.0"),
-                commands: &cli.commands,
-                root_middleware: &cli.middleware,
-                env_fields: &cli.env_fields,
-                globals_fields: &cli.globals_fields,
-                config: cli.config.as_ref(),
-            }
-        }
-
-        pub(super) fn from_parts(
-            name: &'a str,
-            version: &'a str,
-            commands: &'a BTreeMap<String, crate::cli::CommandEntry>,
-            root_middleware: &'a [crate::middleware::MiddlewareFn],
-            env_fields: &'a [FieldMeta],
-        ) -> Self {
-            Self {
-                name,
-                version,
-                commands,
-                root_middleware,
-                env_fields,
-                globals_fields: &[],
-                config: None,
-            }
-        }
-    }
-
-    fn catalog_and_tools(
-        source: &ServerSource<'_>,
-    ) -> Result<(ToolCatalog, Vec<ResolvedTool>), crate::errors::Error> {
-        let catalog = resolve_catalog(
-            source.name.to_string(),
-            Some(source.version.to_string()),
-            source.commands,
-            source.root_middleware,
-            source.env_fields,
-            source.globals_fields,
-            source.config,
-        )?;
-        let resolved = collect_resolved_tools(&catalog);
-        Ok((catalog, resolved))
-    }
-
-    fn wildcard_matches(pattern: &str, value: &str) -> bool {
-        if pattern == "*" {
-            return true;
-        }
-        let parts = pattern.split('*').collect::<Vec<_>>();
-        if parts.len() == 1 {
-            return pattern == value;
-        }
-        let mut offset = 0;
-        for (index, part) in parts.iter().enumerate() {
-            if part.is_empty() {
-                continue;
-            }
-            let Some(found) = value[offset..].find(part) else {
-                return false;
-            };
-            if index == 0 && !pattern.starts_with('*') && found != 0 {
-                return false;
-            }
-            offset += found + part.len();
-        }
-        pattern.ends_with('*') || parts.last().is_some_and(|part| value.ends_with(part))
-    }
-
-    fn filter_tools(tools: Vec<ResolvedTool>, filter: &McpToolFilter) -> Vec<ResolvedTool> {
-        tools
-            .into_iter()
-            .filter(|tool| {
-                let included = filter.include.is_empty()
-                    || filter
-                        .include
-                        .iter()
-                        .any(|pattern| wildcard_matches(pattern, &tool.name));
-                let excluded = filter
-                    .exclude
-                    .iter()
-                    .any(|pattern| wildcard_matches(pattern, &tool.name));
-                included && !excluded
-            })
-            .collect()
-    }
-
-    fn direct_tool(tool: &ResolvedTool) -> Tool {
-        let mut result = Tool::new(
-            Cow::Owned(tool.name.clone()),
-            Cow::Owned(tool.description.clone()),
-            Arc::clone(&tool.input_schema),
-        );
-        result.output_schema = tool.output_schema.clone();
-        result.annotations = tool.annotations.clone();
-        if let Some(instructions) = &tool.instructions {
-            result.meta = Some(MetaObject(serde_json::Map::from_iter([(
-                "instructions".to_string(),
-                Value::String(instructions.clone()),
-            )])));
-        }
-        result
-    }
-
-    fn progressive_tools() -> Vec<Tool> {
-        let search = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "query": { "type": "string", "default": "" },
-                "limit": { "type": "number", "default": 5 },
-                "offset": { "type": "number", "default": 0 }
-            }
-        });
-        let inspect = serde_json::json!({
-            "type": "object",
-            "properties": { "name": { "type": "string" } },
-            "required": ["name"]
-        });
-        let execute = serde_json::json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "arguments": { "type": "object", "additionalProperties": true }
-            },
-            "required": ["name"]
-        });
-        [
-            (
-                "search_tools",
-                "Search or page through available tools by capability. Returns names and descriptions without loading their schemas. Inspect a result before calling it.",
-                search,
-                true,
-            ),
-            (
-                "get_tool_details",
-                "Inspect one tool returned by search_tools. Returns its complete input schema and metadata.",
-                inspect,
-                true,
-            ),
-            (
-                "call_read_tool",
-                "Execute a tool marked read-only after inspecting its schema with get_tool_details.",
-                execute.clone(),
-                true,
-            ),
-            (
-                "call_write_tool",
-                "Execute a writable or unclassified tool after inspecting its schema with get_tool_details.",
-                execute,
-                false,
-            ),
-        ]
-        .into_iter()
-        .map(|(name, description, schema, read_only)| {
-            let mut tool = Tool::new(
-                name.to_string(),
-                description.to_string(),
-                Arc::new(schema.as_object().cloned().unwrap_or_default()),
-            );
-            tool.annotations = Some(ToolAnnotations::from_raw(
-                None,
-                Some(read_only),
-                Some(!read_only),
-                Some(read_only),
-                Some(!matches!(name, "search_tools" | "get_tool_details")),
-            ));
-            tool
-        })
-        .collect()
-    }
-
-    fn discovery_result(
-        name: &str,
-        arguments: Option<serde_json::Map<String, Value>>,
-        tools: &HashMap<String, Arc<ResolvedTool>>,
-    ) -> Result<Option<CallToolResult>, McpError> {
-        let arguments = arguments.unwrap_or_default();
-        match name {
-            "search_tools" => {
-                let query = arguments
-                    .get("query")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_lowercase();
-                let offset = arguments.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-                let limit = arguments.get("limit").and_then(Value::as_u64).unwrap_or(5) as usize;
-                let mut matches = tools
-                    .values()
-                    .filter(|tool| {
-                        query.is_empty()
-                            || tool.name.to_lowercase().contains(&query)
-                            || tool.description.to_lowercase().contains(&query)
-                    })
-                    .map(|tool| {
-                        serde_json::json!({
-                            "name": tool.name,
-                            "description": tool.description,
-                            "annotations": tool.annotations,
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                matches.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
-                let total = matches.len();
-                let page = matches
-                    .into_iter()
-                    .skip(offset)
-                    .take(limit)
-                    .collect::<Vec<_>>();
-                Ok(Some(CallToolResult::structured(serde_json::json!({
-                    "tools": page,
-                    "nextOffset": (offset + page.len() < total).then_some(offset + page.len()),
-                }))))
-            }
-            "get_tool_details" => {
-                let tool_name = arguments
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| McpError::invalid_params("Missing tool name", None))?;
-                let tool = tools.get(tool_name).ok_or_else(|| {
-                    McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
-                })?;
-                Ok(Some(CallToolResult::structured(serde_json::json!({
-                    "name": tool.name,
-                    "description": tool.description,
-                    "inputSchema": Value::Object((*tool.input_schema).clone()),
-                    "outputSchema": tool.output_schema.as_ref().map(|schema| Value::Object((**schema).clone())),
-                    "annotations": tool.annotations,
-                    "instructions": tool.instructions,
-                }))))
-            }
-            "call_read_tool" | "call_write_tool" => {
-                let tool_name = arguments
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| McpError::invalid_params("Missing tool name", None))?;
-                let tool = tools.get(tool_name).ok_or_else(|| {
-                    McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
-                })?;
-                let read_only = tool
-                    .annotations
-                    .as_ref()
-                    .and_then(|annotations| annotations.read_only_hint)
-                    == Some(true);
-                if name == "call_read_tool" && !read_only {
-                    return Ok(Some(CallToolResult::error(vec![ContentBlock::text(
-                        serde_json::json!({ "error": format!("Tool is not read-only: {tool_name}") }).to_string(),
-                    )])));
-                }
-                if name == "call_write_tool" && read_only {
-                    return Ok(Some(CallToolResult::error(vec![ContentBlock::text(
-                        serde_json::json!({ "error": format!("Tool is read-only: {tool_name}") })
-                            .to_string(),
-                    )])));
-                }
-                Ok(None)
-            }
-            _ => Err(McpError::invalid_params(
-                format!("Unknown discovery tool: {name}"),
-                None,
-            )),
-        }
-    }
-
-    fn formatted_cta(name: &str, cta: crate::output::CtaBlock) -> Value {
-        let commands = cta
-            .commands
-            .into_iter()
-            .map(|entry| match entry {
-                crate::output::CtaEntry::Simple(command) => serde_json::json!({
-                    "command": format!("{name} {command}"),
-                }),
-                crate::output::CtaEntry::Detailed {
-                    command,
-                    description,
-                } => {
-                    let command = if command == name || command.starts_with(&format!("{name} ")) {
-                        command
-                    } else {
-                        format!("{name} {command}")
-                    };
-                    serde_json::json!({ "command": command, "description": description })
-                }
-            })
-            .collect::<Vec<_>>();
-        serde_json::json!({
-            "description": cta.description.unwrap_or_else(|| "Suggested commands:".to_string()),
-            "commands": commands,
-        })
-    }
-
-    fn render_cta(cta: &Value) -> String {
-        let mut lines = vec![
-            cta["description"]
-                .as_str()
-                .unwrap_or("Suggested commands:")
-                .to_string(),
-        ];
-        for command in cta["commands"].as_array().into_iter().flatten() {
-            let value = command["command"].as_str().unwrap_or("");
-            let description = command["description"]
-                .as_str()
-                .map(|description| format!("  # {description}"))
-                .unwrap_or_default();
-            lines.push(format!("  {value}{description}"));
-        }
-        lines.join("\n")
-    }
-
+    #[cfg(test)]
     pub(super) fn tool_result_success(
         name: &str,
         data: Value,
@@ -1103,93 +907,31 @@ mod server {
         structured: bool,
         presentation: &[McpResultContent],
     ) -> CallToolResult {
-        let text = serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string());
-        let cta = cta.map(|cta| formatted_cta(name, cta));
-        let text = cta
-            .as_ref()
-            .map(|cta| format!("{text}\n\n{}", render_cta(cta)))
-            .unwrap_or(text);
-        let mut content = vec![ContentBlock::text(text)];
-        for item in presentation {
-            match item {
-                McpResultContent::Image {
-                    data_pointer,
-                    mime_type_pointer,
-                } => {
-                    let Some(image_data) = data.pointer(data_pointer).and_then(Value::as_str)
-                    else {
-                        continue;
-                    };
-                    let Some(mime_type) = data.pointer(mime_type_pointer).and_then(Value::as_str)
-                    else {
-                        continue;
-                    };
-                    content.push(ContentBlock::image(image_data, mime_type));
-                }
-            }
-        }
-        let mut result = CallToolResult::success(content);
-        result.structured_content = structured.then_some(data);
-        result.meta =
-            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)])));
-        result
+        call_tool_result(shared::tool_result_success(
+            name,
+            data,
+            cta,
+            structured,
+            presentation,
+        ))
     }
 
     #[cfg(test)]
     mod error_tests;
 
-    fn tool_result_error(
-        name: &str,
-        data: Value,
-        cta: Option<crate::output::CtaBlock>,
-        structured: bool,
-    ) -> CallToolResult {
-        let cta = cta.map(|cta| formatted_cta(name, cta));
-        let mut result = CallToolResult::error(vec![ContentBlock::text(data.to_string())]);
-        if let Some(cta) = &cta {
-            result.content.push(ContentBlock::text(render_cta(cta)));
-        }
-        result.structured_content = structured.then_some(data);
-        result.meta =
-            cta.map(|cta| MetaObject(serde_json::Map::from_iter([("cta".to_string(), cta)])));
-        result
-    }
-
+    #[cfg(test)]
     fn tool_call_result(
         name: &str,
         outcome: ToolCallOutcome,
         structured: bool,
         presentation: &[McpResultContent],
     ) -> CallToolResult {
-        match outcome {
-            ToolCallOutcome::Ok { data, cta } => {
-                tool_result_success(name, data, cta, structured, presentation)
-            }
-            ToolCallOutcome::Error {
-                code,
-                message,
-                retryable,
-                field_errors,
-                cta,
-                exit_code,
-            } => {
-                let message = if message.is_empty() {
-                    "Command failed".to_string()
-                } else {
-                    message
-                };
-                let mut data = serde_json::json!(crate::output::ExecuteError {
-                    code,
-                    message,
-                    retryable,
-                    field_errors,
-                });
-                if let Some(exit_code) = exit_code {
-                    data["exit_code"] = serde_json::json!(exit_code);
-                }
-                tool_result_error(name, data, cta, structured)
-            }
-        }
+        call_tool_result(shared::tool_call_result(
+            name,
+            outcome,
+            structured,
+            presentation,
+        ))
     }
 
     struct McpEventSink {
@@ -1204,12 +946,7 @@ mod server {
             let Some(progress_token) = self.progress_token.clone() else {
                 return;
             };
-            let message = match event {
-                ToolEvent::Chunk { data } => {
-                    serde_json::to_string(&data).unwrap_or_else(|_| "null".to_string())
-                }
-                ToolEvent::Progress { message, .. } | ToolEvent::Log { message, .. } => message,
-            };
+            let message = shared::progress_message(event);
             let mut count = self.count.lock().await;
             *count += 1;
             let _ = self
@@ -1230,70 +967,35 @@ mod server {
     /// to respond to `initialize`, `tools/list`, and `tools/call` requests.
     #[derive(Clone)]
     pub(crate) struct IncurMcpServer {
-        /// Server name (CLI name).
-        server_name: String,
-        /// Server version (CLI version).
-        server_version: String,
-        /// Transport-neutral command catalog used for execution.
-        catalog: ToolCatalog,
-        /// Resolved tools indexed by name for O(1) lookup during `tools/call`.
-        tools_by_name: Arc<HashMap<String, Arc<ResolvedTool>>>,
+        /// Shared tool listing and invocation.
+        tools: ToolServer,
         /// Pre-built list of `rmcp::model::Tool` for `tools/list` responses.
         tool_list: Arc<Vec<Tool>>,
-        /// Instructions returned during MCP initialization.
-        instructions: Option<String>,
-        /// Active discovery strategy.
-        discovery: McpDiscovery,
-        /// Exact standards enabled for this server.
-        standards: incurs_mcp_protocol::McpStandardSet,
     }
 
     impl IncurMcpServer {
         fn new(
-            name: String,
-            version: String,
-            catalog: ToolCatalog,
-            resolved_tools: Vec<ResolvedTool>,
+            source: &ServerSource<'_>,
             options: &McpServeOptions,
         ) -> Result<Self, crate::errors::Error> {
-            let resolved_tools = filter_tools(resolved_tools, &options.tools);
-            let mut names = std::collections::HashSet::new();
-            for tool in &resolved_tools {
-                if !names.insert(tool.name.clone()) {
-                    return Err(crate::errors::Error::Other(Box::new(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!("Duplicate MCP tool name: {}", tool.name),
-                    ))));
-                }
-            }
-            let tool_list = if options.tools.discovery == McpDiscovery::Direct {
-                resolved_tools.iter().map(direct_tool).collect()
-            } else {
-                progressive_tools()
-            };
-
-            let mut tools_by_name = HashMap::new();
-            for tool in resolved_tools {
-                let name = tool.name.clone();
-                tools_by_name.insert(name, Arc::new(tool));
-            }
-
+            let tools = ToolServer::new(source, options)?;
+            let tool_list = tools
+                .tool_list
+                .iter()
+                .map(|tool| {
+                    serde_json::from_value(tool.clone()).expect("shared Tool wire value is valid")
+                })
+                .collect();
             Ok(IncurMcpServer {
-                server_name: name,
-                server_version: version,
-                catalog,
-                tools_by_name: Arc::new(tools_by_name),
+                tools,
                 tool_list: Arc::new(tool_list),
-                instructions: options.instructions.clone(),
-                discovery: options.tools.discovery,
-                standards: options.standards.clone(),
             })
         }
     }
 
     impl ServerHandler for IncurMcpServer {
         fn get_info(&self) -> ServerInfo {
-            let protocol = super::rmcp_protocol_versions(&self.standards)
+            let protocol = super::rmcp_protocol_versions(&self.tools.standards)
                 .into_iter()
                 .find(|version| version.as_str() != "2026-07-28")
                 .unwrap_or(ProtocolVersion::V_2026_07_28);
@@ -1306,10 +1008,10 @@ mod server {
             )
             .with_protocol_version(protocol)
             .with_server_info(Implementation::new(
-                self.server_name.clone(),
-                self.server_version.clone(),
+                self.tools.server_name.clone(),
+                self.tools.server_version.clone(),
             ));
-            if let Some(instructions) = &self.instructions {
+            if let Some(instructions) = &self.tools.instructions {
                 info.with_instructions(instructions.clone())
             } else {
                 info
@@ -1317,7 +1019,7 @@ mod server {
         }
 
         fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-            Cow::Owned(super::rmcp_protocol_versions(&self.standards))
+            Cow::Owned(super::rmcp_protocol_versions(&self.tools.standards))
         }
 
         fn initialize(
@@ -1327,7 +1029,7 @@ mod server {
         ) -> impl std::future::Future<Output = Result<InitializeResult, McpError>> + Send + '_
         {
             context.peer.set_peer_info(request.clone());
-            let supported = super::rmcp_protocol_versions(&self.standards);
+            let supported = super::rmcp_protocol_versions(&self.tools.standards);
             let selected = supported
                 .iter()
                 .find(|version| {
@@ -1432,10 +1134,7 @@ mod server {
             context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<CallToolResponse, McpError>> + Send + '_
         {
-            let tools_by_name = Arc::clone(&self.tools_by_name);
-            let catalog = self.catalog.clone();
-            let server_name = self.server_name.clone();
-            let discovery = self.discovery;
+            let tools = self.tools.clone();
             let progress_token = context.meta.get_progress_token();
             #[cfg(feature = "http")]
             let transport_request =
@@ -1462,37 +1161,11 @@ mod server {
             let cancellation = context.ct;
 
             async move {
-                let mut tool_name = request.name.to_string();
-                let mut arguments = request.arguments;
-                if discovery == McpDiscovery::Progressive {
-                    if let Some(result) =
-                        discovery_result(&tool_name, arguments.clone(), &tools_by_name)?
-                    {
-                        return Ok(result.into());
-                    }
-                    let mut execute = arguments.unwrap_or_default();
-                    tool_name = execute
-                        .remove("name")
-                        .and_then(|value| value.as_str().map(ToString::to_string))
-                        .ok_or_else(|| McpError::invalid_params("Missing tool name", None))?;
-                    arguments = execute
-                        .remove("arguments")
-                        .and_then(|value| value.as_object().cloned());
-                }
-                let tool = tools_by_name.get(&tool_name).ok_or_else(|| {
-                    McpError::invalid_params(format!("Unknown tool: {tool_name}"), None)
-                })?;
-
-                let input_options: BTreeMap<String, Value> =
-                    arguments.unwrap_or_default().into_iter().collect();
-                let outcome = catalog
-                    .call(
-                        &tool_name,
-                        input_options,
-                        ToolCallOptions {
-                            environment: EnvironmentSource::DeclaredHost,
-                            config: ConfigSource::Auto,
-                            globals: None,
+                let result = tools
+                    .call_tool(
+                        request.name.to_string(),
+                        request.arguments,
+                        CallContext {
                             request: transport_request,
                             control: ToolCallControl {
                                 cancellation,
@@ -1502,16 +1175,12 @@ mod server {
                                     count: tokio::sync::Mutex::new(0),
                                 })),
                             },
+                            environment: EnvironmentSource::DeclaredHost,
                         },
                     )
-                    .await;
-                Ok(tool_call_result(
-                    &server_name,
-                    outcome,
-                    tool.output_schema.is_some(),
-                    &tool.result_content,
-                )
-                .into())
+                    .await
+                    .map_err(|message| McpError::invalid_params(message, None))?;
+                Ok(call_tool_result(result).into())
             }
         }
     }
@@ -1529,7 +1198,7 @@ mod server {
     /// 4. Blocks until the client disconnects.
     ///
     /// Each tool call executes through the shared transport-neutral
-    /// [`ToolCatalog`].
+    /// [`crate::tool::ToolCatalog`].
     pub(super) async fn serve(
         source: ServerSource<'_>,
         options: &McpServeOptions,
@@ -1537,15 +1206,7 @@ mod server {
         use rmcp::ServiceExt;
         use rmcp::transport::io::stdio;
 
-        let (catalog, resolved) = catalog_and_tools(&source)?;
-
-        let server = IncurMcpServer::new(
-            source.name.to_string(),
-            source.version.to_string(),
-            catalog,
-            resolved,
-            options,
-        )?;
+        let server = IncurMcpServer::new(&source, options)?;
 
         let transport = stdio();
 
@@ -1578,14 +1239,7 @@ mod server {
     > {
         use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 
-        let (catalog, resolved) = catalog_and_tools(&source)?;
-        let server = IncurMcpServer::new(
-            source.name.to_string(),
-            source.version.to_string(),
-            catalog,
-            resolved,
-            options,
-        )?;
+        let server = IncurMcpServer::new(&source, options)?;
         let mut config = StreamableHttpServerConfig::default();
         config.legacy_session_mode = false;
         Ok(StreamableHttpService::new(
@@ -1597,7 +1251,7 @@ mod server {
 }
 
 /// Builds a stateless MCP-over-HTTP service for a CLI.
-#[cfg(feature = "http")]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 pub(crate) fn http_service(
     cli: &crate::cli::Cli,
 ) -> Result<
@@ -1611,8 +1265,19 @@ pub(crate) fn http_service(
 }
 
 /// Starts a stdio MCP server for a complete CLI.
+///
+/// On wasm32 there is no stdio, so this returns an `MCP_STDIO_UNAVAILABLE`
+/// error instead of serving.
 pub async fn serve_cli(cli: &crate::cli::Cli) -> Result<(), crate::errors::Error> {
-    server::serve(server::ServerSource::from_cli(cli), &cli.mcp_options).await
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        server::serve(server::ServerSource::from_cli(cli), &cli.mcp_options).await
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = cli;
+        Err(stdio_unavailable())
+    }
 }
 
 /// Starts a stdio MCP server that exposes commands as tools.
@@ -1623,6 +1288,9 @@ pub async fn serve_cli(cli: &crate::cli::Cli) -> Result<(), crate::errors::Error
 /// This is the public entry point. It accepts the CLI command tree directly
 /// (rather than the standalone `mcp::CommandEntry` tree) so that it can
 /// resolve `Arc<CommandDef>` references for command execution.
+///
+/// On wasm32 there is no stdio, so this returns an `MCP_STDIO_UNAVAILABLE`
+/// error instead of serving.
 pub async fn serve(
     name: &str,
     version: &str,
@@ -1631,11 +1299,38 @@ pub async fn serve(
     env_fields: &[FieldMeta],
     options: &McpServeOptions,
 ) -> Result<(), crate::errors::Error> {
-    server::serve(
-        server::ServerSource::from_parts(name, version, commands, root_middleware, env_fields),
-        options,
-    )
-    .await
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        server::serve(
+            server::ServerSource::from_parts(name, version, commands, root_middleware, env_fields),
+            options,
+        )
+        .await
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (
+            name,
+            version,
+            commands,
+            root_middleware,
+            env_fields,
+            options,
+        );
+        Err(stdio_unavailable())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn stdio_unavailable() -> crate::errors::Error {
+    crate::errors::Error::Incur(crate::errors::IncurError {
+        message: "MCP over stdio is not available on wasm32".to_string(),
+        code: "MCP_STDIO_UNAVAILABLE".to_string(),
+        hint: Some("Serve tools through the host's HTTP adapter over ToolCatalog".to_string()),
+        retryable: false,
+        exit_code: None,
+        cause: None,
+    })
 }
 
 // ---------------------------------------------------------------------------

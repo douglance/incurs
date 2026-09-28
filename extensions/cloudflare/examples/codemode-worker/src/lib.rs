@@ -60,6 +60,10 @@ struct MathConnector {
 
 #[async_trait::async_trait]
 impl Connector for MathConnector {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
     async fn describe(&self) -> std::result::Result<ConnectorDescription, String> {
         self.inner.describe().await
     }

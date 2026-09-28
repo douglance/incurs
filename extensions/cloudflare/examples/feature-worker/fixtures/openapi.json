@@ -1,0 +1,13 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Pets", "version": "1.0.0" },
+  "paths": {
+    "/pets.json": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List pets",
+        "responses": { "200": { "description": "Pets" } }
+      }
+    }
+  }
+}

@@ -17,6 +17,8 @@ pub mod help;
 #[cfg(feature = "http")]
 pub mod http;
 pub mod mcp;
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+pub mod mcp_client;
 pub mod middleware;
 pub mod openapi;
 pub mod output;

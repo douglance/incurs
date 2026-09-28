@@ -34,6 +34,53 @@ jobs:
       - name: Build examples
         run: cargo build --examples --workspace --all-features
 
+  features:
+    # `--all-features` hides a feature that only compiles alongside another, so
+    # each one is built alone. wasm32 is how Cloudflare Workers run incurs.
+    name: Feature ${{ matrix.feature }} (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [native, wasm32-unknown-unknown]
+        feature: [none, default, cli, toon, tokens, yaml, http, openapi, agent-plugins, agent-plugins-mcp, all]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target != 'native' && matrix.target || '' }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Check
+        run: |
+          target=()
+          [ "${{ matrix.target }}" = native ] || target=(--target "${{ matrix.target }}")
+          case "${{ matrix.feature }}" in
+            none) features=(--no-default-features) ;;
+            default) features=() ;;
+            all) features=(--all-features) ;;
+            *) features=(--no-default-features --features "${{ matrix.feature }}") ;;
+          esac
+          cargo check -p incurs "${target[@]}" "${features[@]}"
+
+  workers-smoke:
+    # Compiling for wasm32 does not prove a feature runs: std clocks, process
+    # environment, and exit all compile there and fail at runtime.
+    name: Workers smoke (every feature under wrangler dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: extensions/cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo install worker-build --locked
+      - run: extensions/cloudflare/examples/feature-worker/smoke.sh
+
   plugin-installers:
     name: Plugin installers (${{ matrix.os }})
     strategy:

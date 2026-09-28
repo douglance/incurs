@@ -403,8 +403,7 @@ fn extract_skill_name(content: &str) -> Option<String> {
 
 /// Returns a basic ISO 8601 timestamp without pulling in the chrono crate.
 fn chrono_now() -> String {
-    // Use std SystemTime for a basic timestamp
-    use std::time::SystemTime;
+    use web_time::SystemTime;
     match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
         Ok(d) => format!("{}s", d.as_secs()),
         Err(_) => "0s".to_string(),

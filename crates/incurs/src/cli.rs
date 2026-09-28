@@ -1501,7 +1501,7 @@ impl Cli {
             }
         };
 
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
 
         // Resolve effective format
         let format = if builtin.format_explicit {
@@ -2721,7 +2721,7 @@ impl Cli {
             }
         };
 
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
 
         // Resolve effective format
         let format = if builtin.format_explicit {
@@ -4852,7 +4852,7 @@ fn format_config_schema(
 /// Options for streaming output handling.
 struct StreamingOptions<'a> {
     path: &'a str,
-    start: std::time::Instant,
+    start: web_time::Instant,
     format: Format,
     format_explicit: bool,
     human: bool,

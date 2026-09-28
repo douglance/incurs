@@ -1,4 +1,9 @@
 //! Legacy HTTP+SSE transport for Agent Plugins MCP servers.
+//!
+//! This is the native `rmcp` transport. wasm32 builds connect through
+//! [`crate::mcp_client::McpHttpClient::connect_legacy_sse`], which applies
+//! the same endpoint rules.
+#![cfg(not(target_arch = "wasm32"))]
 
 use std::future::Future;
 
@@ -6,6 +11,8 @@ use futures::StreamExt;
 use rmcp::RoleClient;
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use rmcp::transport::Transport;
+
+use crate::mcp_client::{client_safe_headers, resolve_endpoint, same_origin};
 
 /// Failure while connecting to or sending through a legacy MCP SSE server.
 #[derive(Debug, thiserror::Error)]
@@ -16,9 +23,9 @@ pub(crate) enum LegacySseError {
     /// The SSE stream was invalid.
     #[error("legacy MCP SSE stream failed: {0}")]
     Sse(#[from] sse_stream::Error),
-    /// The endpoint event contained an invalid URL.
+    /// The endpoint event contained an invalid or unsafe URL.
     #[error("legacy MCP SSE endpoint is invalid: {0}")]
-    Url(#[from] url::ParseError),
+    Endpoint(#[from] crate::mcp_client::McpClientError),
     /// A JSON-RPC message could not be encoded.
     #[error("legacy MCP SSE message is invalid: {0}")]
     Json(#[from] serde_json::Error),
@@ -152,50 +159,6 @@ impl Transport<RoleClient> for LegacySseTransport {
         self.reader.abort();
         async { Ok(()) }
     }
-}
-
-fn resolve_endpoint(configured: &url::Url, value: &str) -> Result<url::Url, LegacySseError> {
-    let endpoint = configured.join(value)?;
-    if !matches!(endpoint.scheme(), "http" | "https") {
-        return Err(LegacySseError::Protocol(
-            "endpoint event must contain an HTTP or HTTPS URL",
-        ));
-    }
-    if !endpoint.username().is_empty()
-        || endpoint.password().is_some()
-        || endpoint.fragment().is_some()
-    {
-        return Err(LegacySseError::Protocol(
-            "endpoint event URL must not contain user information or a fragment",
-        ));
-    }
-    if endpoint.scheme() == "http" && !is_loopback(&endpoint) {
-        return Err(LegacySseError::Protocol(
-            "non-loopback endpoint event URLs must use HTTPS",
-        ));
-    }
-    Ok(endpoint)
-}
-
-fn is_loopback(url: &url::Url) -> bool {
-    match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(host)) => host.is_loopback(),
-        Some(url::Host::Ipv6(host)) => host.is_loopback(),
-        None => false,
-    }
-}
-
-fn same_origin(configured: &url::Url, endpoint: &url::Url) -> bool {
-    configured.scheme() == endpoint.scheme()
-        && configured.host_str() == endpoint.host_str()
-        && configured.port_or_known_default() == endpoint.port_or_known_default()
-}
-
-fn client_safe_headers(mut headers: http::HeaderMap) -> http::HeaderMap {
-    headers.remove(http::header::ACCEPT);
-    headers.remove(http::header::CONTENT_TYPE);
-    headers
 }
 
 #[cfg(test)]

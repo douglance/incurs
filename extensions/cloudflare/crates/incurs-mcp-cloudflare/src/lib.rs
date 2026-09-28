@@ -566,9 +566,12 @@ mod tests {
     #[tokio::test]
     async fn initialize_echoes_a_supported_legacy_revision() {
         for version in supported_versions() {
-            let response =
-                handle_mcp_request(&catalog(), request(initialize_body(version)), &McpHttpOptions::default())
-                    .await;
+            let response = handle_mcp_request(
+                &catalog(),
+                request(initialize_body(version)),
+                &McpHttpOptions::default(),
+            )
+            .await;
             let body = response.body.expect("body");
             assert_eq!(
                 body["result"]["protocolVersion"], version,
@@ -698,7 +701,10 @@ mod tests {
 
     #[tokio::test]
     async fn an_oversized_body_is_refused() {
-        let options = McpHttpOptions { max_body_bytes: 8, ..McpHttpOptions::default() };
+        let options = McpHttpOptions {
+            max_body_bytes: 8,
+            ..McpHttpOptions::default()
+        };
         let response = handle_mcp_request(
             &catalog(),
             request(json!({"jsonrpc": "2.0", "id": 7, "method": "ping"})),
@@ -726,7 +732,10 @@ mod tests {
             &McpHttpOptions::default(),
         )
         .await;
-        assert_eq!(response.status, 403, "an empty allowlist must reject a browser origin");
+        assert_eq!(
+            response.status, 403,
+            "an empty allowlist must reject a browser origin"
+        );
     }
 
     #[tokio::test]
