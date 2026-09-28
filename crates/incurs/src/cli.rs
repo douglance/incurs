@@ -1990,6 +1990,26 @@ impl Cli {
             return Ok(None);
         }
 
+        // These built-ins read and write agent configuration on the local
+        // machine. A wasm32 host such as a Cloudflare Worker has no such
+        // machine, and some of the calls they make panic there.
+        #[cfg(target_arch = "wasm32")]
+        for name in ["plugin", "skills", "mcp"] {
+            if let Some(index) = self.builtin_command_index(&builtin.rest, name)
+                && builtin.rest.len() > index + 1
+                && !builtin.help
+            {
+                wln!(&format_human_error(
+                    "LOCAL_INSTALL_UNAVAILABLE",
+                    &format!(
+                        "`{name} {}` installs into this machine's agent configuration, which is not available on wasm32",
+                        builtin.rest[index + 1]
+                    ),
+                ));
+                return Ok(Some(1));
+            }
+        }
+
         if let Some(index) = self.builtin_command_index(&builtin.rest, "plugin") {
             let builtin_def = builtins
                 .iter()

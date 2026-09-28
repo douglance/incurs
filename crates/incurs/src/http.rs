@@ -79,6 +79,79 @@ pub struct RouterOptions {
     /// Allowed hosts, origins, and body limit for `/mcp`. Its `environment` is
     /// replaced by [`Self::env`] when that is set.
     pub mcp: crate::mcp::McpHttpConfig,
+    /// Admission check run before every route, `/mcp` included. `None` admits
+    /// every request, so a host reachable from outside must set one.
+    pub guard: Option<RequestGuard>,
+}
+
+/// Decides whether a request may reach any route.
+///
+/// A refused request is answered `401 Unauthorized` with an `UNAUTHORIZED`
+/// error before any command or MCP handler runs.
+#[derive(Clone)]
+pub struct RequestGuard(Arc<dyn Fn(&axum::http::request::Parts) -> bool + Send + Sync>);
+
+impl RequestGuard {
+    /// Admits a request whose `Authorization` header is `Bearer <token>`.
+    ///
+    /// The comparison takes the same time for every token of the same length,
+    /// so response timing does not reveal how much of a guess was right.
+    pub fn bearer(token: impl Into<String>) -> Self {
+        let expected = format!("Bearer {}", token.into()).into_bytes();
+        Self::custom(move |parts| {
+            parts
+                .headers
+                .get(header::AUTHORIZATION)
+                .is_some_and(|value| constant_time_eq(value.as_bytes(), &expected))
+        })
+    }
+
+    /// Admits a request when `check` returns `true`.
+    pub fn custom(
+        check: impl Fn(&axum::http::request::Parts) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(check))
+    }
+
+    fn admits(&self, parts: &axum::http::request::Parts) -> bool {
+        (self.0)(parts)
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+async fn enforce_guard(
+    State(guard): State<RequestGuard>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let (parts, body) = request.into_parts();
+    if !guard.admits(&parts) {
+        let body = serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "UNAUTHORIZED",
+                "message": "This request is not authorized",
+                "retryable": false,
+            },
+        });
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            axum::Json(body),
+        )
+            .into_response();
+    }
+    next.run(axum::extract::Request::from_parts(parts, body))
+        .await
 }
 
 /// Builds the command routes and `/mcp` from host-supplied inputs.
@@ -90,14 +163,22 @@ pub fn build_cli_router_with(
     cli: &Cli,
     options: RouterOptions,
 ) -> Result<Router, crate::errors::Error> {
-    let RouterOptions { env, mut mcp } = options;
+    let RouterOptions {
+        env,
+        mut mcp,
+        guard,
+    } = options;
     let mut state = build_app_state(cli);
     if let Some(env) = env {
         mcp.environment = crate::tool::EnvironmentSource::Values(env.clone());
         state = state.with_env(env);
     }
     let server = crate::mcp::McpHttpServer::from_cli(cli, mcp)?;
-    Ok(build_router(state).merge(mcp_router(server)))
+    let router = build_router(state).merge(mcp_router(server));
+    Ok(match guard {
+        Some(guard) => router.layer(axum::middleware::from_fn_with_state(guard, enforce_guard)),
+        None => router,
+    })
 }
 
 /// Serves a runtime-free MCP server at `/mcp`.
@@ -1200,6 +1281,80 @@ mod tests {
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["fieldErrors"][0]["path"], "limit");
         assert_eq!(json["error"]["fieldErrors"][0]["expected"], "number");
+    }
+
+    fn guarded_router(guard: Option<RequestGuard>) -> Router {
+        let cli =
+            Cli::create("guarded").command("echo", CommandDef::build("echo", EchoHandler).done());
+        build_cli_router_with(
+            &cli,
+            RouterOptions {
+                guard,
+                ..RouterOptions::default()
+            },
+        )
+        .unwrap()
+    }
+
+    fn guarded_requests(authorization: Option<&str>) -> [axum::http::Request<Body>; 2] {
+        let command = axum::http::Request::builder()
+            .method("POST")
+            .uri("/echo")
+            .header("content-type", "application/json");
+        let mcp = axum::http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("host", "localhost")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+        let (command, mcp) = match authorization {
+            Some(value) => (
+                command.header("authorization", value),
+                mcp.header("authorization", value),
+            ),
+            None => (command, mcp),
+        };
+        [
+            command.body(Body::from("{}")).unwrap(),
+            mcp.body(Body::from(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+            ))
+            .unwrap(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn a_bearer_guard_covers_command_routes_and_mcp() {
+        let guard = || Some(RequestGuard::bearer("s3cret"));
+        for (authorization, expected) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (Some("Bearer wrong"), StatusCode::UNAUTHORIZED),
+            // Same length as the real token, so only the content check refuses it.
+            (Some("Bearer s3creT"), StatusCode::UNAUTHORIZED),
+            (Some("Bearer s3cret-and-more"), StatusCode::UNAUTHORIZED),
+            (Some("s3cret"), StatusCode::UNAUTHORIZED),
+            (Some("Bearer s3cret"), StatusCode::OK),
+        ] {
+            for request in guarded_requests(authorization) {
+                let path = request.uri().path().to_string();
+                let response = guarded_router(guard()).oneshot(request).await.unwrap();
+                assert_eq!(response.status(), expected, "{path} with {authorization:?}");
+                if expected == StatusCode::UNAUTHORIZED {
+                    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                    let json: Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(json["error"]["code"], "UNAUTHORIZED");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn without_a_guard_every_request_is_admitted() {
+        for request in guarded_requests(None) {
+            let path = request.uri().path().to_string();
+            let response = guarded_router(None).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
     }
 
     #[tokio::test]

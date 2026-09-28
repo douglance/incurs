@@ -60,6 +60,12 @@ check "openapi spec download and operation call" "$(run pets listPets --format j
 check "stdio MCP reports it is unavailable" "$(run --mcp)" \
   '(.exitCode != 0 or .error != null) and ((.output + (.error // "")) | contains("MCP_STDIO_UNAVAILABLE") or contains("not available on wasm32"))'
 
+for install in "skills add" "skills list" "mcp add" "plugin build"; do
+  # shellcheck disable=SC2086
+  check "$install refuses on Workers" "$(run $install)" \
+    '.exitCode != 0 and (.output | contains("LOCAL_INSTALL_UNAVAILABLE"))'
+done
+
 check "http command route" "$(curl -s -m 30 -X POST "$BASE/api/greet" -H 'content-type: application/json' -d '{}')" \
   '.ok == true and .data.style == "warm"'
 check "http openapi document" "$(curl -s -m 30 "$BASE/api/openapi.json")" '.paths | tostring | contains("greet")'
