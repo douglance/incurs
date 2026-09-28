@@ -7,6 +7,11 @@ use incurs::tool::{ToolCallOptions, ToolCallOutcome, ToolCatalog, ToolDefinition
 use incurs_mcp_protocol::{McpLifecycleFamily, McpVersion, known_standard, known_standards};
 use serde_json::{Map, Value, json};
 
+#[cfg(target_arch = "wasm32")]
+mod workers_http;
+#[cfg(target_arch = "wasm32")]
+pub use workers_http::WorkersHttpClient;
+
 /// Newest MCP revision this adapter serves.
 ///
 /// The adapter implements the legacy lifecycle only: `initialize`, `ping`,

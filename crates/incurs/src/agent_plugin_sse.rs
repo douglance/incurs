@@ -1,6 +1,7 @@
 //! Legacy HTTP+SSE transport for Agent Plugins MCP servers.
 //!
-//! This is the native `rmcp` transport. wasm32 builds connect through
+//! This is the native `rmcp` transport. Its HTTP exchanges go through an
+//! [`crate::outbound::HttpClient`]. wasm32 builds connect through
 //! [`crate::mcp_client::McpHttpClient::connect_legacy_sse`], which applies
 //! the same endpoint rules.
 #![cfg(not(target_arch = "wasm32"))]
@@ -12,18 +13,22 @@ use rmcp::RoleClient;
 use rmcp::service::{RxJsonRpcMessage, TxJsonRpcMessage};
 use rmcp::transport::Transport;
 
-use crate::mcp_client::{client_safe_headers, resolve_endpoint, same_origin};
+use crate::mcp_client::{
+    SseParser, client_safe_headers, header_pairs, resolve_endpoint, same_origin,
+};
+use crate::outbound::{HttpBody, HttpClientError, HttpRequest, SharedHttpClient};
 
 /// Failure while connecting to or sending through a legacy MCP SSE server.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum LegacySseError {
     /// The HTTP request failed.
     #[error("legacy MCP SSE request failed: {0}")]
-    Http(#[from] reqwest::Error),
-    /// The SSE stream was invalid.
-    #[error("legacy MCP SSE stream failed: {0}")]
-    Sse(#[from] sse_stream::Error),
-    /// The endpoint event contained an invalid or unsafe URL.
+    Http(#[from] HttpClientError),
+    /// The server answered with a non-success status.
+    #[error("legacy MCP SSE request failed: HTTP status {0}")]
+    Status(u16),
+    /// The endpoint event contained an invalid or unsafe URL, or the event
+    /// stream was invalid.
     #[error("legacy MCP SSE endpoint is invalid: {0}")]
     Endpoint(#[from] crate::mcp_client::McpClientError),
     /// A JSON-RPC message could not be encoded.
@@ -36,35 +41,59 @@ pub(crate) enum LegacySseError {
 
 /// rmcp transport for the MCP 2024-11-05 HTTP+SSE protocol.
 pub(crate) struct LegacySseTransport {
-    client: reqwest::Client,
+    client: SharedHttpClient,
     endpoint: url::Url,
     headers: http::HeaderMap,
     incoming: tokio::sync::mpsc::Receiver<RxJsonRpcMessage<RoleClient>>,
     reader: tokio::task::JoinHandle<()>,
 }
 
+/// Reads the next complete event from an SSE body.
+async fn next_event(
+    body: &mut HttpBody,
+    parser: &mut SseParser,
+) -> Result<Option<crate::mcp_client::SseEvent>, LegacySseError> {
+    loop {
+        if let Some(event) = parser.next_event() {
+            return Ok(Some(event));
+        }
+        match body.next().await {
+            // More bytes for the parser.
+            Some(Ok(bytes)) => parser.push(&bytes)?,
+            // The body failed mid-stream.
+            Some(Err(error)) => return Err(error.into()),
+            // The body ended.
+            None => return Ok(None),
+        }
+    }
+}
+
 impl LegacySseTransport {
-    /// Connects to the configured SSE endpoint and waits for its POST endpoint event.
+    /// Connects to the configured SSE endpoint through `client` and waits for
+    /// its POST endpoint event.
     pub(crate) async fn connect(
         configured: url::Url,
         headers: http::HeaderMap,
+        client: SharedHttpClient,
     ) -> Result<Self, LegacySseError> {
         let headers = client_safe_headers(headers);
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()?;
+        let mut request_headers = headers.clone();
+        request_headers.append(
+            http::header::ACCEPT,
+            http::HeaderValue::from_static("text/event-stream"),
+        );
         let response = client
-            .get(configured.clone())
-            .headers(headers.clone())
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .send()
-            .await?
-            .error_for_status()?;
-        let content_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default();
+            .send(HttpRequest {
+                method: "GET".to_string(),
+                url: configured.to_string(),
+                headers: header_pairs(&request_headers),
+                body: None,
+            })
+            .await?;
+        if !response.is_success() {
+            return Err(LegacySseError::Status(response.status));
+        }
+        let content_type = response.header("content-type").unwrap_or_default();
         if !content_type
             .split(';')
             .next()
@@ -75,20 +104,19 @@ impl LegacySseTransport {
             ));
         }
 
-        let mut events = Box::pin(sse_stream::SseStream::from_bytes_stream(
-            response.bytes_stream(),
-        ));
+        let mut body = response.body;
+        let mut parser = SseParser::default();
         let endpoint = loop {
-            let event = events.next().await.ok_or(LegacySseError::Protocol(
-                "SSE endpoint closed before its endpoint event",
-            ))??;
+            let event =
+                next_event(&mut body, &mut parser)
+                    .await?
+                    .ok_or(LegacySseError::Protocol(
+                        "SSE endpoint closed before its endpoint event",
+                    ))?;
             if event.event.as_deref() != Some("endpoint") {
                 continue;
             }
-            let value = event
-                .data
-                .ok_or(LegacySseError::Protocol("SSE endpoint event has no data"))?;
-            break resolve_endpoint(&configured, &value)?;
+            break resolve_endpoint(&configured, event.data.trim())?;
         };
         let headers = if same_origin(&configured, &endpoint) {
             headers
@@ -97,17 +125,11 @@ impl LegacySseTransport {
         };
         let (sender, incoming) = tokio::sync::mpsc::channel(32);
         let reader = tokio::spawn(async move {
-            while let Some(event) = events.next().await {
-                let Ok(event) = event else {
-                    break;
-                };
+            while let Ok(Some(event)) = next_event(&mut body, &mut parser).await {
                 if event.event.as_deref().is_some_and(|name| name != "message") {
                     continue;
                 }
-                let Some(data) = event.data else {
-                    continue;
-                };
-                let Ok(message) = serde_json::from_str(&data) else {
+                let Ok(message) = serde_json::from_str(&event.data) else {
                     break;
                 };
                 if sender.send(message).await.is_err() {
@@ -138,15 +160,26 @@ impl Transport<RoleClient> for LegacySseTransport {
         let headers = self.headers.clone();
         async move {
             let body = serde_json::to_vec(&item)?;
-            client
-                .post(endpoint)
-                .headers(headers)
-                .header(reqwest::header::ACCEPT, "application/json")
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body)
-                .send()
-                .await?
-                .error_for_status()?;
+            let mut headers = headers;
+            headers.append(
+                http::header::ACCEPT,
+                http::HeaderValue::from_static("application/json"),
+            );
+            headers.append(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static("application/json"),
+            );
+            let response = client
+                .send(HttpRequest {
+                    method: "POST".to_string(),
+                    url: endpoint.to_string(),
+                    headers: header_pairs(&headers),
+                    body: Some(body),
+                })
+                .await?;
+            if !response.is_success() {
+                return Err(LegacySseError::Status(response.status));
+            }
             Ok(())
         }
     }

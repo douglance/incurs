@@ -16,12 +16,33 @@ use crate::cli::Cli;
 use crate::mcp::McpRemoteOptions;
 
 /// Runtime policy used while connecting a loaded Agent Plugin.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentPluginRuntimeOptions {
     /// Base subprocess environment before plugin values and reserved variables are applied.
     pub base_environment: BTreeMap<OsString, OsString>,
     /// Exact MCP protocol standards accepted by the client.
     pub standards: incurs_mcp_protocol::McpStandardSet,
+    /// The client every request to an HTTP MCP server goes through.
+    ///
+    /// When set, Streamable HTTP and legacy SSE servers connect with the
+    /// portable [`crate::mcp_client::McpHttpClient`] through it on every
+    /// target. When unset, native builds connect with `rmcp`, and wasm32
+    /// builds, which have no default client, report each HTTP server as failed
+    /// with `HTTP_CLIENT_REQUIRED`.
+    pub http_client: Option<crate::outbound::SharedHttpClient>,
+}
+
+impl std::fmt::Debug for AgentPluginRuntimeOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentPluginRuntimeOptions")
+            .field("base_environment", &self.base_environment)
+            .field("standards", &self.standards)
+            .field(
+                "http_client",
+                &self.http_client.as_ref().map(|_| "dyn HttpClient"),
+            )
+            .finish()
+    }
 }
 
 impl Default for AgentPluginRuntimeOptions {
@@ -29,6 +50,7 @@ impl Default for AgentPluginRuntimeOptions {
         Self {
             base_environment: std::env::vars_os().collect(),
             standards: incurs_mcp_protocol::McpStandardSet::default(),
+            http_client: None,
         }
     }
 }
@@ -71,10 +93,11 @@ pub enum AgentPluginRuntimeError {
 
 /// Connects every valid MCP binding independently and returns one namespaced tool catalog.
 ///
-/// Native builds connect with `rmcp` and can start stdio servers. wasm32
-/// builds connect HTTP servers with the portable
-/// [`crate::mcp_client::McpHttpClient`] and report each stdio server as failed
-/// with `MCP_STDIO_UNAVAILABLE`. The plugin data directory is created only
+/// Native builds can start stdio servers and connect HTTP servers with `rmcp`,
+/// or with the portable [`crate::mcp_client::McpHttpClient`] when
+/// [`AgentPluginRuntimeOptions::http_client`] is set. wasm32 builds connect
+/// HTTP servers with the portable client through that option and report each
+/// stdio server as failed with `MCP_STDIO_UNAVAILABLE`. The plugin data directory is created only
 /// when a stdio server starts, so an in-memory plugin needs no filesystem.
 pub async fn connect_agent_plugin(
     plugin: &LoadedAgentPlugin,
@@ -82,6 +105,7 @@ pub async fn connect_agent_plugin(
 ) -> Result<ConnectedAgentPlugin, AgentPluginRuntimeError> {
     let remote = McpRemoteOptions {
         standards: options.standards.clone(),
+        http_client: options.http_client.clone(),
         ..McpRemoteOptions::default()
     };
     let mut cli = Cli::create(plugin.manifest.name.clone());
@@ -139,6 +163,12 @@ async fn connect_server(
     remote: &McpRemoteOptions,
 ) -> Result<Commands, crate::errors::Error> {
     match server {
+        // A host-supplied client carries every HTTP request.
+        AgentPluginMcpServer::StreamableHttp(_) | AgentPluginMcpServer::Sse(_)
+            if remote.http_client.is_some() =>
+        {
+            connect_portable(server, remote).await
+        }
         // A local server is spawned directly with exact argv and no shell.
         AgentPluginMcpServer::Stdio(server) => {
             let launch = prepare_stdio(
@@ -176,9 +206,15 @@ async fn connect_server(
         AgentPluginMcpServer::Sse(server) => {
             let url = url::Url::parse(&server.url).map_err(runtime_error)?;
             let headers = configured_headers(&server.headers).map_err(runtime_error)?;
-            let transport = crate::agent_plugin_sse::LegacySseTransport::connect(url, headers)
-                .await
-                .map_err(runtime_error)?;
+            let client = crate::outbound::resolve(
+                None,
+                HTTP_CLIENT_OPTION,
+                crate::outbound::Redirects::Refuse,
+            )?;
+            let transport =
+                crate::agent_plugin_sse::LegacySseTransport::connect(url, headers, client)
+                    .await
+                    .map_err(runtime_error)?;
             crate::mcp::remote_commands_from_transport(transport, remote).await
         }
     }
@@ -194,23 +230,36 @@ async fn connect_server(
     connect_portable(server, remote).await
 }
 
-/// Connects one server with the portable client used on wasm32.
+/// Where a host supplies the client for Agent Plugin HTTP servers.
+const HTTP_CLIENT_OPTION: &str = "AgentPluginRuntimeOptions::http_client";
+
+/// Connects one server with the portable client, through
+/// `remote.http_client` or this target's default.
 ///
 /// A wasm32 host has no processes, so a stdio server fails with a coded
-/// `MCP_STDIO_UNAVAILABLE` error instead of starting.
-#[cfg(any(target_arch = "wasm32", test))]
+/// `MCP_STDIO_UNAVAILABLE` error instead of starting. A wasm32 host has no
+/// default HTTP client, so an HTTP server without one fails with
+/// `HTTP_CLIENT_REQUIRED`.
 async fn connect_portable(
     server: &AgentPluginMcpServer,
     remote: &McpRemoteOptions,
 ) -> Result<Commands, crate::errors::Error> {
     use crate::mcp_client::McpHttpClient;
 
-    let with_headers = |headers: &BTreeMap<String, String>| McpRemoteOptions {
-        headers: headers
-            .iter()
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect(),
-        ..remote.clone()
+    let with_headers = |headers: &BTreeMap<String, String>| {
+        let http_client = crate::outbound::resolve(
+            remote.http_client.as_ref(),
+            HTTP_CLIENT_OPTION,
+            crate::outbound::Redirects::Refuse,
+        )?;
+        Ok::<_, crate::errors::Error>(McpRemoteOptions {
+            headers: headers
+                .iter()
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect(),
+            http_client: Some(http_client),
+            ..remote.clone()
+        })
     };
     let client = match server {
         // A local server needs a process, which a wasm32 host cannot start.
@@ -229,11 +278,11 @@ async fn connect_portable(
         }
         // A current remote server uses Streamable HTTP with configured visible headers.
         AgentPluginMcpServer::StreamableHttp(server) => {
-            McpHttpClient::connect(&server.url, &with_headers(&server.headers)).await?
+            McpHttpClient::connect(&server.url, &with_headers(&server.headers)?).await?
         }
         // A legacy remote server uses the 2024-11-05 HTTP+SSE handshake.
         AgentPluginMcpServer::Sse(server) => {
-            McpHttpClient::connect_legacy_sse(&server.url, &with_headers(&server.headers)).await?
+            McpHttpClient::connect_legacy_sse(&server.url, &with_headers(&server.headers)?).await?
         }
     };
     crate::mcp::remote_commands_from_client(client).await

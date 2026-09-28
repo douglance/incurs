@@ -79,15 +79,48 @@ pub struct DocumentOptions {
 }
 
 /// OpenAPI document source accepted by hosted command generation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum OpenApiSource {
     /// An already parsed OpenAPI document.
     Document(Value),
     /// An HTTP(S) URL or local JSON/YAML document string.
+    ///
+    /// A URL is downloaded with the native default HTTP client. wasm32
+    /// builds have none, so a URL fails there with `HTTP_CLIENT_REQUIRED`;
+    /// use [`OpenApiSource::Url`].
     Text(String),
+    /// An HTTP(S) URL downloaded through a host-supplied client.
+    Url {
+        /// Document URL.
+        url: String,
+        /// The client the download goes through.
+        client: crate::outbound::SharedHttpClient,
+    },
+}
+
+impl std::fmt::Debug for OpenApiSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // A parsed document.
+            Self::Document(document) => f.debug_tuple("Document").field(document).finish(),
+            // A URL or document string.
+            Self::Text(text) => f.debug_tuple("Text").field(text).finish(),
+            // A URL with its client, which has no description of its own.
+            Self::Url { url, .. } => f
+                .debug_struct("Url")
+                .field("url", url)
+                .field("client", &"dyn HttpClient")
+                .finish(),
+        }
+    }
 }
 
 /// Loads an OpenAPI document from a parsed value, URL, JSON, or YAML string.
+///
+/// A URL in [`OpenApiSource::Text`] is downloaded with the native default
+/// client, which follows redirects; on wasm32 it fails with the coded
+/// `HTTP_CLIENT_REQUIRED` error. [`OpenApiSource::Url`] downloads through the
+/// supplied client on every target.
 #[cfg(feature = "openapi")]
 pub async fn load_source(source: OpenApiSource) -> Result<Value, Box<dyn std::error::Error>> {
     match source {
@@ -95,19 +128,49 @@ pub async fn load_source(source: OpenApiSource) -> Result<Value, Box<dyn std::er
         OpenApiSource::Text(source)
             if source.starts_with("http://") || source.starts_with("https://") =>
         {
-            let text = reqwest::get(source)
-                .await?
-                .error_for_status()?
-                .text()
-                .await?;
-            serde_json::from_str(&text)
-                .or_else(|_| serde_yaml_ng::from_str(&text))
-                .map_err(Into::into)
+            download_source(&source, None).await
         }
+        OpenApiSource::Url { url, client } => download_source(&url, Some(&client)).await,
         OpenApiSource::Text(source) => serde_json::from_str(&source)
             .or_else(|_| serde_yaml_ng::from_str(&source))
             .map_err(Into::into),
     }
+}
+
+/// Downloads and parses an OpenAPI document through `client`, or the target
+/// default when there is none.
+#[cfg(feature = "openapi")]
+async fn download_source(
+    url: &str,
+    client: Option<&crate::outbound::SharedHttpClient>,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let client = crate::outbound::resolve(
+        client,
+        "OpenApiSource::Url",
+        crate::outbound::Redirects::Follow,
+    )
+    .map_err(crate::errors::Error::from)?;
+    let response = client
+        .send(crate::outbound::HttpRequest::new("GET", url))
+        .await
+        .map_err(crate::errors::Error::from)?;
+    if !response.is_success() {
+        let status = response.status;
+        return Err(Box::new(crate::errors::Error::Incur(
+            crate::errors::IncurError {
+                message: format!("HTTP status {status} for url ({url})"),
+                code: "OPENAPI_FETCH_FAILED".to_string(),
+                hint: None,
+                retryable: status >= 500,
+                exit_code: None,
+                cause: None,
+            },
+        )));
+    }
+    let text = response.text().await.map_err(crate::errors::Error::from)?;
+    serde_json::from_str(&text)
+        .or_else(|_| serde_yaml_ng::from_str(&text))
+        .map_err(Into::into)
 }
 
 /// Generates an OpenAPI 3.2 document from a CLI command tree.

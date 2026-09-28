@@ -20,8 +20,10 @@ use incurs::command::{CommandContext, CommandDef, CommandHandler};
 use incurs::http::{RouterOptions, build_cli_router_with};
 use incurs::mcp::{McpHttpConfig, McpRemoteOptions};
 use incurs::openapi::{FetchFn, GenerateOptions, OpenApiSource};
+use incurs::outbound::SharedHttpClient;
 use incurs::output::CommandResult;
 use incurs::schema::{FieldMeta, FieldType};
+use incurs_mcp_cloudflare::WorkersHttpClient;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tower_service::Service;
@@ -85,6 +87,12 @@ fn workers_fetch() -> FetchFn {
     })
 }
 
+/// The client incurs sends its own outbound HTTP through: remote MCP, plugin
+/// MCP servers, and the OpenAPI spec download.
+fn outbound() -> SharedHttpClient {
+    Arc::new(WorkersHttpClient::new())
+}
+
 /// The commands every route serves: a local command and an OpenAPI group.
 async fn build_cli(vars: &HashMap<String, String>) -> Result<Cli, String> {
     let mut greet = CommandDef::build("greet", Greet)
@@ -103,11 +111,14 @@ async fn build_cli(vars: &HashMap<String, String>) -> Result<Cli, String> {
         base_path: Some(base.clone()),
         ..GenerateOptions::default()
     };
-    // Downloading the spec by URL goes through the portable HTTP client;
-    // the generated operations go through `workers_fetch`.
+    // Downloading the spec by URL goes through `WorkersHttpClient`; the
+    // generated operations go through `workers_fetch`.
     SendFuture::new(cli.openapi_source_group(
         "pets",
-        OpenApiSource::Text(format!("{base}/openapi.json")),
+        OpenApiSource::Url {
+            url: format!("{base}/openapi.json"),
+            client: outbound(),
+        },
         workers_fetch(),
         options,
         Some("Pet store operations".to_string()),
@@ -138,7 +149,15 @@ async fn run(
     };
     if let Some(url) = self_mcp_url(&vars) {
         cli = match cli
-            .remote_mcp_with("self", url, None, &McpRemoteOptions::default())
+            .remote_mcp_with(
+                "self",
+                url,
+                None,
+                &McpRemoteOptions {
+                    http_client: Some(outbound()),
+                    ..McpRemoteOptions::default()
+                },
+            )
             .await
         {
             Ok(cli) => cli,
@@ -190,7 +209,11 @@ async fn plugin(Extension(vars): Extension<Arc<HashMap<String, String>>>) -> Jso
             json!({ "diagnostics": report.diagnostics.iter().map(|d| d.code).collect::<Vec<_>>() }),
         );
     };
-    let servers = match connect_agent_plugin(loaded, &AgentPluginRuntimeOptions::default()).await {
+    let options = AgentPluginRuntimeOptions {
+        http_client: Some(outbound()),
+        ..AgentPluginRuntimeOptions::default()
+    };
+    let servers = match connect_agent_plugin(loaded, &options).await {
         Ok(connected) => connected
             .servers
             .iter()

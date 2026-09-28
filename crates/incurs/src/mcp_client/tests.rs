@@ -366,8 +366,83 @@ mod live {
         }
     }
 
+    /// A contract implementation that is not reqwest: it hands each request,
+    /// in process, to the router the live server is currently serving.
+    struct RouterClient {
+        router: Arc<RwLock<axum::Router>>,
+        requests: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::outbound::HttpClient for RouterClient {
+        async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
+            self.requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let url = url::Url::parse(&request.url).map_err(HttpClientError::transport)?;
+            let mut builder = axum::http::Request::builder()
+                .method(request.method.as_str())
+                .uri(&url[url::Position::BeforePath..])
+                .header(
+                    "host",
+                    format!(
+                        "{}:{}",
+                        url.host_str().unwrap_or_default(),
+                        url.port_or_known_default().unwrap_or_default()
+                    ),
+                );
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            let request = builder
+                .body(axum::body::Body::from(request.body.unwrap_or_default()))
+                .map_err(HttpClientError::transport)?;
+            let router = self.router.read().expect("router lock").clone();
+            let response = tower::ServiceExt::oneshot(router, request)
+                .await
+                .unwrap_or_else(|never| match never {});
+            let status = response.status().as_u16();
+            let headers = response
+                .headers()
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        name.as_str().to_string(),
+                        value.to_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect();
+            let body = response.into_body().into_data_stream().map(|chunk| {
+                chunk
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(HttpClientError::transport)
+            });
+            Ok(HttpResponse {
+                status,
+                headers,
+                body: Box::pin(body),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn portable_client_matches_rmcp_for_every_standard_and_discovery_mode() {
+        let forwarded = parity_cases(false).await;
+        assert_eq!(forwarded, 0);
+    }
+
+    /// The same 12 parity cases, with the portable client sending every request
+    /// through [`RouterClient`] instead of reqwest. The native side still
+    /// connects over TCP, so both clients reach the same live router.
+    #[tokio::test]
+    async fn portable_client_through_a_host_contract_matches_rmcp() {
+        let forwarded = parity_cases(true).await;
+        assert!(forwarded > 0, "the host client was never called");
+    }
+
+    /// Runs every parity case and returns how many requests went through a
+    /// [`RouterClient`] when `through_contract` is set.
+    async fn parity_cases(through_contract: bool) -> usize {
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let calls = [
             (
                 "profile",
@@ -395,7 +470,18 @@ mod live {
                 let native = within(crate::mcp::remote_commands_with(url.clone(), &options))
                     .await
                     .unwrap_or_else(|error| panic!("{label}: rmcp projection failed: {error}"));
-                let client = within(McpHttpClient::connect(&url, &options))
+                let portable_options = if through_contract {
+                    McpRemoteOptions {
+                        http_client: Some(Arc::new(RouterClient {
+                            router: Arc::clone(&current),
+                            requests: Arc::clone(&requests),
+                        })),
+                        ..options.clone()
+                    }
+                } else {
+                    options.clone()
+                };
+                let client = within(McpHttpClient::connect(&url, &portable_options))
                     .await
                     .unwrap_or_else(|error| panic!("{label}: portable connect failed: {error}"));
                 let expected_standard = if standard == "all" {
@@ -440,6 +526,25 @@ mod live {
             }
         }
         assert_eq!(cases, 12);
+        requests.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_missing_host_client_keeps_its_code_through_the_mcp_client_error() {
+        let error =
+            McpClientError::Transport(HttpClientError::required("McpRemoteOptions::http_client"));
+        assert_eq!(error.code(), "HTTP_CLIENT_REQUIRED");
+        assert!(!error.retryable());
+        let crate::errors::Error::Incur(error) = crate::errors::Error::from(error) else {
+            panic!("expected a coded error");
+        };
+        assert_eq!(error.code, "HTTP_CLIENT_REQUIRED");
+        assert!(
+            error
+                .hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("McpRemoteOptions::http_client"))
+        );
     }
 
     #[derive(Clone, Default)]

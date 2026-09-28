@@ -12,6 +12,13 @@ incurs = { path = "../../../../crates/incurs", version = "0.10.0", default-featu
 incurs-mcp-protocol = { path = "../../../../crates/incurs-mcp-protocol", version = "0.2.0" }
 serde_json = "1"
 
+# `WorkersHttpClient` sends incurs's outbound HTTP through the Workers `fetch`
+# API, which exists only on wasm32.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+async-trait = "0.1"
+futures = "0.3"
+worker = "0.8.5"
+
 [dev-dependencies]
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

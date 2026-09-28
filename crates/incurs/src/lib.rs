@@ -21,6 +21,7 @@ pub mod mcp;
 pub mod mcp_client;
 pub mod middleware;
 pub mod openapi;
+pub mod outbound;
 pub mod output;
 pub mod pager;
 pub mod parser;

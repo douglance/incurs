@@ -1,9 +1,12 @@
 //! Portable MCP client over HTTP.
 //!
-//! [`McpHttpClient`] speaks MCP to a remote server with only `reqwest` and
-//! `futures`. It spawns no task and reads no clock, thread, or async runtime,
-//! so it runs unchanged on `wasm32-unknown-unknown` hosts such as a Cloudflare
-//! Worker, where `reqwest` sends through the host's `fetch`.
+//! [`McpHttpClient`] speaks MCP to a remote server through one
+//! [`crate::outbound::HttpClient`] and `futures`. It spawns no task and reads
+//! no clock, thread, or async runtime, so it runs unchanged on
+//! `wasm32-unknown-unknown` hosts such as a Cloudflare Worker, where the host
+//! supplies the client in [`McpRemoteOptions::http_client`]. Native builds
+//! default to [`crate::outbound::ReqwestHttpClient`], which follows no
+//! redirect.
 //!
 //! Two transports are supported:
 //!
@@ -28,14 +31,18 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use futures::StreamExt;
+use http::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use incurs_mcp_protocol::{
     McpClientMetadata, McpLifecycleFamily, McpNegotiationDecision, McpNegotiationError,
     McpNegotiationEvidence, McpStandardSet, McpVersion, McpWireCodecKind,
 };
-use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use serde_json::{Map, Value};
 
 use crate::mcp::McpRemoteOptions;
+use crate::outbound::{
+    HttpBody, HttpClientError, HttpRequest, HttpResponse, Redirects, SharedHttpClient,
+};
 
 const HEADER_SESSION_ID: &str = "mcp-session-id";
 const HEADER_PROTOCOL_VERSION: &str = "mcp-protocol-version";
@@ -64,8 +71,9 @@ pub enum McpClientError {
     InvalidHeader(String),
     /// The server URL is not an absolute HTTP or HTTPS URL.
     InvalidUrl(String),
-    /// The HTTP request failed before a response arrived.
-    Transport(reqwest::Error),
+    /// The HTTP exchange failed before a response arrived, or no HTTP client
+    /// is available on this target.
+    Transport(HttpClientError),
     /// The server rejected the credentials with HTTP 401 or 403.
     Unauthorized {
         /// HTTP status code.
@@ -106,7 +114,9 @@ impl McpClientError {
             // The configured URL cannot be used.
             Self::InvalidUrl(_) => "MCP_INVALID_URL",
             // The request never produced a response.
-            Self::Transport(_) => "MCP_TRANSPORT_ERROR",
+            Self::Transport(HttpClientError::Transport { .. }) => "MCP_TRANSPORT_ERROR",
+            // No client, or a request the client cannot express, keeps its code.
+            Self::Transport(error) => error.code(),
             // Credentials were rejected.
             Self::Unauthorized { .. } => "MCP_UNAUTHORIZED",
             // The session is gone.
@@ -125,8 +135,10 @@ impl McpClientError {
     /// Whether repeating the operation may succeed.
     pub fn retryable(&self) -> bool {
         match self {
-            // Network failures and lost sessions are transient.
-            Self::Transport(_) | Self::SessionExpired => true,
+            // Network failures are transient; a missing client is not.
+            Self::Transport(error) => error.retryable(),
+            // Lost sessions are transient.
+            Self::SessionExpired => true,
             // Server-side failures may be transient; client errors are not.
             Self::Http { status, .. } => *status >= 500,
             // Everything else needs a configuration or server change.
@@ -145,6 +157,8 @@ impl McpClientError {
                 "Enable an MCP standard the server supports in McpRemoteOptions::standards"
                     .to_string(),
             ),
+            // Point at the option that takes a client.
+            Self::Transport(error) => error.hint(),
             // Other failures carry their detail in the message.
             _ => None,
         }
@@ -213,100 +227,49 @@ impl From<McpClientError> for crate::errors::Error {
 }
 
 // ---------------------------------------------------------------------------
-// Single-threaded wasm32 support
+// HTTP exchange
 // ---------------------------------------------------------------------------
 
-#[cfg(target_arch = "wasm32")]
-mod single_thread {
-    use std::future::Future;
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
-
-    #[cfg(target_feature = "atomics")]
-    compile_error!("the portable MCP client assumes single-threaded wasm32");
-
-    /// Marks a host value `Send` and `Sync` on wasm32.
-    ///
-    /// `fetch` futures and response streams hold JavaScript values, which are
-    /// not `Send`. On wasm32 without the `atomics` target feature there is only
-    /// one thread, so such a value can never be observed from another thread.
-    pub(crate) struct SingleThread<T>(pub(crate) T);
-
-    // SAFETY: wasm32 without `atomics` (enforced above) has exactly one thread.
-    unsafe impl<T> Send for SingleThread<T> {}
-    // SAFETY: as above, no second thread can share the reference.
-    unsafe impl<T> Sync for SingleThread<T> {}
-
-    impl<F: Future> Future for SingleThread<F> {
-        type Output = F::Output;
-
-        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
-            // SAFETY: structural pinning; the inner future is never moved out.
-            unsafe { self.map_unchecked_mut(|this| &mut this.0) }.poll(cx)
-        }
-    }
+/// The client every exchange goes through: the supplied one, or the native
+/// default that follows no redirect, so configured credentials are never
+/// replayed to a redirect target.
+fn http_client(options: &McpRemoteOptions) -> Result<SharedHttpClient, McpClientError> {
+    crate::outbound::resolve(
+        options.http_client.as_ref(),
+        "McpRemoteOptions::http_client",
+        Redirects::Refuse,
+    )
+    .map_err(McpClientError::Transport)
 }
 
-/// Makes a client future usable where incurs requires `Send`, such as a
-/// command handler. Native `reqwest` futures are already `Send`.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn sendable<F: std::future::Future + Send>(future: F) -> F {
-    future
+/// Converts a composed header map into the contract's `(name, value)` pairs.
+pub(crate) fn header_pairs(headers: &HeaderMap) -> Vec<(String, String)> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
 }
 
-/// Makes a client future usable where incurs requires `Send`, such as a
-/// command handler, on the single wasm32 thread.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn sendable<F: std::future::Future>(future: F) -> single_thread::SingleThread<F> {
-    single_thread::SingleThread(future)
-}
-
-type Chunk = Result<Vec<u8>, reqwest::Error>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type ByteStream = std::pin::Pin<Box<dyn futures::Stream<Item = Chunk> + Send>>;
-
-#[cfg(target_arch = "wasm32")]
-type ByteStream =
-    single_thread::SingleThread<std::pin::Pin<Box<dyn futures::Stream<Item = Chunk>>>>;
-
-fn byte_stream(response: reqwest::Response) -> ByteStream {
-    use futures::StreamExt;
-
-    let stream = response
-        .bytes_stream()
-        .map(|chunk| chunk.map(|bytes| bytes.to_vec()));
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        Box::pin(stream)
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        single_thread::SingleThread(Box::pin(stream))
-    }
-}
-
-async fn next_chunk(stream: &mut ByteStream) -> Option<Chunk> {
-    use futures::StreamExt;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        stream.next().await
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        stream.0.next().await
-    }
-}
-
-fn http_client() -> Result<reqwest::Client, McpClientError> {
-    // Redirects are not followed natively, so configured credentials are never
-    // replayed to a redirect target. The wasm32 `fetch` host owns that policy.
-    #[cfg(not(target_arch = "wasm32"))]
-    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
-    #[cfg(target_arch = "wasm32")]
-    let builder = reqwest::Client::builder();
-    builder.build().map_err(McpClientError::Transport)
+/// Sends one request through `http`.
+async fn send(
+    http: &SharedHttpClient,
+    method: &str,
+    url: &url::Url,
+    headers: &HeaderMap,
+    body: Option<Vec<u8>>,
+) -> Result<HttpResponse, McpClientError> {
+    let request = HttpRequest {
+        method: method.to_string(),
+        url: url.to_string(),
+        headers: header_pairs(headers),
+        body,
+    };
+    http.send(request).await.map_err(McpClientError::Transport)
 }
 
 // ---------------------------------------------------------------------------
@@ -397,14 +360,14 @@ impl SseParser {
 
 /// A response body read as server-sent events.
 struct EventReader {
-    stream: ByteStream,
+    stream: HttpBody,
     parser: SseParser,
 }
 
 impl EventReader {
-    fn new(response: reqwest::Response) -> Self {
+    fn new(response: HttpResponse) -> Self {
         Self {
-            stream: byte_stream(response),
+            stream: response.body,
             parser: SseParser::default(),
         }
     }
@@ -414,7 +377,7 @@ impl EventReader {
             if let Some(event) = self.parser.next_event() {
                 return Ok(Some(event));
             }
-            match next_chunk(&mut self.stream).await {
+            match self.stream.next().await {
                 // More bytes for the parser.
                 Some(Ok(bytes)) => self.parser.push(&bytes)?,
                 // The body failed mid-stream.
@@ -511,8 +474,8 @@ struct Reply {
 // ---------------------------------------------------------------------------
 
 struct Streamable {
-    http: reqwest::Client,
-    url: reqwest::Url,
+    http: SharedHttpClient,
+    url: url::Url,
     headers: HeaderMap,
     session_id: Option<HeaderValue>,
 }
@@ -526,35 +489,31 @@ impl Streamable {
     ) -> Result<Reply, McpClientError> {
         let body = serde_json::to_vec(message)
             .map_err(|error| McpClientError::Protocol(error.to_string()))?;
-        let mut request = self
-            .http
-            .post(self.url.clone())
-            .headers(self.headers.clone())
-            .headers(protocol_headers)
-            .header(ACCEPT, format!("{EVENT_STREAM}, {JSON}"))
-            .header(CONTENT_TYPE, JSON);
+        let mut headers = self.headers.clone();
+        headers.extend(protocol_headers);
+        headers.append(
+            ACCEPT,
+            HeaderValue::from_static("text/event-stream, application/json"),
+        );
+        headers.append(CONTENT_TYPE, HeaderValue::from_static(JSON));
         if let Some(session_id) = &self.session_id {
-            request = request.header(HEADER_SESSION_ID, session_id.clone());
+            headers.append(HEADER_SESSION_ID, session_id.clone());
         }
-        let response = request
-            .body(body)
-            .send()
-            .await
-            .map_err(McpClientError::Transport)?;
-        let status = response.status();
+        let response = send(&self.http, "POST", &self.url, &headers, Some(body)).await?;
+        let status = response.status;
         rejected_credentials(&response)?;
-        if matches!(status.as_u16(), 202 | 204) {
+        if matches!(status, 202 | 204) {
             return accepted(id, None);
         }
-        if status.as_u16() == 404 && self.session_id.is_some() {
+        if status == 404 && self.session_id.is_some() {
             return Err(McpClientError::SessionExpired);
         }
-        let content_type = header_text(response.headers(), CONTENT_TYPE.as_str());
-        let session_id = header_text(response.headers(), HEADER_SESSION_ID);
+        let content_type = header_text(&response, CONTENT_TYPE.as_str());
+        let session_id = header_text(&response, HEADER_SESSION_ID);
         let is_json = content_type
             .as_deref()
             .is_some_and(|value| value.starts_with(JSON));
-        if !status.is_success() {
+        if !response.is_success() {
             let body = response.text().await.unwrap_or_default();
             if is_json
                 && let Ok(message) = serde_json::from_str::<Value>(&body)
@@ -562,10 +521,7 @@ impl Streamable {
             {
                 return Err(jsonrpc_error(error));
             }
-            return Err(McpClientError::Http {
-                status: status.as_u16(),
-                body,
-            });
+            return Err(McpClientError::Http { status, body });
         }
         if content_type
             .as_deref()
@@ -625,27 +581,24 @@ fn accepted(id: Option<u64>, session_id: Option<String>) -> Result<Reply, McpCli
     })
 }
 
-fn rejected_credentials(response: &reqwest::Response) -> Result<(), McpClientError> {
-    let status = response.status().as_u16();
+fn rejected_credentials(response: &HttpResponse) -> Result<(), McpClientError> {
+    let status = response.status;
     if matches!(status, 401 | 403) {
         return Err(McpClientError::Unauthorized {
             status,
-            www_authenticate: header_text(response.headers(), "www-authenticate"),
+            www_authenticate: header_text(response, "www-authenticate"),
         });
     }
     Ok(())
 }
 
-fn header_text(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(ToString::to_string)
+fn header_text(response: &HttpResponse, name: &str) -> Option<String> {
+    response.header(name).map(ToString::to_string)
 }
 
 struct LegacySse {
-    http: reqwest::Client,
-    endpoint: reqwest::Url,
+    http: SharedHttpClient,
+    endpoint: url::Url,
     headers: HeaderMap,
     events: futures::lock::Mutex<EventReader>,
 }
@@ -662,22 +615,15 @@ impl LegacySse {
         let mut events = self.events.lock().await;
         let body = serde_json::to_vec(message)
             .map_err(|error| McpClientError::Protocol(error.to_string()))?;
-        let response = self
-            .http
-            .post(self.endpoint.clone())
-            .headers(self.headers.clone())
-            .headers(protocol_headers)
-            .header(ACCEPT, JSON)
-            .header(CONTENT_TYPE, JSON)
-            .body(body)
-            .send()
-            .await
-            .map_err(McpClientError::Transport)?;
+        let mut headers = self.headers.clone();
+        headers.extend(protocol_headers);
+        headers.append(ACCEPT, HeaderValue::from_static(JSON));
+        headers.append(CONTENT_TYPE, HeaderValue::from_static(JSON));
+        let response = send(&self.http, "POST", &self.endpoint, &headers, Some(body)).await?;
         rejected_credentials(&response)?;
-        let status = response.status();
-        if !status.is_success() {
+        if !response.is_success() {
             return Err(McpClientError::Http {
-                status: status.as_u16(),
+                status: response.status,
                 body: response.text().await.unwrap_or_default(),
             });
         }
@@ -704,9 +650,9 @@ enum Wire {
 /// rejects endpoints that could leak data: non-HTTP schemes, user
 /// information, fragments, and plain HTTP off loopback.
 pub(crate) fn resolve_endpoint(
-    configured: &reqwest::Url,
+    configured: &url::Url,
     value: &str,
-) -> Result<reqwest::Url, McpClientError> {
+) -> Result<url::Url, McpClientError> {
     let endpoint = configured
         .join(value)
         .map_err(|error| McpClientError::Protocol(format!("endpoint event is invalid: {error}")))?;
@@ -731,7 +677,7 @@ pub(crate) fn resolve_endpoint(
     Ok(endpoint)
 }
 
-fn is_loopback(url: &reqwest::Url) -> bool {
+fn is_loopback(url: &url::Url) -> bool {
     let Some(host) = url.host_str() else {
         return false;
     };
@@ -744,7 +690,7 @@ fn is_loopback(url: &reqwest::Url) -> bool {
 
 /// Whether an endpoint shares the configured URL's origin, so configured
 /// headers may follow it.
-pub(crate) fn same_origin(configured: &reqwest::Url, endpoint: &reqwest::Url) -> bool {
+pub(crate) fn same_origin(configured: &url::Url, endpoint: &url::Url) -> bool {
     configured.scheme() == endpoint.scheme()
         && configured.host_str() == endpoint.host_str()
         && configured.port_or_known_default() == endpoint.port_or_known_default()
@@ -768,8 +714,8 @@ pub(crate) fn client_safe_headers(mut headers: HeaderMap) -> HeaderMap {
 /// HTTP+SSE transport, then list and call tools. Project the tools as incurs
 /// commands with [`crate::mcp::remote_commands_from_client`].
 ///
-/// The client is `Send` and `Sync`. Its futures are `Send` natively; on wasm32
-/// they hold host values and are not.
+/// The client is `Send` and `Sync`, and its futures are `Send` on every
+/// target: every exchange goes through a `Send` [`crate::outbound::HttpClient`].
 pub struct McpHttpClient {
     wire: Wire,
     standard: McpVersion,
@@ -794,7 +740,9 @@ impl McpHttpClient {
     ///
     /// Sends `options.auth_token` as a bearer token and `options.headers` on
     /// every request. `Accept`, `Content-Type`, and `Mcp-Session-Id` are set
-    /// by the transport and are rejected as configured headers.
+    /// by the transport and are rejected as configured headers. Requests go
+    /// through `options.http_client`; on wasm32, where there is no default,
+    /// a missing client fails with `HTTP_CLIENT_REQUIRED`.
     pub async fn connect(url: &str, options: &McpRemoteOptions) -> Result<Self, McpClientError> {
         let url = parse_url(url)?;
         let mut headers = configured_headers(options)?;
@@ -811,7 +759,7 @@ impl McpHttpClient {
         }
         headers.remove(HEADER_PROTOCOL_VERSION);
         let wire = Wire::Streamable(Streamable {
-            http: http_client()?,
+            http: http_client(options)?,
             url,
             headers,
             session_id: None,
@@ -831,23 +779,18 @@ impl McpHttpClient {
     ) -> Result<Self, McpClientError> {
         let configured = parse_url(url)?;
         let headers = client_safe_headers(configured_headers(options)?);
-        let http = http_client()?;
-        let response = http
-            .get(configured.clone())
-            .headers(headers.clone())
-            .header(ACCEPT, EVENT_STREAM)
-            .send()
-            .await
-            .map_err(McpClientError::Transport)?;
+        let http = http_client(options)?;
+        let mut request_headers = headers.clone();
+        request_headers.append(ACCEPT, HeaderValue::from_static(EVENT_STREAM));
+        let response = send(&http, "GET", &configured, &request_headers, None).await?;
         rejected_credentials(&response)?;
-        let status = response.status();
-        if !status.is_success() {
+        if !response.is_success() {
             return Err(McpClientError::Http {
-                status: status.as_u16(),
+                status: response.status,
                 body: response.text().await.unwrap_or_default(),
             });
         }
-        let content_type = header_text(response.headers(), CONTENT_TYPE.as_str());
+        let content_type = header_text(&response, CONTENT_TYPE.as_str());
         if !content_type
             .as_deref()
             .and_then(|value| value.split(';').next())
@@ -1212,8 +1155,8 @@ impl McpHttpClient {
     }
 }
 
-fn parse_url(url: &str) -> Result<reqwest::Url, McpClientError> {
-    let parsed = reqwest::Url::parse(url).map_err(|error| {
+fn parse_url(url: &str) -> Result<url::Url, McpClientError> {
+    let parsed = url::Url::parse(url).map_err(|error| {
         McpClientError::InvalidUrl(format!("`{url}` is not a valid URL: {error}"))
     })?;
     if !matches!(parsed.scheme(), "http" | "https") {
@@ -1242,7 +1185,7 @@ fn configured_headers(options: &McpRemoteOptions) -> Result<HeaderMap, McpClient
             )
         })?;
         value.set_sensitive(true);
-        headers.insert(reqwest::header::AUTHORIZATION, value);
+        headers.insert(http::header::AUTHORIZATION, value);
     }
     Ok(headers)
 }

@@ -1102,7 +1102,6 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "sha2",
- "sse-stream",
  "thiserror 2.0.18",
  "tiktoken-rs",
  "tokio",

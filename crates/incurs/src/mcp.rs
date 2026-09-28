@@ -101,7 +101,7 @@ pub struct McpServeOptions {
 }
 
 /// Options for projecting a remote MCP server as incurs commands.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct McpRemoteOptions {
     /// Exact MCP standards the client accepts, in preference order.
     pub standards: incurs_mcp_protocol::McpStandardSet,
@@ -116,6 +116,27 @@ pub struct McpRemoteOptions {
     /// taking a dependency on a specific `http` version. Malformed names or
     /// values are reported when the transport is built.
     pub headers: Vec<(String, String)>,
+    /// The client every request goes through.
+    ///
+    /// When set, the portable [`crate::mcp_client::McpHttpClient`] connects
+    /// through it on every target. When unset, native builds connect with
+    /// `rmcp`, and wasm32 builds, which have no default client, fail with
+    /// `HTTP_CLIENT_REQUIRED`.
+    pub http_client: Option<crate::outbound::SharedHttpClient>,
+}
+
+impl std::fmt::Debug for McpRemoteOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpRemoteOptions")
+            .field("standards", &self.standards)
+            .field("auth_token", &self.auth_token)
+            .field("headers", &self.headers)
+            .field(
+                "http_client",
+                &self.http_client.as_ref().map(|_| "dyn HttpClient"),
+            )
+            .finish()
+    }
 }
 
 impl McpRemoteOptions {
@@ -363,7 +384,7 @@ impl RemoteToolClient for rmcp::service::RunningService<rmcp::RoleClient, rmcp::
 #[async_trait::async_trait]
 impl RemoteToolClient for crate::mcp_client::McpHttpClient {
     async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error> {
-        let tools = crate::mcp_client::sendable(self.list_tools()).await?;
+        let tools = self.list_tools().await?;
         tools.iter().map(RemoteTool::from_value).collect()
     }
 
@@ -376,7 +397,7 @@ impl RemoteToolClient for crate::mcp_client::McpHttpClient {
         name: String,
         arguments: serde_json::Map<String, Value>,
     ) -> Result<RemoteCallResult, String> {
-        crate::mcp_client::sendable(self.call_tool(&name, arguments))
+        self.call_tool(&name, arguments)
             .await
             .map(|result| RemoteCallResult::from_value(&result))
             .map_err(|error| error.to_string())
@@ -440,8 +461,9 @@ impl crate::command::CommandHandler for RemoteToolHandler {
 
 /// Connects to a remote MCP-over-HTTP server and projects its tools as commands.
 ///
-/// Native builds connect with `rmcp`; wasm32 builds connect with the portable
-/// [`crate::mcp_client::McpHttpClient`]. Both project identical commands.
+/// Native builds connect with `rmcp`. wasm32 builds have no default HTTP
+/// client, so this fails there with `HTTP_CLIENT_REQUIRED`; use
+/// [`remote_commands_with`] and set [`McpRemoteOptions::http_client`].
 #[cfg(feature = "http")]
 pub async fn remote_commands(
     uri: impl Into<String>,
@@ -452,19 +474,22 @@ pub async fn remote_commands(
 /// Connects to a remote MCP-over-HTTP server using explicit exact standards
 /// and projects its tools as commands.
 ///
-/// Native builds connect with `rmcp`; wasm32 builds connect with the portable
-/// [`crate::mcp_client::McpHttpClient`]. Both project identical commands.
+/// With [`McpRemoteOptions::http_client`] set, the portable
+/// [`crate::mcp_client::McpHttpClient`] connects through that client on every
+/// target. Without it, native builds connect with `rmcp` and wasm32 builds
+/// fail with `HTTP_CLIENT_REQUIRED`. Both clients project identical commands.
 #[cfg(feature = "http")]
 pub async fn remote_commands_with(
     uri: impl Into<String>,
     options: &McpRemoteOptions,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
+    let uri = uri.into();
     #[cfg(not(target_arch = "wasm32"))]
-    {
+    if options.http_client.is_none() {
         use rmcp::transport::StreamableHttpClientTransport;
         use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 
-        let mut config = StreamableHttpClientTransportConfig::with_uri(uri.into());
+        let mut config = StreamableHttpClientTransportConfig::with_uri(uri);
         if let Some(token) = &options.auth_token {
             config = config.auth_header(token.clone());
         }
@@ -472,14 +497,14 @@ pub async fn remote_commands_with(
             config = config.custom_headers(remote_header_map(&options.headers)?);
         }
 
-        remote_commands_from_transport(StreamableHttpClientTransport::from_config(config), options)
-            .await
+        return remote_commands_from_transport(
+            StreamableHttpClientTransport::from_config(config),
+            options,
+        )
+        .await;
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        let client = crate::mcp_client::McpHttpClient::connect(&uri.into(), options).await?;
-        remote_commands_from_client(client).await
-    }
+    let client = crate::mcp_client::McpHttpClient::connect(&uri, options).await?;
+    remote_commands_from_client(client).await
 }
 
 /// Projects the tools of a connected portable client as commands.
