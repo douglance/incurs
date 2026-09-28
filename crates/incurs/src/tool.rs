@@ -594,7 +594,7 @@ fn declared_environment(
     command_fields: &[FieldMeta],
 ) -> HashMap<String, String> {
     filter_environment(
-        std::env::vars().collect(),
+        crate::process_env(),
         cli_fields.iter().chain(command_fields),
     )
 }

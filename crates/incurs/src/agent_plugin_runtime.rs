@@ -48,7 +48,7 @@ impl std::fmt::Debug for AgentPluginRuntimeOptions {
 impl Default for AgentPluginRuntimeOptions {
     fn default() -> Self {
         Self {
-            base_environment: std::env::vars_os().collect(),
+            base_environment: crate::process_env_os(),
             standards: incurs_mcp_protocol::McpStandardSet::default(),
             http_client: None,
         }

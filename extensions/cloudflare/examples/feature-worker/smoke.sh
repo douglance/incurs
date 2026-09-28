@@ -11,24 +11,52 @@ API_PORT=8801
 BASE="http://127.0.0.1:${WORKER_PORT}"
 LOG="$(mktemp)"
 
+TOKEN=smoke-test-token
+
 python3 -m http.server "$API_PORT" --bind 127.0.0.1 --directory fixtures >/dev/null 2>&1 &
 API_PID=$!
-npm exec --yes --package=wrangler@4 -- wrangler dev --port "$WORKER_PORT" --ip 127.0.0.1 >"$LOG" 2>&1 &
-WORKER_PID=$!
-cleanup() {
-  kill "$API_PID" "$WORKER_PID" 2>/dev/null || true
+WORKER_PID=""
+stop_worker() {
+  [ -n "$WORKER_PID" ] || return 0
   pkill -P "$WORKER_PID" 2>/dev/null || true
+  kill "$WORKER_PID" 2>/dev/null || true
+  wait "$WORKER_PID" 2>/dev/null || true
+  WORKER_PID=""
+  for _ in $(seq 1 30); do
+    curl -s -m 1 "$BASE" >/dev/null 2>&1 || return 0
+    sleep 1
+  done
+}
+# Starts the Worker; extra arguments go to `wrangler dev`.
+start_worker() {
+  : >"$LOG"
+  npm exec --yes --package=wrangler@4 -- wrangler dev --port "$WORKER_PORT" --ip 127.0.0.1 "$@" >"$LOG" 2>&1 &
+  WORKER_PID=$!
+  for _ in $(seq 1 300); do
+    grep -q "Ready on" "$LOG" && return 0
+    if ! kill -0 "$WORKER_PID" 2>/dev/null; then cat "$LOG"; exit 1; fi
+    sleep 1
+  done
+  cat "$LOG"
+  exit 1
+}
+cleanup() {
+  stop_worker
+  kill "$API_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-for _ in $(seq 1 300); do
-  grep -q "Ready on" "$LOG" && break
-  if ! kill -0 "$WORKER_PID" 2>/dev/null; then cat "$LOG"; exit 1; fi
-  sleep 1
-done
-grep -q "Ready on" "$LOG" || { cat "$LOG"; exit 1; }
-
 failures=0
+log_is_clean() {
+  if grep -q "panicked\|Uncaught" "$LOG"; then
+    echo "FAIL worker log shows a panic or uncaught error"
+    grep -m 5 "panicked\|Uncaught" "$LOG"
+    failures=$((failures + 1))
+  fi
+}
+
+echo "== without a token: loopback only"
+start_worker
 check() {
   local name="$1" body="$2" filter="$3"
   if jq -e "$filter" <<<"$body" >/dev/null 2>&1; then
@@ -40,10 +68,15 @@ check() {
     failures=$((failures + 1))
   fi
 }
-run() {
-  curl -s -m 30 -X POST "$BASE/run" -H 'content-type: application/json' \
-    -d "$(jq -cn --args '{argv: $ARGS.positional}' "$@")"
+argv_json() {
+  # jq would read a leading `--flag` as its own option, so encode with python.
+  python3 -c 'import json, sys; print(json.dumps({"argv": sys.argv[1:]}))' "$@"
 }
+run() {
+  curl -s -m 30 -X POST "$BASE/run" -H 'content-type: application/json' ${RUN_HEADERS[@]+"${RUN_HEADERS[@]}"} \
+    -d "$(argv_json "$@")"
+}
+RUN_HEADERS=()
 
 check "command runs with Worker vars as env" "$(run greet ada --format json)" \
   '.exitCode == 0 and (.output | fromjson | .message == "hello ada" and .style == "warm")'
@@ -81,8 +114,8 @@ check "mcp tool call reaches a command" "$(mcp -H 'mcp-protocol-version: 2025-06
   '.result.isError == false and (.result.content[0].text | contains("hello ada")) and (.result.content[0].text | contains("warm"))'
 check "mcp 2026-07-28 discovery" "$(mcp -H 'mcp-protocol-version: 2026-07-28' -H 'mcp-method: server/discover' -d '{"jsonrpc":"2.0","id":3,"method":"server/discover","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"smoke","version":"1"},"io.modelcontextprotocol/clientCapabilities":{}}}}')" \
   '.result.resultType == "complete"'
-check "remote MCP tools run as commands" "$(run self search_tools --format json)" \
-  '.exitCode == 0 and (.output | contains("greet"))'
+check "remote MCP tools run as commands" "$(run self greet --name ada --format json)" \
+  '.exitCode == 0 and (.output | fromjson | .message == "hello ada" and .style == "warm")'
 
 check "plugin package loads from memory" "$(curl -s -m 30 "$BASE/plugin")" \
   '.name == "worker-demo" and .skills == ["greeting"] and .diagnostics == []'
@@ -91,11 +124,33 @@ check "plugin HTTP MCP server connects" "$(curl -s -m 30 "$BASE/plugin")" \
 check "plugin stdio MCP server reports it is unavailable" "$(curl -s -m 30 "$BASE/plugin")" \
   '.servers | map(select(.name == "local")) | .[0].errorCode == "MCP_STDIO_UNAVAILABLE"'
 
-if grep -q "panicked\|Uncaught" "$LOG"; then
-  echo "FAIL worker log shows a panic or uncaught error"
-  grep -m 5 "panicked\|Uncaught" "$LOG"
-  failures=$((failures + 1))
-fi
+status() {
+  curl -s -o /dev/null -w '%{http_code}' -m 30 "$@"
+}
+check "a non-loopback request is refused without a token" \
+  "$(status -X POST "$BASE/api/greet" -H 'host: incurs.example.com' -H 'content-type: application/json' -d '{}')" \
+  '. == 401'
+log_is_clean
+stop_worker
+
+echo "== with a token: bearer required on every route"
+start_worker --var "MCP_AUTH_TOKEN:$TOKEN"
+AUTH="authorization: Bearer $TOKEN"
+for route in /api/greet /api/mcp /run; do
+  check "$route refuses a request without the token" \
+    "$(status -X POST "$BASE$route" -H 'content-type: application/json' -d '{}')" '. == 401'
+  check "$route refuses a wrong token" \
+    "$(status -X POST "$BASE$route" -H 'authorization: Bearer wrong' -H 'content-type: application/json' -d '{}')" '. == 401'
+done
+check "a command route admits the token" \
+  "$(curl -s -m 30 -X POST "$BASE/api/greet" -H "$AUTH" -H 'content-type: application/json' -d '{}')" \
+  '.ok == true and .data.style == "warm"'
+RUN_HEADERS=(-H "$AUTH")
+check "remote MCP self-call forwards the token" "$(run self greet --name ada --format json)" \
+  '.exitCode == 0 and (.output | fromjson | .message == "hello ada")'
+check "plugin HTTP MCP server forwards the token" "$(curl -s -m 30 "$BASE/plugin" -H "$AUTH")" \
+  '.servers | map(select(.name == "self")) | .[0].toolCount > 0'
+log_is_clean
 
 echo "failures: $failures"
 [ "$failures" -eq 0 ]

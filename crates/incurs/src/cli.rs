@@ -61,7 +61,7 @@ impl Runtime {
 
     /// Creates a runtime from the current process environment.
     pub fn process(display_name: impl Into<String>, human: bool) -> Self {
-        Self::new(display_name, std::env::vars().collect(), human)
+        Self::new(display_name, crate::process_env(), human)
     }
 }
 
@@ -1568,7 +1568,7 @@ impl Cli {
             .collect();
 
         // --- Step 10: Build env source ---
-        let env_source: std::collections::HashMap<String, String> = std::env::vars().collect();
+        let env_source: std::collections::HashMap<String, String> = crate::process_env();
 
         // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
         if human {

@@ -115,6 +115,12 @@ impl RequestGuard {
         Self(Arc::new(check))
     }
 
+    /// Runs this guard before every route of `router`, including routes a
+    /// host adds beside the incurs ones.
+    pub fn protect(self, router: Router) -> Router {
+        router.layer(axum::middleware::from_fn_with_state(self, enforce_guard))
+    }
+
     fn admits(&self, parts: &axum::http::request::Parts) -> bool {
         (self.0)(parts)
     }
@@ -178,7 +184,7 @@ pub fn build_cli_router_with(
     let server = crate::mcp::McpHttpServer::from_cli(cli, mcp)?;
     let router = build_router(state).merge(mcp_router(server));
     Ok(match guard {
-        Some(guard) => router.layer(axum::middleware::from_fn_with_state(guard, enforce_guard)),
+        Some(guard) => guard.protect(router),
         None => router,
     })
 }
@@ -610,7 +616,7 @@ async fn execute_http_command(
 
     let env_source: HashMap<String, String> = match &state.env {
         Some(env) => env.as_ref().clone(),
-        None => std::env::vars().collect(),
+        None => crate::process_env(),
     };
 
     let result = command::execute(

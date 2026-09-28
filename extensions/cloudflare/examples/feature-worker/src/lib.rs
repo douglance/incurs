@@ -17,7 +17,7 @@ use incurs::agent_plugin::loader::{
 use incurs::agent_plugin_runtime::{AgentPluginRuntimeOptions, connect_agent_plugin};
 use incurs::cli::{Cli, Runtime};
 use incurs::command::{CommandContext, CommandDef, CommandHandler};
-use incurs::http::{RouterOptions, build_cli_router_with};
+use incurs::http::{RequestGuard, RouterOptions, build_cli_router_with};
 use incurs::mcp::{McpHttpConfig, McpRemoteOptions};
 use incurs::openapi::{FetchFn, GenerateOptions, OpenApiSource};
 use incurs::outbound::SharedHttpClient;
@@ -127,6 +127,36 @@ async fn build_cli(vars: &HashMap<String, String>) -> Result<Cli, String> {
     .map_err(|error| error.to_string())
 }
 
+/// Bearer token every route requires, from the `MCP_AUTH_TOKEN` secret.
+#[derive(Clone)]
+struct AuthToken(Option<String>);
+
+/// Admits a request only when it carries the token or, with no token
+/// configured, only when it is addressed to this machine. A deployed Worker
+/// without a token therefore refuses every request.
+fn guard(token: &AuthToken) -> RequestGuard {
+    match &token.0 {
+        Some(token) => RequestGuard::bearer(token.clone()),
+        None => RequestGuard::custom(|parts| {
+            let host = parts.uri.host().map(str::to_string).or_else(|| {
+                parts
+                    .headers
+                    .get(axum::http::header::HOST)
+                    .and_then(|value| value.to_str().ok())
+                    .map(|host| {
+                        host.rsplit_once(':')
+                            .map_or(host, |(name, _)| name)
+                            .to_string()
+                    })
+            });
+            matches!(
+                host.as_deref(),
+                Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+            )
+        }),
+    }
+}
+
 fn self_mcp_url(vars: &HashMap<String, String>) -> Option<String> {
     vars.get("SELF_URL").map(|base| format!("{base}/api/mcp"))
 }
@@ -141,6 +171,7 @@ struct RunRequest {
 #[worker::send]
 async fn run(
     Extension(vars): Extension<Arc<HashMap<String, String>>>,
+    Extension(token): Extension<AuthToken>,
     Json(input): Json<RunRequest>,
 ) -> Json<Value> {
     let mut cli = match build_cli(&vars).await {
@@ -155,6 +186,7 @@ async fn run(
                 None,
                 &McpRemoteOptions {
                     http_client: Some(outbound()),
+                    auth_token: token.0.clone(),
                     ..McpRemoteOptions::default()
                 },
             )
@@ -181,7 +213,10 @@ async fn run(
 
 /// Loads the bundled plugin package from memory and connects its MCP servers.
 #[worker::send]
-async fn plugin(Extension(vars): Extension<Arc<HashMap<String, String>>>) -> Json<Value> {
+async fn plugin(
+    Extension(vars): Extension<Arc<HashMap<String, String>>>,
+    Extension(token): Extension<AuthToken>,
+) -> Json<Value> {
     let mut files: AgentPluginFiles = [
         ("plugin.json", include_str!("../plugin/plugin.json")),
         (
@@ -196,7 +231,14 @@ async fn plugin(Extension(vars): Extension<Arc<HashMap<String, String>>>) -> Jso
         let mcp = json!({
             "$schema": AGENT_PLUGIN_MCP_SCHEMA,
             "mcpServers": {
-                "self": { "type": "streamable-http", "url": url },
+                "self": {
+                    "type": "streamable-http",
+                    "url": url,
+                    "headers": token.0.as_ref().map_or_else(
+                        || json!({}),
+                        |token| json!({ "Authorization": format!("Bearer {token}") }),
+                    ),
+                },
                 "local": { "type": "stdio", "command": "./bin/server" },
             },
         });
@@ -256,13 +298,23 @@ async fn fetch(
         RouterOptions {
             env: Some(vars.clone()),
             mcp: McpHttpConfig::default(),
+            guard: None,
         },
     )
     .map_err(|error| worker::Error::RustError(error.to_string()))?;
-    let mut router = Router::new()
+    let token = AuthToken(
+        env.secret("MCP_AUTH_TOKEN")
+            .or_else(|_| env.var("MCP_AUTH_TOKEN"))
+            .ok()
+            .map(|secret| secret.to_string())
+            .filter(|token| !token.is_empty()),
+    );
+    let routes = Router::new()
         .route("/run", post(run))
         .route("/plugin", get(plugin))
         .nest("/api", api)
-        .layer(Extension(Arc::new(vars)));
+        .layer(Extension(Arc::new(vars)))
+        .layer(Extension(token.clone()));
+    let mut router = guard(&token).protect(routes);
     Ok(router.call(request).await?)
 }
