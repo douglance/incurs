@@ -1,0 +1,220 @@
+{
+  "checked_at": "2026-10-02T06:29:00.001050+00:00",
+  "status": "passed",
+  "scope": "Shared compiled request schema enforcement before outbound HTTP, with native CLI/MCP, direct binding, and two local Emscripten Worker paths",
+  "baseline": {
+    "live_cli_execution_id": "01a0fb21-a7d0-7c83-815a-ea0b2aaa6678",
+    "observed": "Valid input and three invalid nested inputs all reached loopback HTTP and returned CLI success. Violations included minimum, enum, forbidden properties, missing required values, and wrong nested type.",
+    "red_regression_execution_id": "01a0fb25-6f07-7c21-8377-4a903981cb97",
+    "red_expected_exit_code": 101
+  },
+  "implementation": {
+    "public_boundary": "runtime::HttpBinding owns an immutable resolved contract and one compiled offline request validator; build_request and invoke enforce the matching operation schema",
+    "shared_schemas": "Discovery and runtime use the same source-version-normalized request schemas. Aggregate validation retains shared reachable definitions once.",
+    "dispatch_order": [
+      "normalize CLI JSON inputs",
+      "bind wire request",
+      "normalize empty unused SDK parameter groups",
+      "validate logical envelope",
+      "transport"
+    ],
+    "errors": {
+      "serialization": "FORGE_BINDING",
+      "schema": "FORGE_VALIDATION",
+      "transport": "FORGE_HTTP"
+    },
+    "media": "Validation enforces the selected media alternative. Raw binary slots retain codec semantics and are not treated as logical JSON string bodies.",
+    "source_context": "Legacy nullable, reference siblings, exclusive bounds, and read-only request requirements remain distinct from OpenAPI 3.1.",
+    "reachability": "Response-only definitions do not enter the request validator.",
+    "low_level_api": "Existing serialization functions remain available without source-version context; schema enforcement uses HttpBinding."
+  },
+  "live_worker_finding": {
+    "failed_probe_execution_id": "01a0fb3e-5316-7370-b7ba-d13ac648bb2a",
+    "diagnostic_execution_id": "01a0fb3e-98cd-7410-8d3e-af24bea9e7b1",
+    "observed": "Generated SDKs emit empty location objects even when an operation has no parameters there; the initial validator rejected them as additional properties.",
+    "red_regression_execution_id": "01a0fb3f-9f53-7602-92dd-b7d14ae68f41",
+    "fix": "After wire binding rejects unknown/populated undeclared groups, omit only empty unused known parameter groups from the validation envelope. Preserve body values.",
+    "final_regression_execution_id": "01a0fb41-10c4-7181-a420-0be4c60c75e7"
+  },
+  "independent_oracles": {
+    "execution_id": "01a0fb38-dab8-7a01-9182-5f38710841a5",
+    "openapi_validator": "openapi-spec-validator 0.9.0",
+    "instance_validator": "Python jsonschema Draft202012Validator",
+    "document_valid": true,
+    "logical_inputs": 20,
+    "expected_valid": 2,
+    "expected_invalid": 18,
+    "all_agreed": true,
+    "standards": [
+      "https://spec.openapis.org/oas/v3.1.1.html#schema-object",
+      "https://spec.openapis.org/oas/v3.1.1.html#working-with-binary-data",
+      "https://spec.openapis.org/oas/v3.0.4.html#schema-object"
+    ]
+  },
+  "native_process": {
+    "execution_id": "01a0fb4a-497e-7dc3-a23d-db9ca03631ac",
+    "binary_sha256": "48848150f3da268763ed6abb4a1d6d7c35d169f98bdf2d32e03349bc9b744109",
+    "binary_unchanged_across_probe": true,
+    "cli_schema_rejections": 18,
+    "mcp_schema_rejections": 18,
+    "invalid_outbound_requests": 0,
+    "valid_outbound_requests": 4,
+    "mcp_protocol_version": "2025-06-18",
+    "prior_cli_mcp_probe": "passed: 20 media HTTP requests, 23 media rejections, 16 other HTTP cases and protocol/encoding controls"
+  },
+  "direct_binding_controls": {
+    "tests": [
+      "legacy nullable/read-only/write-only request context",
+      "3.0 versus 3.1 reference siblings",
+      "unknown operations, missing references, unsupported resource scopes/dialects",
+      "selected binary versus JSON media",
+      "recursive values across shared operations",
+      "response-only definition exclusion",
+      "empty unused SDK parameter groups without dropping unknown keys or invalid bodies"
+    ],
+    "shared_graph": "32 operations retain one Profile definition at the aggregate root; duplicated nested definitions and excessive serialized growth are rejected"
+  },
+  "mutations": {
+    "execution_id": "01a0fb41-eb0a-7b83-ad86-fcdb27c04ab7",
+    "count": 5,
+    "all_source_edits_confirmed": true,
+    "all_regressions_failed": true,
+    "all_sources_restored_exactly": true,
+    "cases": [
+      "bypass validator with an empty instance",
+      "disable selected-media conditional matching",
+      "retain duplicated definitions under each operation",
+      "treat modern schemas as legacy",
+      "disable empty unused SDK group normalization"
+    ],
+    "restored_sha256": {
+      "extensions/forge/src/runtime/binding.rs": "79673d7789d3a943305e423dc8d55f5544b3a0c38ad49fe71908f13ec6314373",
+      "extensions/forge/src/request_schema.rs": "93f598bc550dfe4a5907671f5825fc94b940aa4e41198310c4a1dd948894d59a",
+      "extensions/forge/src/schema_validation.rs": "5274fd4bc5b91bfae5506a99c9ab35ba780671da35b6d3cd6eb384b94cea1d62"
+    }
+  },
+  "integrated_quality": {
+    "execution_id": "01a0fb44-f65c-7541-b091-a71e6c10348e",
+    "tests_passed": 123,
+    "tests_failed": 0,
+    "formatting": "passed",
+    "strict_clippy_all_features_all_targets": "passed",
+    "strict_rustdoc_all_features_no_deps": "passed",
+    "wasm32_unknown_unknown_all_features": "passed",
+    "complete_log_observed": true
+  },
+  "full_pinned_contracts": {
+    "execution_id": "01a0fb44-f64f-7c81-aad1-9eb2bb369813",
+    "operations": 5502,
+    "vendors": [
+      {
+        "name": "github",
+        "operations": 1231,
+        "source_schema_definitions": 973,
+        "contract_path": "/tmp/incurs-github-sdk-20261002-paths/contract.json",
+        "contract_sha256": "2dfafffedc71ce0ce1462096482631a600310b26691e592817da19c64725848c",
+        "discovery_schema_bytes": 1389584,
+        "validation_construction_ms": 498,
+        "status": "passed"
+      },
+      {
+        "name": "cloudflare",
+        "operations": 3627,
+        "source_schema_definitions": 6948,
+        "contract_path": "/tmp/incurs-cloudflare-sdk-20261002-paths/contract.json",
+        "contract_sha256": "6d15f54d362af9e2cd08c554001a38d3bfcb25868ad891761ab7c0379498e73b",
+        "discovery_schema_bytes": 8894173,
+        "validation_construction_ms": 2598,
+        "status": "passed"
+      },
+      {
+        "name": "stripe",
+        "operations": 644,
+        "source_schema_definitions": 1701,
+        "contract_path": "/tmp/incurs-stripe-sdk-20261002-paths/contract.json",
+        "contract_sha256": "b10075d93ec95224f1fe18b938f3afa2a497b7a7542689a59b28dc2a8e184689",
+        "discovery_schema_bytes": 3706463,
+        "validation_construction_ms": 1435,
+        "status": "passed"
+      }
+    ],
+    "scope": "Compile a complete offline request validator from each hash-verified resolved contract and inspect every operation input schema; no outbound vendor request.",
+    "timing_limit": "Construction times are observations on a shared host, not comparative benchmarks.",
+    "probe_source_sha256": "ab97f098c9dd452fb67735c3a0576257050a09452770f6fc35d1f9c315a10014"
+  },
+  "workers": {
+    "build_execution_id": "01a0fb44-f65c-7541-b091-a72223bd7766",
+    "generated_sdk": {
+      "probe_execution_id": "01a0fb47-671f-7120-90bb-96374c8089b1",
+      "server_execution_id": "01a0fb46-c2ec-76a2-860a-1fbf98c0f919",
+      "request_schema_rejections": 18,
+      "valid_request_cases": 2,
+      "concurrent_http_requests": 8,
+      "existing_media_cases": 12,
+      "existing_sdk_rejections": 3,
+      "numeric_composition_and_base64_controls": "passed",
+      "packages": "Current advanced, media, and numeric SDK sources are verified identical to extracted package archives",
+      "scope": "Generated SDK encoding and compiled request binding observed over local HTTP; no vendor request"
+    },
+    "base": {
+      "probe_execution_id": "01a0fb48-92a4-7281-a1d7-7da8acb14994",
+      "server_execution_id": "01a0fb47-b393-7512-8d7c-05efe5a07cf9",
+      "request_schema_rejections": 18,
+      "valid_request_cases": 2,
+      "existing_media_bindings": 10,
+      "existing_media_rejections": 12,
+      "concurrent_requests": 8,
+      "runtime_native_parity_and_existing_encoding_controls": "passed",
+      "scope": "The live /bind route compiles and applies the submitted document schema before returning request bytes; no outbound vendor request"
+    },
+    "cleanup": "Both owned servers canceled; ports 18986, 18987, 18988, and 18989 read back empty after final native verification",
+    "production_deployment": false
+  },
+  "source_sha256": {
+    "extensions/forge/src/runtime/binding.rs": "79673d7789d3a943305e423dc8d55f5544b3a0c38ad49fe71908f13ec6314373",
+    "extensions/forge/src/runtime.rs": "4a0d674c0e298597ebc672b2a838442821d98d242f3bfe09eeef65d486ec55d6",
+    "extensions/forge/src/request_schema.rs": "93f598bc550dfe4a5907671f5825fc94b940aa4e41198310c4a1dd948894d59a",
+    "extensions/forge/src/schema_validation.rs": "5274fd4bc5b91bfae5506a99c9ab35ba780671da35b6d3cd6eb384b94cea1d62",
+    "extensions/forge/src/catalog.rs": "0d4a10245380b0a7e7e10e9e232f8d722dc89be28eb3684759f5f010acc4cd8a",
+    "extensions/forge/src/artifacts/sdk_validation.rs": "3ed8b5dc9bda4b133e3e08f9de92c34e128e2185d575fb035dc76e4ab2a636b0",
+    "extensions/forge/src/lib.rs": "afc1bfb3868e85d5561453b0924c2c3684efb9f402bf664d646d2edf42984799",
+    "extensions/forge/tests/request_binding.rs": "b9a26742ddafd779b4c16bf81069ef9fda744924037b17fcc87c2e8754f12eb5",
+    "extensions/forge/tests/request_validation.rs": "d257b024cd90c4832e0222fe40dfc9c5c401d70ae67cd5b72b79783c1380e663",
+    "extensions/forge/tests/fixtures/request_validation_openapi.json": "30f9507e7bcce4ea717767c379a06122ae0149e1bcbafcf90cf478e7cf6bff7e",
+    "extensions/forge/tests/catalog.rs": "6a3a7d7e8599372cfebd8f4e7789deda7fc0dc5afab4873c79f00e3cccd2adb3",
+    "extensions/forge/tests/composition_sdk.rs": "0eb729b8257df1493ae2528fc1cc4e1fb76940ef6856d918be75626184e9c097",
+    "extensions/forge/probe_request_validation.py": "398d885e57123a45f4988f7dad378857dcefbdf12b22f8ee5feb0d1f76bd69a2",
+    "extensions/forge-workers/src/main.rs": "70c7c9bca39835223d63b6d3ff1fbd65348e03c4d13f2ff6bd98533433343c54",
+    "extensions/forge-workers/probe.py": "1afc8df202845dca0a5d2369340e3497a357883a779a88eefd4dbc7fc863e6e5",
+    "extensions/forge-workers/build_generated_sdk.py": "ff25d28df1c3689b0931ef17ead0ab7d94be1abbe136f95e7bf472ea4cff4a8c",
+    "extensions/forge-workers/fixtures/generated_sdk_media_consumer.rs": "f4c320d7e4a0aa512126f3a9314a38eab60f9fc51149788bb7f768580c2deb4a",
+    "extensions/forge-workers/probe_generated_sdk.py": "a4f2ca159d29a816ed8e1bb9e3c2873b24ab5f1741d5ad75dcfc5b1f12ee1fad"
+  },
+  "artifact_sha256": {
+    "/Users/douglance/Developer/lv/incurs/extensions/forge/target/debug/examples/openapi": "48848150f3da268763ed6abb4a1d6d7c35d169f98bdf2d32e03349bc9b744109",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/index_bg.wasm": "b4098c01beddf2c57454cb0aa8c1e8f0c26b56b9f7489d765708bae2fa5a3e4c",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/index.js": "493d1725ec7c2d3761c6abe5cd231c4a76088af836617eafc4b8d177adc52ec1",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/worker/build/index_bg.wasm": "944367098a262c344ec9aeda6b1b1122a8733ab1212dd99404d8ba553056416d",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/worker/build/index.js": "acd35d3818ea84098fc218e217fa47609b118f5d0d519ee701c529d32bd5a678",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/worker/src/main.rs": "f4c320d7e4a0aa512126f3a9314a38eab60f9fc51149788bb7f768580c2deb4a",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/advanced/sdk/src/lib.rs": "660dbade8bf6f7317ad60aaeec6256beb713a6613c4546a8e014df47cb5ceff3",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/target/native/package/worker-proof-sdk-0.1.0/src/lib.rs": "660dbade8bf6f7317ad60aaeec6256beb713a6613c4546a8e014df47cb5ceff3",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/target/native/package/worker-proof-sdk-0.1.0.crate": "c7d76915e5b49041d615c39cc0a8bedf13bd182d605be33df90644f817d1429c",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/advanced/contract.json": "d85ad98876708393a46964f14f658d14a6d992aac7a4d7e37cbbe30ea9fd654e",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/media/sdk/src/lib.rs": "b09c05be737f93d12898161cd0c9e05eaf9f744d44530293c1c2b269d72c8eee",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/target/native/package/corpus-proof-sdk-0.1.0/src/lib.rs": "b09c05be737f93d12898161cd0c9e05eaf9f744d44530293c1c2b269d72c8eee",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/target/native/package/corpus-proof-sdk-0.1.0.crate": "12ee18ee5285df9858c0018e87d130911e02f8de3bccc7348959d1aa5af70949",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/media/contract.json": "e26b0d86e8e0a92f366296f3078b06e6d67e0cfce08609dd612f6a5ffc311a22",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/numeric/sdk/src/lib.rs": "7449b1c27c7a1bfc29fa35b8cee915e2c4c9950543334fe9cd05e9504e12c015",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/target/native/package/numeric-proof-sdk-0.1.0/src/lib.rs": "7449b1c27c7a1bfc29fa35b8cee915e2c4c9950543334fe9cd05e9504e12c015",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/target/native/package/numeric-proof-sdk-0.1.0.crate": "119895530130c0ef3d16d7916bddd58403062e2dc013e1fb75562b3c23f98c25",
+    "/tmp/incurs-sdk-worker-request-validation-final-20261002/numeric/contract.json": "0f9327e1c0fffad9be6d0cbc6ccd593783cd2b603ffcec44d6a3c55e4241971d"
+  },
+  "limits": [
+    "Universal OpenAPI or JSON Schema conformance remains unproven",
+    "Full-corpus construction does not prove every operation or every input works over HTTP",
+    "Raw binary byte semantics remain the media codec responsibility; formats remain annotations",
+    "The low-level serialization APIs intentionally lack source-version context",
+    "No hosted deployment, production parity, or comparative performance gate was performed"
+  ]
+}

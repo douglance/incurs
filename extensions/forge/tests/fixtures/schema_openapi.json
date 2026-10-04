@@ -1,0 +1,199 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Scalar schema proof",
+    "version": "1"
+  },
+  "components": {
+    "schemas": {
+      "Label": {
+        "type": "string"
+      },
+      "Identifier": {
+        "type": "integer"
+      },
+      "Enabled": {
+        "type": "boolean"
+      },
+      "Ratio": {
+        "type": "number"
+      },
+      "Identifiers": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "Anything": true,
+      "Nothing": false,
+      "NullableLabel": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "OnlyNull": {
+        "type": "null"
+      },
+      "Payload": {
+        "type": "object",
+        "required": [
+          "id",
+          "minimum",
+          "label",
+          "enabled",
+          "amount",
+          "ids",
+          "anything"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "default": 9223372036854775807
+          },
+          "minimum": {
+            "type": "integer"
+          },
+          "label": {
+            "$ref": "#/components/schemas/Label"
+          },
+          "enabled": {
+            "$ref": "#/components/schemas/Enabled"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Ratio"
+          },
+          "ids": {
+            "$ref": "#/components/schemas/Identifiers"
+          },
+          "anything": {
+            "$ref": "#/components/schemas/Anything"
+          },
+          "ceiling": {
+            "type": "integer",
+            "default": 18446744073709551615
+          }
+        }
+      },
+      "DefaultLabel": {
+        "type": "string",
+        "default": "fallback"
+      },
+      "ReferenceMetadata": {
+        "type": "object",
+        "required": [
+          "nullable"
+        ],
+        "properties": {
+          "nullable": {
+            "$ref": "#/components/schemas/NullableLabel"
+          },
+          "fallback": {
+            "$ref": "#/components/schemas/DefaultLabel"
+          }
+        }
+      },
+      "GraphNodeA": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "next": {
+            "$ref": "#/components/schemas/GraphNodeB"
+          }
+        }
+      },
+      "GraphNodeB": {
+        "type": "object",
+        "properties": {
+          "previous": {
+            "$ref": "#/components/schemas/GraphNodeA"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/schema": {
+      "post": {
+        "operationId": "sendSchema",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Received"
+          }
+        }
+      }
+    },
+    "/forbidden": {
+      "post": {
+        "operationId": "sendImpossible",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": false
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Unreachable"
+          }
+        }
+      }
+    },
+    "/metadata": {
+      "get": {
+        "operationId": "checkMetadata",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tag",
+            "schema": {
+              "$ref": "#/components/schemas/DefaultLabel"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/alias-text": {
+      "post": {
+        "operationId": "sendAliasText",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "text/plain": {
+              "schema": {
+                "$ref": "#/components/schemas/Label"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "ok"
+          }
+        }
+      }
+    }
+  }
+}

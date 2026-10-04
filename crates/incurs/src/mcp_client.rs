@@ -27,9 +27,17 @@
 //! legacy `initialize` only on protocol evidence, the peer answering
 //! `-32601 Method not found`. An authentication, server, or transport failure
 //! fails closed with a coded [`McpClientError`].
+//!
+//! Every request has a deadline, [`McpRemoteOptions::request_timeout`], timed
+//! by the host client's [`crate::outbound::HttpClient::sleep`]. Response
+//! bodies are capped at [`McpRemoteOptions::max_response_bytes`], and a tool
+//! listing at [`crate::mcp::MAX_REMOTE_TOOL_PAGES`] pages and
+//! [`crate::mcp::MAX_REMOTE_TOOLS`] tools, so a hostile or hung server ends
+//! each call with a coded error.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use futures::StreamExt;
 use http::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
@@ -39,7 +47,7 @@ use incurs_mcp_protocol::{
 };
 use serde_json::{Map, Value};
 
-use crate::mcp::McpRemoteOptions;
+use crate::mcp::{MAX_REMOTE_TOOL_PAGES, MAX_REMOTE_TOOLS, McpRemoteOptions};
 use crate::outbound::{
     HttpBody, HttpClientError, HttpRequest, HttpResponse, Redirects, SharedHttpClient,
 };
@@ -103,6 +111,14 @@ pub enum McpClientError {
     Protocol(String),
     /// Client and server share no enabled standard.
     Negotiation(McpNegotiationError),
+    /// No response arrived before the request deadline.
+    Timeout {
+        /// The deadline that elapsed.
+        after: Duration,
+    },
+    /// A tool listing exceeded [`MAX_REMOTE_TOOL_PAGES`] pages or
+    /// [`MAX_REMOTE_TOOLS`] tools.
+    ToolLimit(String),
 }
 
 impl McpClientError {
@@ -129,6 +145,10 @@ impl McpClientError {
             Self::Protocol(_) => "MCP_PROTOCOL_ERROR",
             // No common standard.
             Self::Negotiation(_) => "MCP_NEGOTIATION_FAILED",
+            // The request deadline elapsed.
+            Self::Timeout { .. } => "MCP_TIMEOUT",
+            // An unbounded tool listing.
+            Self::ToolLimit(_) => "MCP_TOOL_LIMIT_EXCEEDED",
         }
     }
 
@@ -137,8 +157,8 @@ impl McpClientError {
         match self {
             // Network failures are transient; a missing client is not.
             Self::Transport(error) => error.retryable(),
-            // Lost sessions are transient.
-            Self::SessionExpired => true,
+            // Lost sessions and hung requests are transient.
+            Self::SessionExpired | Self::Timeout { .. } => true,
             // Server-side failures may be transient; client errors are not.
             Self::Http { status, .. } => *status >= 500,
             // Everything else needs a configuration or server change.
@@ -159,6 +179,10 @@ impl McpClientError {
             ),
             // Point at the option that takes a client.
             Self::Transport(error) => error.hint(),
+            // Point at the deadline.
+            Self::Timeout { .. } => Some(
+                "Retry, or raise McpRemoteOptions::request_timeout for a slow server".to_string(),
+            ),
             // Other failures carry their detail in the message.
             _ => None,
         }
@@ -196,6 +220,14 @@ impl std::fmt::Display for McpClientError {
             Self::Protocol(message) => write!(f, "MCP protocol error: {message}"),
             // No common standard.
             Self::Negotiation(error) => write!(f, "{error}"),
+            // Deadline elapsed.
+            Self::Timeout { after } => write!(
+                f,
+                "MCP server did not answer within {} ms",
+                after.as_millis()
+            ),
+            // Unbounded listing.
+            Self::ToolLimit(message) => f.write_str(message),
         }
     }
 }
@@ -272,6 +304,41 @@ async fn send(
     http.send(request).await.map_err(McpClientError::Transport)
 }
 
+/// Runs `work` against a deadline of `timeout`, timed by `http`'s timer.
+/// Without a timeout or a timer, `work` runs without a deadline. On expiry
+/// `work` is dropped, which releases anything it holds.
+async fn with_deadline<T>(
+    http: &SharedHttpClient,
+    timeout: Option<Duration>,
+    work: impl std::future::Future<Output = Result<T, McpClientError>>,
+) -> Result<T, McpClientError> {
+    let Some((after, timer)) =
+        timeout.and_then(|after| http.sleep(after).map(|timer| (after, timer)))
+    else {
+        return work.await;
+    };
+    let work = std::pin::pin!(work);
+    match futures::future::select(work, timer).await {
+        // The work finished first.
+        futures::future::Either::Left((outcome, _)) => outcome,
+        // The deadline elapsed first.
+        futures::future::Either::Right(((), _)) => Err(McpClientError::Timeout { after }),
+    }
+}
+
+/// Reads an error response's body for diagnosis, up to `limit` bytes. An
+/// oversized body is an error; a body that fails mid-read is reported empty.
+async fn error_body(response: HttpResponse, limit: usize) -> Result<String, McpClientError> {
+    match response.text_limited(limit).await {
+        // The whole body.
+        Ok(body) => Ok(body),
+        // Stop at the cap.
+        Err(error @ HttpClientError::BodyTooLarge { .. }) => Err(McpClientError::Transport(error)),
+        // The status is the useful part; keep it.
+        Err(_) => Ok(String::new()),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Server-sent events
 // ---------------------------------------------------------------------------
@@ -286,22 +353,40 @@ pub(crate) struct SseEvent {
 }
 
 /// Incremental `text/event-stream` parser.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SseParser {
     buffer: Vec<u8>,
     event: Option<String>,
     data: Vec<String>,
+    data_bytes: usize,
+    limit: usize,
+}
+
+impl Default for SseParser {
+    fn default() -> Self {
+        Self {
+            buffer: Vec::new(),
+            event: None,
+            data: Vec::new(),
+            data_bytes: 0,
+            limit: MAX_EVENT_BYTES,
+        }
+    }
 }
 
 impl SseParser {
     /// Appends received bytes.
     pub(crate) fn push(&mut self, bytes: &[u8]) -> Result<(), McpClientError> {
-        self.buffer.extend_from_slice(bytes);
-        if self.buffer.len() > MAX_EVENT_BYTES {
-            return Err(McpClientError::Protocol(
-                "server-sent event exceeds the size limit".to_string(),
-            ));
+        if bytes.len()
+            > self
+                .limit
+                .saturating_sub(self.buffer.len().saturating_add(self.data_bytes))
+        {
+            return Err(McpClientError::Transport(HttpClientError::BodyTooLarge {
+                limit: self.limit,
+            }));
         }
+        self.buffer.extend_from_slice(bytes);
         Ok(())
     }
 
@@ -335,6 +420,7 @@ impl SseParser {
                     data: self.data.join("\n"),
                 };
                 self.data.clear();
+                self.data_bytes = 0;
                 return Some(event);
             }
             if line.starts_with(':') {
@@ -350,7 +436,10 @@ impl SseParser {
                 // Event type for the pending event.
                 "event" => self.event = Some(value.to_string()),
                 // One data line.
-                "data" => self.data.push(value.to_string()),
+                "data" => {
+                    self.data_bytes = self.data_bytes.saturating_add(value.len() + 1);
+                    self.data.push(value.to_string());
+                }
                 // `id`, `retry`, and unknown fields do not affect MCP messages.
                 _ => {}
             }
@@ -365,10 +454,13 @@ struct EventReader {
 }
 
 impl EventReader {
-    fn new(response: HttpResponse) -> Self {
+    fn new(response: HttpResponse, limit: usize) -> Self {
         Self {
             stream: response.body,
-            parser: SseParser::default(),
+            parser: SseParser {
+                limit,
+                ..SseParser::default()
+            },
         }
     }
 
@@ -473,15 +565,46 @@ struct Reply {
 // Transports
 // ---------------------------------------------------------------------------
 
+/// Per-request limits shared by both transports.
+#[derive(Debug, Clone, Copy)]
+struct Limits {
+    timeout: Option<Duration>,
+    max_body: usize,
+}
+
+impl Limits {
+    fn new(options: &McpRemoteOptions) -> Self {
+        Self {
+            timeout: options.request_timeout,
+            max_body: options.max_response_bytes,
+        }
+    }
+}
+
 struct Streamable {
     http: SharedHttpClient,
     url: url::Url,
     headers: HeaderMap,
     session_id: Option<HeaderValue>,
+    limits: Limits,
 }
 
 impl Streamable {
     async fn exchange(
+        &self,
+        message: &Value,
+        id: Option<u64>,
+        protocol_headers: HeaderMap,
+    ) -> Result<Reply, McpClientError> {
+        with_deadline(
+            &self.http,
+            self.limits.timeout,
+            self.exchange_unbounded(message, id, protocol_headers),
+        )
+        .await
+    }
+
+    async fn exchange_unbounded(
         &self,
         message: &Value,
         id: Option<u64>,
@@ -514,7 +637,7 @@ impl Streamable {
             .as_deref()
             .is_some_and(|value| value.starts_with(JSON));
         if !response.is_success() {
-            let body = response.text().await.unwrap_or_default();
+            let body = error_body(response, self.limits.max_body).await?;
             if is_json
                 && let Ok(message) = serde_json::from_str::<Value>(&body)
                 && let Some(error) = message.get("error")
@@ -533,7 +656,9 @@ impl Streamable {
                     session_id,
                 });
             };
-            let result = EventReader::new(response).response(id).await?;
+            let result = EventReader::new(response, self.limits.max_body)
+                .response(id)
+                .await?;
             return Ok(Reply {
                 result: Some(result),
                 session_id,
@@ -545,7 +670,10 @@ impl Streamable {
                 content_type.as_deref().unwrap_or("<none>")
             )));
         }
-        let bytes = response.bytes().await.map_err(McpClientError::Transport)?;
+        let bytes = response
+            .bytes_limited(self.limits.max_body)
+            .await
+            .map_err(McpClientError::Transport)?;
         let (Some(id), Ok(message)) = (id, serde_json::from_slice::<Value>(&bytes)) else {
             // A notification's body, or an unparseable body, is an acceptance.
             return accepted(id, session_id);
@@ -601,6 +729,7 @@ struct LegacySse {
     endpoint: url::Url,
     headers: HeaderMap,
     events: futures::lock::Mutex<EventReader>,
+    limits: Limits,
 }
 
 impl LegacySse {
@@ -610,9 +739,23 @@ impl LegacySse {
         id: Option<u64>,
         protocol_headers: HeaderMap,
     ) -> Result<Reply, McpClientError> {
-        // Holding the stream across the POST keeps one request's response from
-        // being consumed by another.
-        let mut events = self.events.lock().await;
+        // The deadline includes waiting for the stream lock. Dropping the
+        // exchange releases the lock; subsequent requests skip late replies.
+        with_deadline(&self.http, self.limits.timeout, async {
+            let mut events = self.events.lock().await;
+            self.exchange_held(&mut events, message, id, protocol_headers)
+                .await
+        })
+        .await
+    }
+
+    async fn exchange_held(
+        &self,
+        events: &mut EventReader,
+        message: &Value,
+        id: Option<u64>,
+        protocol_headers: HeaderMap,
+    ) -> Result<Reply, McpClientError> {
         let body = serde_json::to_vec(message)
             .map_err(|error| McpClientError::Protocol(error.to_string()))?;
         let mut headers = self.headers.clone();
@@ -622,9 +765,10 @@ impl LegacySse {
         let response = send(&self.http, "POST", &self.endpoint, &headers, Some(body)).await?;
         rejected_credentials(&response)?;
         if !response.is_success() {
+            let status = response.status;
             return Err(McpClientError::Http {
-                status: response.status,
-                body: response.text().await.unwrap_or_default(),
+                status,
+                body: error_body(response, self.limits.max_body).await?,
             });
         }
         drop(response);
@@ -739,17 +883,19 @@ impl McpHttpClient {
     /// from `options.standards`.
     ///
     /// Sends `options.auth_token` as a bearer token and `options.headers` on
-    /// every request. `Accept`, `Content-Type`, and `Mcp-Session-Id` are set
-    /// by the transport and are rejected as configured headers. Requests go
+    /// every request. `Accept`, `Content-Type`, `Mcp-Session-Id`, and
+    /// `Mcp-Protocol-Version` are set by the transport and are rejected as
+    /// configured headers. Requests go
     /// through `options.http_client`; on wasm32, where there is no default,
     /// a missing client fails with `HTTP_CLIENT_REQUIRED`.
     pub async fn connect(url: &str, options: &McpRemoteOptions) -> Result<Self, McpClientError> {
         let url = parse_url(url)?;
-        let mut headers = configured_headers(options)?;
+        let headers = configured_headers(options)?;
         for reserved in [
             ACCEPT,
             CONTENT_TYPE,
             HeaderName::from_static(HEADER_SESSION_ID),
+            HeaderName::from_static(HEADER_PROTOCOL_VERSION),
         ] {
             if headers.contains_key(&reserved) {
                 return Err(McpClientError::InvalidHeader(format!(
@@ -757,12 +903,12 @@ impl McpHttpClient {
                 )));
             }
         }
-        headers.remove(HEADER_PROTOCOL_VERSION);
         let wire = Wire::Streamable(Streamable {
             http: http_client(options)?,
             url,
             headers,
             session_id: None,
+            limits: Limits::new(options),
         });
         Self::negotiate(wire, &options.standards).await
     }
@@ -772,7 +918,8 @@ impl McpHttpClient {
     /// `options.standards` over it.
     ///
     /// Configured headers follow the POST endpoint only when it shares the
-    /// event stream's origin.
+    /// event stream's origin. Opening the stream and receiving its endpoint
+    /// event share one request deadline; the open stream itself has none.
     pub async fn connect_legacy_sse(
         url: &str,
         options: &McpRemoteOptions,
@@ -780,37 +927,13 @@ impl McpHttpClient {
         let configured = parse_url(url)?;
         let headers = client_safe_headers(configured_headers(options)?);
         let http = http_client(options)?;
-        let mut request_headers = headers.clone();
-        request_headers.append(ACCEPT, HeaderValue::from_static(EVENT_STREAM));
-        let response = send(&http, "GET", &configured, &request_headers, None).await?;
-        rejected_credentials(&response)?;
-        if !response.is_success() {
-            return Err(McpClientError::Http {
-                status: response.status,
-                body: response.text().await.unwrap_or_default(),
-            });
-        }
-        let content_type = header_text(&response, CONTENT_TYPE.as_str());
-        if !content_type
-            .as_deref()
-            .and_then(|value| value.split(';').next())
-            .is_some_and(|value| value.trim().eq_ignore_ascii_case(EVENT_STREAM))
-        {
-            return Err(McpClientError::Protocol(
-                "SSE endpoint did not return text/event-stream".to_string(),
-            ));
-        }
-        let mut events = EventReader::new(response);
-        let endpoint = loop {
-            let Some(event) = events.next().await? else {
-                return Err(McpClientError::Protocol(
-                    "SSE endpoint closed before its endpoint event".to_string(),
-                ));
-            };
-            if event.event.as_deref() == Some("endpoint") {
-                break resolve_endpoint(&configured, event.data.trim())?;
-            }
-        };
+        let limits = Limits::new(options);
+        let (endpoint, events) = with_deadline(
+            &http,
+            limits.timeout,
+            open_legacy_stream(&http, &configured, &headers, limits),
+        )
+        .await?;
         let headers = if same_origin(&configured, &endpoint) {
             headers
         } else {
@@ -821,10 +944,55 @@ impl McpHttpClient {
             endpoint,
             headers,
             events: futures::lock::Mutex::new(events),
+            limits,
         });
         Self::negotiate(wire, &options.standards).await
     }
+}
 
+/// Opens a legacy SSE event stream and reads it up to its `endpoint` event.
+async fn open_legacy_stream(
+    http: &SharedHttpClient,
+    configured: &url::Url,
+    headers: &HeaderMap,
+    limits: Limits,
+) -> Result<(url::Url, EventReader), McpClientError> {
+    let mut request_headers = headers.clone();
+    request_headers.append(ACCEPT, HeaderValue::from_static(EVENT_STREAM));
+    let response = send(http, "GET", configured, &request_headers, None).await?;
+    rejected_credentials(&response)?;
+    if !response.is_success() {
+        let status = response.status;
+        return Err(McpClientError::Http {
+            status,
+            body: error_body(response, limits.max_body).await?,
+        });
+    }
+    let content_type = header_text(&response, CONTENT_TYPE.as_str());
+    if !content_type
+        .as_deref()
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case(EVENT_STREAM))
+    {
+        return Err(McpClientError::Protocol(
+            "SSE endpoint did not return text/event-stream".to_string(),
+        ));
+    }
+    let mut events = EventReader::new(response, limits.max_body);
+    let endpoint = loop {
+        let Some(event) = events.next().await? else {
+            return Err(McpClientError::Protocol(
+                "SSE endpoint closed before its endpoint event".to_string(),
+            ));
+        };
+        if event.event.as_deref() == Some("endpoint") {
+            break resolve_endpoint(configured, event.data.trim())?;
+        }
+    };
+    Ok((endpoint, events))
+}
+
+impl McpHttpClient {
     /// The exact standard negotiated with the server.
     pub fn standard(&self) -> &McpVersion {
         &self.standard
@@ -866,15 +1034,40 @@ impl McpHttpClient {
     }
 
     /// Lists every tool, following `nextCursor` pagination, as raw MCP tool
-    /// objects.
+    /// objects. The request deadline covers the entire listing, including all pages.
+    ///
+    /// A listing longer than [`MAX_REMOTE_TOOL_PAGES`] pages or
+    /// [`MAX_REMOTE_TOOLS`] tools fails with [`McpClientError::ToolLimit`].
     ///
     /// Under 2026-07-28, a tool with invalid `x-mcp-header` annotations is
     /// dropped, and valid annotations are remembered so later calls send the
     /// matching `Mcp-Param-*` headers.
     pub async fn list_tools(&self) -> Result<Vec<Value>, McpClientError> {
+        let (http, limits) = self.http_limits();
+        with_deadline(http, limits.timeout, self.list_tools_unbounded()).await
+    }
+
+    /// Host timer and deadline shared by projection and paginated discovery.
+    pub(crate) fn deadline(&self) -> Option<(Duration, crate::outbound::Sleep)> {
+        let (http, limits) = self.http_limits();
+        limits
+            .timeout
+            .and_then(|after| http.sleep(after).map(|timer| (after, timer)))
+    }
+
+    fn http_limits(&self) -> (&SharedHttpClient, Limits) {
+        match &self.wire {
+            Wire::Streamable(wire) => (&wire.http, wire.limits),
+            Wire::LegacySse(wire) => (&wire.http, wire.limits),
+        }
+    }
+
+    async fn list_tools_unbounded(&self) -> Result<Vec<Value>, McpClientError> {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
+        let mut pages = 0_usize;
         loop {
+            pages += 1;
             let params = match &cursor {
                 // Follow-up page.
                 Some(cursor) => serde_json::json!({ "cursor": cursor }),
@@ -889,6 +1082,11 @@ impl McpHttpClient {
                     McpClientError::Protocol("tools/list result has no tools array".to_string())
                 })?;
             for tool in page {
+                if tools.len() >= MAX_REMOTE_TOOLS {
+                    return Err(McpClientError::ToolLimit(format!(
+                        "tools/list returned more than {MAX_REMOTE_TOOLS} tools"
+                    )));
+                }
                 if self.modern {
                     let Some(annotations) = param_header_annotations(tool) else {
                         continue;
@@ -908,6 +1106,12 @@ impl McpHttpClient {
                     return Err(McpClientError::Protocol(
                         "tools/list returned a non-advancing cursor".to_string(),
                     ));
+                }
+                // The server keeps paging past the cap.
+                Some(_) if pages >= MAX_REMOTE_TOOL_PAGES => {
+                    return Err(McpClientError::ToolLimit(format!(
+                        "tools/list returned more than {MAX_REMOTE_TOOL_PAGES} pages"
+                    )));
                 }
                 // Another page.
                 Some(next) => cursor = Some(next.to_string()),
@@ -1238,7 +1442,9 @@ fn evidence_for(error: &McpClientError) -> McpNegotiationEvidence {
             McpNegotiationEvidence::ServerFailure
         }
         // No response arrived.
-        McpClientError::Transport(_) => McpNegotiationEvidence::TransportFailure,
+        McpClientError::Transport(_) | McpClientError::Timeout { .. } => {
+            McpNegotiationEvidence::TransportFailure
+        }
         // Anything else is not evidence of a legacy peer.
         _ => McpNegotiationEvidence::InvalidModernResponse,
     }

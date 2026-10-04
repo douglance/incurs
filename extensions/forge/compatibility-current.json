@@ -1,0 +1,269 @@
+{
+  "cases": [
+    {
+      "case": "openapi-3.1.1",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "895f7b439a8a78f8855848a5d64bff132999e5de13bb371f834bd0aa4e375300"
+    },
+    {
+      "case": "openapi-3.0.3",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "e3baa5d809e6b6a064b41e412e7025ef94ce79b2d4ea53d27384d74ecdbff1b2"
+    },
+    {
+      "case": "openapi-3.2.0",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "aab35dec6dcc9c30d82ff409afbf98a9a8880bf22a68ce516d9bc50fcab8930c"
+    },
+    {
+      "case": "query-form-array",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "17b8387f7ff2cc6ab5f1d7ca68be6f21351cbc43f64d9d608ea847a716c1f6a3"
+    },
+    {
+      "case": "query-pipe-array",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "a7684adc494e351be27c43c553715a75ea4fa8ebbed44475a0009d368b4215b2"
+    },
+    {
+      "case": "query-space-array",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "6f929f87d0848006cad4ac5dbbbbaaf2b184935ddce6a860d958432aa7a783f4"
+    },
+    {
+      "case": "path-simple",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "f3f88148b14fa4833d8720f68ee9da158ce672deba9362c62ab6f011bc750a0d"
+    },
+    {
+      "case": "path-label",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "d957c644c984d3821b1eddaf0c0aa081f8c35a091392a52429ab78eec52f2d4b"
+    },
+    {
+      "case": "path-matrix",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "1a9caa9d1c6b90d2bb7f07112898db8ae4d10f80238efdd5b0862fe447ba1971"
+    },
+    {
+      "case": "body-json",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "06ff5e785795a3cdcb794827df2e68d70f31aacbfdef0d6dd3020c561051dcb3"
+    },
+    {
+      "case": "body-text",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "44c52232b1dad9bc4a719b4b6d7042f03d5839d147e3b9b1208e775e227dffc2"
+    },
+    {
+      "case": "body-form",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "110d42fc0eaf44c5349d42174fd8afdf94dc60e7e813e3dc45268c0baad28392"
+    },
+    {
+      "case": "body-multipart",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "ca4fbb820fb9ac3764a440ebc3fe052e81001de33d759554d6eaeb066ec537e8"
+    },
+    {
+      "case": "schema-object",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "612e6c1de118099fa16874e49b1f4e1bd2a3dc0d27f5dd81081fe1fe18b0ca15"
+    },
+    {
+      "case": "schema-string-alias",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "b67ec76164552d9f61367c742a0f91240dab3c29cf11489e2897a8f548849e72"
+    },
+    {
+      "case": "schema-one-of",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "4a22baed2d18eb3589f14708157b252a63ad6fcf0e05fb25b0b3cab67a2df0a8"
+    },
+    {
+      "case": "schema-all-of",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "e533de0e23e579e104936ed8c0069a75da64455fcf2b41918fba461cad90fc85"
+    },
+    {
+      "case": "schema-boolean",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "728a110e2e55759f1f640f3fcb7572aa6a02d2d0c508f95651a9d51aca59f7a5"
+    },
+    {
+      "case": "operation-server-override",
+      "ok": true,
+      "request_check": "passed",
+      "request_error": null,
+      "resolution": "passed",
+      "sdk_error": null,
+      "sdk_generation": "passed",
+      "independent_document_validation": "passed",
+      "document_sha256": "d69d18ed53adfed695355c57698174f8caa8e10b81bc0c5e8abf0a61803078c7"
+    }
+  ],
+  "failed": 0,
+  "passed": 19,
+  "scope": "resolution, SDK generation, and selected request semantics; not full conformance",
+  "total": 19,
+  "comparison": {
+    "baseline": "compatibility-report.json",
+    "identical_input_documents": true,
+    "newly_passing": [
+      "openapi-3.2.0",
+      "query-pipe-array",
+      "query-space-array",
+      "path-label",
+      "path-matrix",
+      "body-text",
+      "body-form",
+      "body-multipart",
+      "schema-string-alias",
+      "schema-one-of",
+      "schema-all-of",
+      "schema-boolean",
+      "operation-server-override"
+    ],
+    "regressions": []
+  },
+  "checked_at": "2026-10-01T16:28:00.736278+00:00",
+  "validator": {
+    "package": "openapi-spec-validator",
+    "version": "0.9.0"
+  },
+  "source_sha256": {
+    "extensions/forge/Cargo.lock": "e0f61caf95bd428f8744d32b770d8b94f3bde528e5e949ed1dbd69f8446b1b76",
+    "extensions/forge/Cargo.toml": "c2ddd5fbc6cd222261e8867d096df9621fc7b2f3e25c20ba6750f8e8806630cb",
+    "extensions/forge/examples/compatibility.rs": "cfadae8a606a948d8f1cf13521c0d0df329ddeb3bd1160c5ffd6ddc0d54f2bf0",
+    "extensions/forge/src/adapters.rs": "aa065aae1a3691cf7638568d8d23fc3c8d95f79cc495dce64a6380e1784d7629",
+    "extensions/forge/src/artifacts/docs.rs": "e5f8d25f567744dd7775a4d22337bfcc73174501eb20a80b5491d343bad56d25",
+    "extensions/forge/src/artifacts/publish.rs": "61f9e14955d6510b8dabdfc29a6e942f604d5e7a0d58ab2ae31a1dd51ae925d3",
+    "extensions/forge/src/artifacts/sdk.rs": "f261896361908403e2530b7f7895d455a3bfd5cb88b8924eb8740804888b9d6d",
+    "extensions/forge/src/artifacts/sdk_composition.rs": "feb38c46d59f52b88536e1e8344e4e853bbbe998cfe9c22d14a254d138e2068d",
+    "extensions/forge/src/artifacts/sdk_validation.lock": "f8b7034807f744744dce94f8d28fde84bae4b0966294f6602fe1d459f1b7c1d3",
+    "extensions/forge/src/artifacts/sdk_validation.rs": "318ab3453f4e201a80324bbc27c3e0f11c58e8e65e6afe065d67e217297bfef2",
+    "extensions/forge/src/artifacts.rs": "68549a91620ab4a8159fdb1916756b1dc572102427aa69d8aa1e8356214f4643",
+    "extensions/forge/src/catalog.rs": "4a5331fe023886f7965c7ab0cd65a2234d9fb00410abdaffaffceb94f2eb3a0b",
+    "extensions/forge/src/form.rs": "6592a138ea68e74d498db74a76e41fda6e3015655a5d415f875d5217300b63e5",
+    "extensions/forge/src/lib.rs": "027a4297c23d83a64c45345bb651305f23864cd5304f775a783c8607055cd319",
+    "extensions/forge/src/model.rs": "565a0ce1cf21c73caebd0082d37e17acf7f3cf635b5121ddf40981af2b10cbab",
+    "extensions/forge/src/multipart.rs": "b10eaab34923cc2e791de56bb601159004c42e0d35a9ad256c8604338546168a",
+    "extensions/forge/src/parameters.rs": "9b75ec2abe9c9bcbb0759df8aac392920cd1af17245ba35b86d18c3a577c9995",
+    "extensions/forge/src/resolver.rs": "76a18d3e0e4fcbae0c17c1ae92ca00692baf33c2f3b30ed8dfd09d528fac8c9b",
+    "extensions/forge/src/runtime.rs": "fc3e4f80a01e4e069eff9a2cae369f70e8ac79518268310a65912977f43fba05",
+    "extensions/forge/src/schema.rs": "8e60cbc585559c4e1137ed889af2cb83933f4ab5f80e40343bae08e6a30517ba",
+    "extensions/forge/src/servers.rs": "4fbbd7f50f0267730783081037581952a5c63e19ceb259a8fb4f7327c6cf4db7"
+  },
+  "references": [
+    "https://spec.openapis.org/oas/v3.1.1.html",
+    "https://spec.openapis.org/oas/v3.2.0.html"
+  ]
+}

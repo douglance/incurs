@@ -26,6 +26,29 @@ have tokio's multi-thread runtime, signals, process, time, and net, so nothing
 changes for a native build with default features. A native build with
 `default-features = false` now also compiles those tokio features.
 
+## MCP results and remote clients
+
+McpCommandOptions gains a result_mapper field. Struct literals must set it
+to None or use ..Default::default(). Exhaustive McpResultContent matches need
+Audio and ResourceLink arms. Those blocks are emitted only when the selected
+MCP standard supports them; the JSON text block remains available.
+
+McpRemoteOptions adds request_timeout and max_response_bytes. Use
+..Default::default() to retain the 60-second portable request deadline and
+16 MiB buffered-response cap. Custom HttpClient implementations supply sleep
+to enforce deadlines; without a host timer the portable client cannot enforce
+one. Catalog discovery is bounded separately by page and tool counts.
+
+Non-object MCP output schemas use a marked object envelope on the MCP wire.
+The original ToolCatalog and CLI results stay unchanged. Remote clients
+restore the inner value only for the exact io.incurs.outputProjection marker;
+a natural third-party object named data is preserved.
+
+CodeModeMcpServer::with_projector accepts a host-owned ExecutionProjector.
+Its argument properties are added to lifecycle tool schemas without replacing
+built-in properties. Host projection takes precedence over the fixed
+ExecutionProjection setting and skips search, artifacts, and service errors.
+
 ## Run on Cloudflare Workers
 
 Build with `default-features = false` and any other features, and serve the

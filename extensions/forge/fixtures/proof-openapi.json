@@ -1,0 +1,15 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Forge Proof Pets", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.test" }],
+  "security": [{ "global_key": [] }],
+  "components": { "schemas": {
+    "Category": { "type": "string", "enum": ["cat", "dog"] },
+    "Pet": { "type": "object", "required": ["id", "name", "category"], "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "category": { "$ref": "#/components/schemas/Category" }, "friend": { "$ref": "#/components/schemas/Pet", "nullable": true } } },
+    "NewPet": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "tag": { "type": ["string", "null"], "default": null } } }
+  } },
+  "paths": {
+    "/pets/{id}": { "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "name": "trace", "in": "header", "required": false, "schema": { "type": "string" } } ], "get": { "operationId": "get_pet", "summary": "Get a pet", "parameters": [ { "name": "trace", "in": "header", "required": true, "schema": { "type": "string" } }, { "name": "include", "in": "query", "required": false, "style": "pipeDelimited", "explode": false, "schema": { "type": "array", "items": { "type": "string" } } } ], "security": [{ "pet_key": ["read"] }], "responses": { "200": { "description": "pet found", "headers": { "etag": { "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } }, "404": { "description": "not found", "content": { "application/json": { "schema": { "$ref": "common.json#/components/schemas/ErrorMessage" } } } }, "default": { "description": "binary fallback", "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } } } } } },
+    "/pets": { "post": { "operationId": "create_pet", "summary": "Create a pet", "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewPet" } } } }, "responses": { "201": { "description": "created", "headers": { "location": { "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } } } } } } }
+  }
+}

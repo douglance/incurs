@@ -1,0 +1,77 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Form proof",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/form": {
+      "post": {
+        "operationId": "sendForm",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "address": {
+                    "type": "object",
+                    "properties": {
+                      "city": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "quoted": {
+                    "type": "string"
+                  },
+                  "packed": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "encoding": {
+                "tags": {
+                  "style": "form",
+                  "explode": true
+                },
+                "quoted": {
+                  "contentType": "application/json"
+                },
+                "packed": {
+                  "style": "form",
+                  "explode": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted"
+          }
+        }
+      }
+    }
+  }
+}

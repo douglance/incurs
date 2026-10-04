@@ -1319,3 +1319,273 @@ fn default_origins_follow_allowed_hosts() {
     assert_eq!(config.allowed_hosts, vec!["localhost", "127.0.0.1", "::1"]);
     assert!(config.allowed_origins.is_none());
 }
+
+struct OutputValue(Value);
+
+#[async_trait::async_trait]
+impl CommandHandler for OutputValue {
+    async fn run(&self, _ctx: CommandContext) -> CommandResult {
+        CommandResult::Ok {
+            data: self.0.clone(),
+            cta: None,
+            exit_code: None,
+        }
+    }
+}
+
+async fn output_boundary(cli: &Cli, request: Vec<u8>) -> [Value; 2] {
+    output_boundary_version(cli, request, "2025-06-18").await
+}
+
+async fn output_boundary_version(cli: &Cli, request: Vec<u8>, version: &str) -> [Value; 2] {
+    let mut message: Value = serde_json::from_slice(&request).unwrap();
+    let headers = if version == "2026-07-28" {
+        message["params"]["_meta"] = modern_meta();
+        modern_headers(
+            message["method"].as_str().unwrap(),
+            message["params"]["name"].as_str(),
+        )
+    } else {
+        with(base_headers(), &[("mcp-protocol-version", version)])
+    };
+    let case = case(
+        "output-boundary",
+        headers,
+        serde_json::to_vec(&message).unwrap(),
+    );
+    let portable = McpHttpServer::from_cli(cli, portable_config()).unwrap();
+    let native = observe_native(cli, &case).await;
+    let hosted = observe_portable(&portable, &case).await;
+    assert_eq!(native.status, 200);
+    assert_eq!(hosted.status, 200);
+    [
+        native.messages.last().expect("native response")["result"].clone(),
+        hosted.messages.last().expect("portable response")["result"].clone(),
+    ]
+}
+
+#[tokio::test]
+async fn mcp_output_boundary_projects_media_with_literal_wire_expectations() {
+    let data = json!({
+        "audio": {"bytes": "YXVkaW8=", "mime": "audio/wav"},
+        "link": {"uri": "https://example.test/clip.wav", "name": "clip.wav", "mime": "audio/wav"}
+    });
+    let command = || {
+        let mut command = CommandDef::build("media", OutputValue(data.clone()))
+            .mcp(McpCommandOptions {
+                result_content: vec![
+                    McpResultContent::Audio {
+                        data_pointer: "/audio/bytes".into(),
+                        mime_type_pointer: "/audio/mime".into(),
+                    },
+                    McpResultContent::ResourceLink {
+                        uri_pointer: "/link/uri".into(),
+                        name_pointer: "/link/name".into(),
+                        mime_type_pointer: "/link/mime".into(),
+                    },
+                    McpResultContent::Audio {
+                        data_pointer: "/missing".into(),
+                        mime_type_pointer: "/audio/mime".into(),
+                    },
+                    McpResultContent::ResourceLink {
+                        uri_pointer: "/link/uri".into(),
+                        name_pointer: "/audio".into(),
+                        mime_type_pointer: "/link/mime".into(),
+                    },
+                ],
+                ..Default::default()
+            })
+            .done();
+        command.output_schema = Some(json!({"type": "object"}));
+        command
+    };
+    for discovery in [McpDiscovery::Direct, McpDiscovery::Progressive] {
+        let cli = Cli::create("media")
+            .mcp(McpServeOptions {
+                tools: McpToolFilter {
+                    discovery,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .command("media", command());
+        let (name, args) = if discovery == McpDiscovery::Direct {
+            ("media", json!({}))
+        } else {
+            ("call_write_tool", json!({"name": "media", "arguments": {}}))
+        };
+        for (version, block_count) in [
+            ("2024-11-05", 1),
+            ("2025-03-26", 2),
+            ("2025-06-18", 3),
+            ("2025-11-25", 3),
+            ("2026-07-28", 3),
+        ] {
+            for result in
+                output_boundary_version(&cli, call(json!(301), name, args.clone()), version).await
+            {
+                assert_eq!(result["isError"], false);
+                assert_eq!(result["structuredContent"], data);
+                assert_eq!(
+                    result["content"].as_array().unwrap().len(),
+                    block_count,
+                    "{version}"
+                );
+                if block_count >= 2 {
+                    assert_eq!(
+                        result["content"][1],
+                        json!({"type": "audio", "data": "YXVkaW8=", "mimeType": "audio/wav"})
+                    );
+                }
+                if block_count >= 3 {
+                    assert_eq!(
+                        result["content"][2],
+                        json!({
+                            "type": "resource_link", "uri": "https://example.test/clip.wav",
+                            "name": "clip.wav", "mimeType": "audio/wav"
+                        })
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_output_boundary_wraps_json_roots_and_preserves_mapper_contracts() {
+    let cases = [
+        (
+            json!({"type": "array", "items": {"type": "string"}}),
+            json!(["Ada"]),
+        ),
+        (json!({"type": "string"}), json!("Ada")),
+        (json!({"type": "integer"}), json!(42)),
+        (json!({"type": "boolean"}), json!(false)),
+        (json!({"type": "null"}), Value::Null),
+        (json!({"type": ["object", "null"]}), Value::Null),
+    ];
+    let marker = json!({"io.incurs.outputProjection": {
+        "version": 1, "shape": "value-wrapper", "field": "data", "schemaRefBase": "#/properties/data"
+    }});
+    for (schema, data) in cases {
+        for discovery in [McpDiscovery::Direct, McpDiscovery::Progressive] {
+            let command = || {
+                let mut command = CommandDef::build("value", OutputValue(data.clone())).done();
+                command.output_schema = Some(schema.clone());
+                command
+            };
+            let base = McpServeOptions {
+                tools: McpToolFilter {
+                    discovery,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let unchanged = Cli::create("values")
+                .mcp(base.clone())
+                .command("value", command());
+            let original_schema = schema.clone();
+            let mapped = Cli::create("values")
+                .mcp(McpServeOptions {
+                    result_mapper: Some(super::McpResultMapper::new(move |context| {
+                        assert_eq!(context.tool.name, "value");
+                        assert_eq!(context.tool.output_schema.as_ref(), Some(&original_schema));
+                        assert!(matches!(
+                            context.outcome,
+                            crate::tool::ToolCallOutcome::Ok { .. }
+                        ));
+                        super::McpResultMapping::error()
+                    })),
+                    ..base
+                })
+                .command("value", command());
+            let discovery_request = if discovery == McpDiscovery::Direct {
+                rpc(json!(302), "tools/list", None)
+            } else {
+                call(json!(302), "get_tool_details", json!({"name": "value"}))
+            };
+            let catalog = |cli: &Cli| {
+                crate::tool::ToolCatalog::from_parts(
+                    cli.name.clone(),
+                    cli.version.clone(),
+                    &cli.commands,
+                    &cli.middleware,
+                    &cli.env_fields,
+                    &cli.globals_fields,
+                    cli.config.as_ref(),
+                )
+                .unwrap()
+            };
+            let original_definitions = catalog(&unchanged).definitions();
+            assert_eq!(
+                original_definitions[0].output_schema.as_ref(),
+                Some(&schema)
+            );
+            assert_eq!(
+                serde_json::to_value(original_definitions).unwrap(),
+                serde_json::to_value(catalog(&mapped).definitions()).unwrap(),
+                "mapper must preserve all catalog identity, schema, annotation and instruction metadata"
+            );
+            let listed = output_boundary(&unchanged, discovery_request.clone()).await;
+            let mapped_listed = output_boundary(&mapped, discovery_request).await;
+            assert_eq!(
+                listed, mapped_listed,
+                "mapper must preserve tool identity and schemas"
+            );
+            for response in listed {
+                let tool = if discovery == McpDiscovery::Direct {
+                    response["tools"][0].clone()
+                } else {
+                    response["structuredContent"].clone()
+                };
+                assert_eq!(
+                    tool["outputSchema"],
+                    json!({
+                        "type": "object", "properties": {"data": schema},
+                        "required": ["data"], "additionalProperties": false
+                    })
+                );
+                assert_eq!(tool["_meta"], marker);
+            }
+            let (name, args) = if discovery == McpDiscovery::Direct {
+                ("value", json!({}))
+            } else {
+                ("call_write_tool", json!({"name": "value", "arguments": {}}))
+            };
+            let request = call(json!(303), name, args);
+            let normal = output_boundary(&unchanged, request.clone()).await;
+            let mapped = output_boundary(&mapped, request).await;
+            for (normal, mut mapped) in normal.into_iter().zip(mapped) {
+                assert_eq!(normal["structuredContent"], json!({"data": data}));
+                assert_eq!(normal["_meta"], marker);
+                assert_eq!(normal["isError"], false);
+                assert_eq!(mapped["isError"], true);
+                mapped["isError"] = json!(false);
+                assert_eq!(normal, mapped, "mapper must preserve rendering");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn mcp_output_boundary_rejects_wrong_object_shape_with_coded_error() {
+    let mut command = CommandDef::build("value", OutputValue(json!(["wrong"]))).done();
+    command.output_schema = Some(json!({"type": "object"}));
+    let cli = Cli::create("values")
+        .mcp(McpServeOptions {
+            tools: McpToolFilter {
+                discovery: McpDiscovery::Direct,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .command("value", command);
+    for result in output_boundary(&cli, call(json!(304), "value", json!({}))).await {
+        assert_eq!(result["isError"], true);
+        let error: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(error["code"], "MCP_OUTPUT_SHAPE_INVALID");
+        assert_eq!(error["retryable"], false);
+        assert_eq!(result.get("_meta"), None);
+    }
+}

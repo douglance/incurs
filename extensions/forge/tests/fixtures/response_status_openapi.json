@@ -1,0 +1,74 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Response status family proof",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "https://example.test"
+    }
+  ],
+  "paths": {
+    "/all": {
+      "get": {
+        "operationId": "allStatuses",
+        "responses": {
+          "1XX": {
+            "description": "Informational"
+          },
+          "2XX": {
+            "description": "Success"
+          },
+          "3XX": {
+            "description": "Redirect"
+          },
+          "4XX": {
+            "description": "Client error"
+          },
+          "5XX": {
+            "description": "Server error"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "404": {
+            "description": "Missing"
+          },
+          "default": {
+            "description": "Fallback"
+          }
+        }
+      }
+    },
+    "/sparse": {
+      "get": {
+        "operationId": "sparseStatuses",
+        "responses": {
+          "2XX": {
+            "description": "Success"
+          },
+          "4XX": {
+            "description": "Client error"
+          },
+          "418": {
+            "description": "Exact client error"
+          }
+        }
+      }
+    },
+    "/fallback": {
+      "get": {
+        "operationId": "fallbackStatuses",
+        "responses": {
+          "2XX": {
+            "description": "Success"
+          },
+          "default": {
+            "description": "Fallback"
+          }
+        }
+      }
+    }
+  }
+}

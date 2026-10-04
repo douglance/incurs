@@ -1,8 +1,10 @@
 //! Outbound HTTP for incurs through the Workers `fetch` API.
 
 use futures::StreamExt;
-use incurs::outbound::{HttpClient, HttpClientError, HttpRequest, HttpResponse};
+use incurs::outbound::{HttpClient, HttpClientError, HttpRequest, HttpResponse, Sleep};
 use worker::send::{SendFuture, SendWrapper};
+
+use crate::buffered_body::buffered_body;
 
 /// An [`HttpClient`] that sends every request with [`worker::Fetch`] and
 /// streams the response body.
@@ -14,6 +16,9 @@ use worker::send::{SendFuture, SendWrapper};
 ///
 /// Workers run on one thread, so the `fetch` futures and body streams, which
 /// hold JavaScript values, are wrapped to satisfy the contract's `Send` bound.
+///
+/// The client supplies a [`worker::Delay`] timer, so incurs request deadlines
+/// such as `McpRemoteOptions::request_timeout` apply inside a Worker.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WorkersHttpClient {
     redirect: worker::RequestRedirect,
@@ -75,9 +80,10 @@ async fn exchange(
                 });
             Box::pin(chunks) as incurs::outbound::HttpBody
         }
-        // A body that is not a stream, including no body, is read at once.
+        // A body that is not a stream, including no body, is read at once;
+        // a failed read is a transport error, not an empty body.
         Err(_) => {
-            let bytes = response.bytes().await.unwrap_or_default();
+            let bytes = buffered_body(response.bytes().await)?;
             Box::pin(futures::stream::once(async move { Ok(bytes) }))
         }
     };
@@ -92,5 +98,10 @@ async fn exchange(
 impl HttpClient for WorkersHttpClient {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError> {
         SendFuture::new(exchange(self.redirect, request)).await
+    }
+
+    /// A Workers timer, [`worker::Delay`].
+    fn sleep(&self, duration: std::time::Duration) -> Option<Sleep> {
+        Some(Box::pin(SendFuture::new(worker::Delay::from(duration))))
     }
 }

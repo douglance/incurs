@@ -1,0 +1,162 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SDK symbol collisions",
+    "version": "1"
+  },
+  "paths": {
+    "/create/{id}": {
+      "post": {
+        "operationId": "createThing",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "default": 7 }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateThingBody" }
+            },
+            "application/x-never": {
+              "schema": false
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "ok" }
+        }
+      }
+    },
+    "/false": {
+      "post": {
+        "operationId": "falseBody",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": { "schema": false }
+          }
+        },
+        "responses": { "204": { "description": "none" } }
+      }
+    },
+    "/new": {
+      "get": {
+        "operationId": "new",
+        "responses": { "204": { "description": "none" } }
+      }
+    },
+    "/new-operation": {
+      "get": {
+        "operationId": "new-operation",
+        "responses": { "204": { "description": "none" } }
+      }
+    },
+    "/into-transport": {
+      "get": {
+        "operationId": "intoTransport",
+        "responses": { "204": { "description": "none" } }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateThingArgs": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "CreateThingBody": {
+        "type": "object",
+        "required": ["helper", "id", "origin"],
+        "properties": {
+          "helper": { "$ref": "#/components/schemas/JsonValue" },
+          "id": { "type": "string" },
+          "origin": { "$ref": "#/components/schemas/Load_BalancingOriginHealthy" },
+          "ref": { "type": "string", "default": "from-ref" },
+          "ref-default": { "type": "string", "default": "from-ref-default" },
+          "type": { "type": "integer", "default": 1 },
+          "type-default": { "type": "integer", "default": 2 },
+          "type_": { "type": "integer", "default": 3 }
+        }
+      },
+      "CreateThingResponse": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "Field": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "JsonValue": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "Some": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "None": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "Ok": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "Err": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      },
+      "Load-BalancingOriginHealthy": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": { "ok": { "type": "boolean" } }
+      },
+      "LoadBalancingOriginHealthy2": {
+        "type": "object",
+        "required": ["label"],
+        "properties": { "label": { "type": "string" } }
+      },
+      "Load_BalancingOriginHealthy": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": { "ok": { "type": "boolean" } }
+      },
+      "Recursive-Node": {
+        "type": "object",
+        "properties": {
+          "child": { "$ref": "#/components/schemas/Recursive-Node" }
+        }
+      },
+      "Recursive_Node": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/Recursive-Node" },
+          { "$ref": "#/components/schemas/Load-BalancingOriginHealthy" }
+        ]
+      },
+      "String": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "string" } }
+      }
+    }
+  }
+}

@@ -8,6 +8,9 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
+use incurs_mcp_protocol::structured::{
+    McpStructuredShape, project_output_schema, project_structured_content, projection_metadata,
+};
 use serde_json::{Map, Value, json};
 
 use super::{McpDiscovery, McpServeOptions, McpToolFilter};
@@ -21,6 +24,10 @@ use crate::tool::{
 
 /// A resolved tool metadata entry. Execution goes through [`ToolCatalog`].
 pub(crate) struct SharedTool {
+    /// Original transport-neutral definition supplied to result mappers.
+    definition: ToolDefinition,
+    /// MCP-only structured representation; the catalog keeps its original schema.
+    output_shape: Option<McpStructuredShape>,
     /// Tool name (path segments joined with `_`).
     pub(crate) name: String,
     /// Human-readable description.
@@ -40,6 +47,7 @@ pub(crate) struct SharedTool {
 }
 
 fn shared_tool(definition: &ToolDefinition) -> SharedTool {
+    let projection = definition.output_schema.as_ref().map(project_output_schema);
     let annotations = definition.annotations.as_ref().map(|annotations| {
         let mut wire = Map::new();
         if let Some(title) = &annotations.title {
@@ -58,6 +66,8 @@ fn shared_tool(definition: &ToolDefinition) -> SharedTool {
         Value::Object(wire)
     });
     SharedTool {
+        definition: definition.clone(),
+        output_shape: projection.as_ref().map(|projection| projection.shape),
         name: definition.name.clone(),
         description: definition.description.clone(),
         input_schema: definition
@@ -65,10 +75,9 @@ fn shared_tool(definition: &ToolDefinition) -> SharedTool {
             .as_object()
             .cloned()
             .unwrap_or_default(),
-        output_schema: definition
-            .output_schema
+        output_schema: projection
             .as_ref()
-            .and_then(|schema| schema.as_object().cloned()),
+            .and_then(|projection| projection.schema.as_object().cloned()),
         read_only: definition
             .annotations
             .as_ref()
@@ -183,10 +192,21 @@ pub(crate) fn direct_tool(tool: &SharedTool) -> Value {
     if let Some(annotations) = &tool.annotations {
         wire.insert("annotations".to_string(), annotations.clone());
     }
-    if let Some(instructions) = &tool.instructions {
-        wire.insert("_meta".to_string(), json!({ "instructions": instructions }));
+    if let Some(metadata) = tool_metadata(tool) {
+        wire.insert("_meta".to_string(), Value::Object(metadata));
     }
     Value::Object(wire)
+}
+
+/// Metadata shared by direct tool listing and detailed discovery.
+fn tool_metadata(tool: &SharedTool) -> Option<Map<String, Value>> {
+    let mut metadata = tool.output_shape.and_then(projection_metadata);
+    if let Some(instructions) = &tool.instructions {
+        metadata
+            .get_or_insert_default()
+            .insert("instructions".to_string(), json!(instructions));
+    }
+    metadata
 }
 
 /// The four MCP `Tool` wire values served under progressive discovery.
@@ -360,14 +380,18 @@ pub(crate) fn discovery_result(
             let tool = tools
                 .get(tool_name)
                 .ok_or_else(|| format!("Unknown tool: {tool_name}"))?;
-            Ok(Some(structured_result(json!({
+            let mut details = json!({
                 "name": tool.name,
                 "description": tool.description,
                 "inputSchema": Value::Object(tool.input_schema.clone()),
                 "outputSchema": tool.output_schema.clone().map(Value::Object),
                 "annotations": tool.annotations,
                 "instructions": tool.instructions,
-            }))))
+            });
+            if let Some(metadata) = tool_metadata(tool) {
+                details["_meta"] = Value::Object(metadata);
+            }
+            Ok(Some(structured_result(details)))
         }
         "call_read_tool" | "call_write_tool" => {
             let tool_name = arguments
@@ -458,6 +482,10 @@ pub(crate) fn tool_result_success(
             McpResultContent::Image {
                 data_pointer,
                 mime_type_pointer,
+            }
+            | McpResultContent::Audio {
+                data_pointer,
+                mime_type_pointer,
             } => {
                 let Some(image_data) = data.pointer(data_pointer).and_then(Value::as_str) else {
                     continue;
@@ -467,9 +495,28 @@ pub(crate) fn tool_result_success(
                     continue;
                 };
                 content.push(json!({
-                    "type": "image",
+                    "type": if matches!(item, McpResultContent::Audio { .. }) { "audio" } else { "image" },
                     "data": image_data,
                     "mimeType": mime_type,
+                }));
+            }
+            McpResultContent::ResourceLink {
+                uri_pointer,
+                name_pointer,
+                mime_type_pointer,
+            } => {
+                let Some(uri) = data.pointer(uri_pointer).and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(name) = data.pointer(name_pointer).and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(mime_type) = data.pointer(mime_type_pointer).and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                content.push(json!({
+                    "type": "resource_link", "uri": uri, "name": name, "mimeType": mime_type,
                 }));
             }
         }
@@ -551,6 +598,8 @@ pub(crate) fn progress_message(event: ToolEvent) -> String {
 
 /// Per-call inputs that come from the transport rather than the MCP request.
 pub(crate) struct CallContext {
+    /// Exact negotiated protocol version used to choose compatible content.
+    pub(crate) protocol_version: String,
     /// Transport request metadata handed to the command.
     pub(crate) request: Option<crate::command::RequestContext>,
     /// Cancellation and event delivery for this call.
@@ -576,6 +625,8 @@ pub(crate) struct ToolServer {
     pub(crate) instructions: Option<String>,
     /// Active discovery strategy.
     discovery: McpDiscovery,
+    /// Optional application classification applied after default rendering.
+    result_mapper: Option<super::McpResultMapper>,
     /// Exact standards enabled for this server.
     pub(crate) standards: incurs_mcp_protocol::McpStandardSet,
 }
@@ -641,6 +692,7 @@ impl ToolServer {
             tool_list: Arc::new(tool_list),
             instructions: options.instructions.clone(),
             discovery: options.tools.discovery,
+            result_mapper: options.result_mapper.clone(),
             standards: options.standards.clone(),
         })
     }
@@ -692,11 +744,62 @@ impl ToolServer {
                 },
             )
             .await;
-        Ok(tool_call_result(
+        let mapping = self
+            .result_mapper
+            .as_ref()
+            .map(|mapper| {
+                mapper.map(super::McpResultContext {
+                    tool: &tool.definition,
+                    outcome: &outcome,
+                })
+            })
+            .unwrap_or_default();
+        let success = matches!(outcome, ToolCallOutcome::Ok { .. });
+        let mut result = tool_call_result(
             &self.server_name,
             outcome,
             tool.output_schema.is_some(),
             &tool.result_content,
-        ))
+        );
+        if success && let Some(shape) = tool.output_shape {
+            let data = result["structuredContent"].take();
+            match project_structured_content(data, shape) {
+                Ok(projected) => {
+                    result["structuredContent"] = projected;
+                    if let Some(metadata) = projection_metadata(shape) {
+                        if !result["_meta"].is_object() {
+                            result["_meta"] = json!({});
+                        }
+                        result["_meta"].as_object_mut().unwrap().extend(metadata);
+                    }
+                }
+                Err(error) => {
+                    return Ok(tool_call_result(
+                        &self.server_name,
+                        ToolCallOutcome::Error {
+                            code: "MCP_OUTPUT_SHAPE_INVALID".to_string(),
+                            message: error.to_string(),
+                            retryable: Some(false),
+                            field_errors: None,
+                            cta: None,
+                            exit_code: None,
+                        },
+                        false,
+                        &[],
+                    ));
+                }
+            }
+        }
+        if let Some(is_error) = mapping.is_error {
+            result["isError"] = json!(is_error);
+        }
+        if let Some(content) = result["content"].as_array_mut() {
+            content.retain(|block| match block["type"].as_str() {
+                Some("audio") => context.protocol_version.as_str() >= "2025-03-26",
+                Some("resource_link") => context.protocol_version.as_str() >= "2025-06-18",
+                _ => true,
+            });
+        }
+        Ok(result)
     }
 }

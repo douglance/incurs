@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "scope": "Opt-in generated Rust SDK buffered response decoding; native packaged consumers, pinned API corpus compilation, and local Emscripten Worker execution.",
+  "change": {
+    "before": "Callers received classified raw responses and parsed their bodies themselves.",
+    "after": "The typed-responses feature validates declared media and response schemas, returns typed bodies, and retains the raw response on success and failure.",
+    "default_feature_enabled": false
+  },
+  "native": {
+    "fixture": "tests/fixtures/typed_responses_openapi.json",
+    "operations": 20,
+    "real_loopback_http_exchanges": 4,
+    "controls": [
+      "JSON, UTF-8 text, all 256 binary byte values, malformed JSON and transport errors",
+      "Exact integers above 64 bits, decimal and exponent tokens, checked numeric conversions",
+      "Nested duplicate key rejection and raw status/header/body retention",
+      "Missing versus null, readOnly/writeOnly requirements, defaults not inserted, permitted unknown properties retained",
+      "Recursive named and anonymous compositions, parent validation, nullable references and type arrays",
+      "Constraint-only schemas accepting non-object values, boolean and root-null schemas",
+      "Reserved Rust identifiers and control characters in property names",
+      "Status/media precedence, bodyless statuses and HEAD, charset and binary length intersections"
+    ],
+    "independent_openapi_validator": "openapi-spec-validator 0.9.0",
+    "independent_validation_execution": "01a0fc0d-ce78-77c0-9f16-7fa5ff72743c"
+  },
+  "mutations": {
+    "source_edits_confirmed": true,
+    "unchanged_tests": true,
+    "exact_source_restored": true,
+    "controls": [
+      {
+        "change": "Disable JSON schema checking",
+        "execution": "01a0fbd3-4158-7e51-9160-e66168121574"
+      },
+      {
+        "change": "Represent explicit null as a value",
+        "execution": "01a0fbd3-4158-7e51-9160-e66168121574"
+      },
+      {
+        "change": "Disable anonymous schema identity reuse",
+        "execution": "01a0fbd3-4158-7e51-9160-e66168121574",
+        "scope": "Focused private unit test; runaway full-corpus expansion was not repeated."
+      },
+      {
+        "change": "Remove reserved keyword box from name handling",
+        "execution": "01a0fbd3-4158-7e51-9160-e66168121574"
+      },
+      {
+        "change": "Reuse a nonnullable model's validation pointer for a nullable root",
+        "execution": "01a0fc14-4993-7561-aff8-dae0d5155152"
+      }
+    ]
+  },
+  "quality": {
+    "execution": "01a0fc19-05ae-7692-8c0b-47efef71dd46",
+    "checks": [
+      "Formatting",
+      "Strict all-feature all-target Clippy",
+      "Complete all-feature test suite, sequential consumers",
+      "Strict all-feature rustdoc",
+      "wasm32-unknown-unknown all-feature compilation"
+    ],
+    "passed": true,
+    "tests_passed": 130,
+    "tests_failed": 0,
+    "suites": 25
+  },
+  "worker": {
+    "build_execution": "01a0fc19-05ae-7692-8c0b-47f844b3acee",
+    "target": "wasm32-unknown-emscripten",
+    "package_archives": 5,
+    "concurrent_http_requests": 8,
+    "scope_limit": "Local HTTP observes generated decoding and request binding controls in workerd. Its typed client uses a fixture transport; no vendor call or hosted deployment.",
+    "http_probe_execution": "01a0fc22-bbac-7151-a597-909c2a3b3344",
+    "server_execution": "01a0fc22-48ad-7cc1-a44d-e2e6c01c83a4",
+    "server_stopped": true,
+    "passed": true
+  },
+  "recovery": {
+    "stripe_generation": {
+      "profile_execution": "01a0fc05-942c-71c2-9071-9118025a1ed9",
+      "observation": "The interrupted generation sampled all 653 stack observations in recursive binary annotation traversal after more than twelve minutes.",
+      "change": "Check JSON media first; binary annotations follow only the response value's references and composition branches.",
+      "successful_generation_ms": 69517,
+      "scope_limit": "Observed generation time from one run, not a controlled benchmark."
+    }
+  },
+  "limits": [
+    "No universal OpenAPI conformance or all-vendor-operation behavior claim.",
+    "Structured XML decoding, incremental streams, vendor envelope unwrapping, and unsupported binary constraints remain outside this decoder.",
+    "GitHub and Stripe HTTP consumers exercise raw methods with typed-responses enabled; Cloudflare exercises two typed HTTP responses plus three raw request media cases.",
+    "Stripe optional expand remains rejected: the pinned source declares deepObject for an array.",
+    "Cloudflare pinned source retains its independently observed invalid enum default unchanged.",
+    "All HTTP probes use local fixtures; no hosted deployment or live vendor request was performed."
+  ],
+  "corpus_regeneration": {
+    "execution": "01a0fc1a-d4a3-7622-909f-f20e6b4c2e64",
+    "passed": true,
+    "comparison_files": [
+      "contract.json",
+      "sdk/Cargo.toml",
+      "sdk/Cargo.lock",
+      "sdk/src/lib.rs",
+      "sdk/src/schemas.json",
+      "sdk/src/response-schemas.json",
+      "sdk/tests/smoke.rs",
+      "sdk/README.md"
+    ],
+    "github_and_stripe": "All eight regenerated files byte-identical to the corresponding tested package inputs.",
+    "cloudflare": "Generated library and response schema graph changed; fresh package and extracted-archive HTTP consumer passed."
+  },
+  "corpora": {
+    "cloudflare": {
+      "operations": 3627,
+      "schemas": 6948,
+      "resolved_json_bytes": 12123837,
+      "local_http_cases": 5,
+      "typed_http_cases": 2,
+      "package_http_execution": "01a0fc24-44bd-7932-a705-045f22d7bbb2",
+      "source_sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+      "artifact_sha256": {
+        "contract.json": "6d15f54d362af9e2cd08c554001a38d3bfcb25868ad891761ab7c0379498e73b",
+        "sdk/Cargo.toml": "fabe926636e5a8fa53c1c4883a6f216567bf197ea82f7fb70375fefe51bd1894",
+        "sdk/Cargo.lock": "4ff12801b234f9b0fb758e79d75de99dd108ca3d9fb85111ba24627856e159aa",
+        "sdk/src/lib.rs": "98f1183efd399a60dd65073d3cc6f4600ff006f141ffed84046aeeebf1ba1de5",
+        "sdk/src/schemas.json": "3eb3591102e9fa58afe7b9ade021f3c920d4dacdeceea695fedc8ab8194bf12d",
+        "sdk/src/response-schemas.json": "5b7504ba958a22363141d44e1b416cfa59f640c5765723fa73f390c34b3d3e2d",
+        "sdk/tests/smoke.rs": "7d1948477ca622a44ccf3af420fa3c903fac232d17fd3ca2441690d1805aff62",
+        "sdk/README.md": "b6a7a6da3327e67c1d2685c3e82a53ca2514aad686f9280cb5b03c7d35e012c5"
+      },
+      "archive": "/tmp/incurs-cloudflare-sdk-20261002-typed-verified/sdk/target/package/corpus-proof-sdk-0.1.0.crate",
+      "archive_sha256": "242f8325534c27040fd2ced7b81d774fae735c6c31287db7eb231522a9045b6e",
+      "typed_responses_feature_enabled": true,
+      "archive_source_identity": true,
+      "package_and_http_passed": true
+    },
+    "github": {
+      "operations": 1231,
+      "schemas": 973,
+      "resolved_json_bytes": 4787312,
+      "local_http_cases": 4,
+      "typed_http_cases": 0,
+      "package_http_execution": "01a0fbf7-4698-7263-81e8-10837995706e",
+      "execution_note": "The GitHub package and HTTP substeps passed; the later Stripe generation in the same execution was canceled and then verified separately.",
+      "source_sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+      "artifact_sha256": {
+        "contract.json": "2dfafffedc71ce0ce1462096482631a600310b26691e592817da19c64725848c",
+        "sdk/Cargo.toml": "fabe926636e5a8fa53c1c4883a6f216567bf197ea82f7fb70375fefe51bd1894",
+        "sdk/Cargo.lock": "4ff12801b234f9b0fb758e79d75de99dd108ca3d9fb85111ba24627856e159aa",
+        "sdk/src/lib.rs": "6b8ff7055d5f47f2abf79b1c1b024ce271df3c12c669ebcda31d097cb713f361",
+        "sdk/src/schemas.json": "697afaebacb3b0080414096c0cfa03c93df68388d1ae7532daceae2915e4efcd",
+        "sdk/src/response-schemas.json": "bb7b671b020f5079d3c9997b208217b03a2245627c057eb77303290e7d0b0410",
+        "sdk/tests/smoke.rs": "52c2beec67c58579324929713832ad7f18ec0f38efaf8742dd08926150472607",
+        "sdk/README.md": "fc7c8c7c0e6ddeabe9f170cf3972a42117e60359178d42aa5c6d13b7bdf0d26a"
+      },
+      "archive": "/tmp/incurs-github-sdk-20261002-typed-final/sdk/target/package/corpus-proof-sdk-0.1.0.crate",
+      "archive_sha256": "12716da720d677858cb32a01161d55c3284c9a7f39b07cf29d6d227ac49ef7d9",
+      "typed_responses_feature_enabled": true,
+      "archive_source_identity": true,
+      "package_and_http_passed": true
+    },
+    "stripe": {
+      "operations": 644,
+      "schemas": 1701,
+      "resolved_json_bytes": 4620179,
+      "local_http_cases": 1,
+      "typed_http_cases": 0,
+      "package_http_execution": "01a0fc0c-b1da-7e80-a5a6-5768d9919272",
+      "source_sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+      "artifact_sha256": {
+        "contract.json": "b10075d93ec95224f1fe18b938f3afa2a497b7a7542689a59b28dc2a8e184689",
+        "sdk/Cargo.toml": "fabe926636e5a8fa53c1c4883a6f216567bf197ea82f7fb70375fefe51bd1894",
+        "sdk/Cargo.lock": "4ff12801b234f9b0fb758e79d75de99dd108ca3d9fb85111ba24627856e159aa",
+        "sdk/src/lib.rs": "c0ac9177b2a50feb4636a7d7f55ef8597842f01382bb04224824a3898b59048a",
+        "sdk/src/schemas.json": "a0545e6d5d416128ea50a4f96c2118be471984af7dcdd78af2b80f83755e34f8",
+        "sdk/src/response-schemas.json": "1ce51926205289331227bdd9ae7112556ea1d3040c064b7344edb2790d52f6bc",
+        "sdk/tests/smoke.rs": "90535031efe2f8c94529eb0d3922ec317f33b1a188ebf15471aa29a16e685903",
+        "sdk/README.md": "d472d8f84a3280b8589f90e6e6d594115fe43ebf6c5056b9b269fc8601630891"
+      },
+      "archive": "/tmp/incurs-stripe-sdk-20261002-typed-final/sdk/target/package/corpus-proof-sdk-0.1.0.crate",
+      "archive_sha256": "e01c6cb33c4f7246d7de1b9c99a43fa85668079decd074ae9d031d76fe5d797b",
+      "typed_responses_feature_enabled": true,
+      "archive_source_identity": true,
+      "package_and_http_passed": true
+    }
+  },
+  "worker_artifact_sha256": {
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/worker/build/index_bg.wasm": "a62651d232f2017560d1379e17bc529ef36b6921a724801f117ef724bdbabfa9",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/worker/build/index.js": "302b5b5e282816d61f38b8829362061663100657f347baa99278e689b910aecf",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/worker/src/main.rs": "4bd5cc7f351861c357273693ca95b94d3e035afbc3fb7383139fd6dc27c43cb8",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/target/native/package/corpus-proof-sdk-0.1.0.crate": "56075f9731f78cabfc942ed48c8b661ecdc04071e058d02c6b8cd7601dd0e08c",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/target/native/package/numeric-proof-sdk-0.1.0.crate": "aa661da0b374cab5e38b7541910ae8bcffd430d8db590b72286bad10352b53cd",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/target/native/package/response-proof-sdk-0.1.0.crate": "a122d246ee92f31e1df417b46a3bb4332b4f2f7f2fcc71eb8a87d7b388ace4cd",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/target/native/package/typed-response-proof-sdk-0.1.0.crate": "2a024cdb351fca5963b2e013183189f87eb79549f45a5e3ca5803f49fa0d106d",
+    "/tmp/incurs-sdk-worker-typed-verified-20261002/target/native/package/worker-proof-sdk-0.1.0.crate": "f676c77a1252a744d07e77ab878cbd7c8a49c8b84d642aa73fe241ce0e7eac29"
+  },
+  "source_sha256": {
+    "extensions/forge/Cargo.lock": "e0f61caf95bd428f8744d32b770d8b94f3bde528e5e949ed1dbd69f8446b1b76",
+    "extensions/forge/Cargo.toml": "c2ddd5fbc6cd222261e8867d096df9621fc7b2f3e25c20ba6750f8e8806630cb",
+    "extensions/forge/src/adapters.rs": "aa065aae1a3691cf7638568d8d23fc3c8d95f79cc495dce64a6380e1784d7629",
+    "extensions/forge/src/artifacts/docs.rs": "e5f8d25f567744dd7775a4d22337bfcc73174501eb20a80b5491d343bad56d25",
+    "extensions/forge/src/artifacts/publish.rs": "61f9e14955d6510b8dabdfc29a6e942f604d5e7a0d58ab2ae31a1dd51ae925d3",
+    "extensions/forge/src/artifacts/sdk.rs": "35f6a757415d083fdf09a7c3032a70d082851bdc660291fbe69b773ceb3249c0",
+    "extensions/forge/src/artifacts/sdk_composition.rs": "0a3e810c1c7fa7511b4d786b654ca1747f36eab7c82ccaadefc9d30229db0c51",
+    "extensions/forge/src/artifacts/sdk_media.rs": "a3393952ee67815c846ad8c1f74ba0ba3884d39daee24de4d785bf2c1abae693",
+    "extensions/forge/src/artifacts/sdk_response.rs": "ac0b77cec775a16342b5b9715d4bbffc1dc6334e1487b5b1d89f868e8b98198e",
+    "extensions/forge/src/artifacts/sdk_response_codec.rs": "d9b28ab090ad70ee9e12af6f7feb06dbbbbd80e02fede25212ff12711b1db830",
+    "extensions/forge/src/artifacts/sdk_response_models.rs": "3d83eb1f6020c1f9ece185f553feef873383c88d6be70dac747302ba141c3d24",
+    "extensions/forge/src/artifacts/sdk_response_runtime.rs": "3e6514cdb7593ca8d1e2092ba2bd4e2191798d9c820bd9296867921fc4e96510",
+    "extensions/forge/src/artifacts/sdk_symbols.rs": "506ff7305bcf8a5dcb9958a6c68516c22a785ec2ff753070fca232edc852ac60",
+    "extensions/forge/src/artifacts/sdk_validation.rs": "3ed8b5dc9bda4b133e3e08f9de92c34e128e2185d575fb035dc76e4ab2a636b0",
+    "extensions/forge/src/artifacts.rs": "68549a91620ab4a8159fdb1916756b1dc572102427aa69d8aa1e8356214f4643",
+    "extensions/forge/src/catalog.rs": "0d4a10245380b0a7e7e10e9e232f8d722dc89be28eb3684759f5f010acc4cd8a",
+    "extensions/forge/src/form.rs": "6592a138ea68e74d498db74a76e41fda6e3015655a5d415f875d5217300b63e5",
+    "extensions/forge/src/lib.rs": "afc1bfb3868e85d5561453b0924c2c3684efb9f402bf664d646d2edf42984799",
+    "extensions/forge/src/media.rs": "2bf8d894a7f6712a3d5146a26c1d0b2f3bda667a5fa09ea9910b181202311561",
+    "extensions/forge/src/model.rs": "565a0ce1cf21c73caebd0082d37e17acf7f3cf635b5121ddf40981af2b10cbab",
+    "extensions/forge/src/multipart.rs": "b10eaab34923cc2e791de56bb601159004c42e0d35a9ad256c8604338546168a",
+    "extensions/forge/src/parameters.rs": "9b75ec2abe9c9bcbb0759df8aac392920cd1af17245ba35b86d18c3a577c9995",
+    "extensions/forge/src/request_schema.rs": "93f598bc550dfe4a5907671f5825fc94b940aa4e41198310c4a1dd948894d59a",
+    "extensions/forge/src/resolver.rs": "76a18d3e0e4fcbae0c17c1ae92ca00692baf33c2f3b30ed8dfd09d528fac8c9b",
+    "extensions/forge/src/runtime/binding.rs": "79673d7789d3a943305e423dc8d55f5544b3a0c38ad49fe71908f13ec6314373",
+    "extensions/forge/src/runtime.rs": "4a0d674c0e298597ebc672b2a838442821d98d242f3bfe09eeef65d486ec55d6",
+    "extensions/forge/src/schema.rs": "8e60cbc585559c4e1137ed889af2cb83933f4ab5f80e40343bae08e6a30517ba",
+    "extensions/forge/src/schema_validation.rs": "5274fd4bc5b91bfae5506a99c9ab35ba780671da35b6d3cd6eb384b94cea1d62",
+    "extensions/forge/src/servers.rs": "4fbbd7f50f0267730783081037581952a5c63e19ceb259a8fb4f7327c6cf4db7",
+    "extensions/forge/tests/consumer.rs": "cf5ea652c1e4241c8a5be8483994b4c85a20ae5611515d25298bad2b6d084aeb",
+    "extensions/forge/tests/fixtures/corpus_cloudflare_consumer.rs": "48c5055de2829d7803f7c13d655ea0e5698237c37793dd152c948bf21adb873b",
+    "extensions/forge/tests/fixtures/corpus_github_consumer.rs": "aaa49b7d8e8770be34328d697cbdd1d2171658a3609708480ebe3371027e2c10",
+    "extensions/forge/tests/fixtures/corpus_stripe_consumer.rs": "1f85722a80a218c3cc2efff1dc90cda40b1c919e2a1a15523b7b1fe8d15a60f1",
+    "extensions/forge/tests/fixtures/typed_responses_consumer.rs": "fe3ba14ef3e1910822611cb9165ca9f5bf98ced9ea6e95ece3234fb045b36949",
+    "extensions/forge/tests/fixtures/typed_responses_openapi.json": "79d81c1f56dc1ca67f1ca13f80a4dbf4bf85028097319bfa6c364a9c3cbb5fc0",
+    "extensions/forge-workers/build_generated_sdk.py": "5e8034e1c35e7dabc7ee4f069aab3c95eeeed7104eeb8e0470703313ca0b5f4a",
+    "extensions/forge-workers/fixtures/generated_sdk_media_consumer.rs": "4bd5cc7f351861c357273693ca95b94d3e035afbc3fb7383139fd6dc27c43cb8",
+    "extensions/forge-workers/probe_generated_sdk.py": "2c06c76ad8e0453d4ff1c96b295eeebf227f93e9dc3d2100952a3e507e3f6aa9"
+  },
+  "artifact_identity_execution": "01a0fc2d-e853-73c1-9055-4d9cc962a00a",
+  "recorded_at_utc": "2026-10-02T10:36:49.187661+00:00",
+  "git_head": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+  "checkout_scope": "Uncommitted extension changes; source fingerprints identify the verified files."
+}

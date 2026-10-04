@@ -13,9 +13,17 @@
 //!
 //! Futures and body streams are `Send`. A wasm32 host whose fetch values are
 //! not `Send` wraps them, which is sound on a single-threaded host.
+//!
+//! Buffered body reads stop at a size cap ([`DEFAULT_MAX_RESPONSE_BYTES`]
+//! unless the caller passes its own) and fail with the coded
+//! `HTTP_BODY_TOO_LARGE` error. A client may also supply a timer through
+//! [`HttpClient::sleep`]; incurs uses it to put deadlines on requests, since
+//! wasm32 has no async runtime of its own to read a clock from.
 
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::{Stream, StreamExt};
 
@@ -56,6 +64,15 @@ impl HttpRequest {
         self
     }
 }
+
+/// Largest response body [`HttpResponse::bytes`] and [`HttpResponse::text`]
+/// buffer: 16 MiB. A longer body fails with `HTTP_BODY_TOO_LARGE`; use
+/// [`HttpResponse::bytes_limited`] for a different cap.
+pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
+/// A future that completes once a delay has elapsed, returned by
+/// [`HttpClient::sleep`].
+pub type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// A response body, read incrementally as byte chunks.
 pub type HttpBody = Pin<Box<dyn Stream<Item = Result<Vec<u8>, HttpClientError>> + Send>>;
@@ -102,18 +119,36 @@ impl HttpResponse {
         (200..300).contains(&self.status)
     }
 
-    /// Reads the whole body.
-    pub async fn bytes(mut self) -> Result<Vec<u8>, HttpClientError> {
+    /// Reads the whole body, up to [`DEFAULT_MAX_RESPONSE_BYTES`].
+    pub async fn bytes(self) -> Result<Vec<u8>, HttpClientError> {
+        self.bytes_limited(DEFAULT_MAX_RESPONSE_BYTES).await
+    }
+
+    /// Reads the whole body as text, up to [`DEFAULT_MAX_RESPONSE_BYTES`],
+    /// replacing invalid UTF-8.
+    pub async fn text(self) -> Result<String, HttpClientError> {
+        self.text_limited(DEFAULT_MAX_RESPONSE_BYTES).await
+    }
+
+    /// Reads the whole body, failing with [`HttpClientError::BodyTooLarge`]
+    /// as soon as it would exceed `limit` bytes. Reading stops there; the
+    /// rest of the body is never pulled from the stream.
+    pub async fn bytes_limited(mut self, limit: usize) -> Result<Vec<u8>, HttpClientError> {
         let mut bytes = Vec::new();
         while let Some(chunk) = self.body.next().await {
-            bytes.extend_from_slice(&chunk?);
+            let chunk = chunk?;
+            if chunk.len() > limit - bytes.len() {
+                return Err(HttpClientError::BodyTooLarge { limit });
+            }
+            bytes.extend_from_slice(&chunk);
         }
         Ok(bytes)
     }
 
-    /// Reads the whole body as text, replacing invalid UTF-8.
-    pub async fn text(self) -> Result<String, HttpClientError> {
-        let bytes = self.bytes().await?;
+    /// Reads the whole body as text, like [`bytes_limited`](Self::bytes_limited),
+    /// replacing invalid UTF-8.
+    pub async fn text_limited(self, limit: usize) -> Result<String, HttpClientError> {
+        let bytes = self.bytes_limited(limit).await?;
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 }
@@ -127,6 +162,16 @@ impl HttpResponse {
 pub trait HttpClient: Send + Sync {
     /// Performs one exchange.
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError>;
+
+    /// A future that completes after `duration`, from the host's timer.
+    ///
+    /// incurs races it against a request to enforce a deadline, such as
+    /// `McpRemoteOptions::request_timeout`. The default returns `None`: the
+    /// client has no timer, and requests through it wait without a deadline.
+    fn sleep(&self, duration: Duration) -> Option<Sleep> {
+        let _ = duration;
+        None
+    }
 }
 
 /// A shareable host HTTP client.
@@ -152,6 +197,11 @@ pub enum HttpClientError {
         message: String,
         /// The underlying failure, when there is one.
         source: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+    /// The response body exceeded the size cap, and reading stopped there.
+    BodyTooLarge {
+        /// The cap, in bytes.
+        limit: usize,
     },
 }
 
@@ -187,6 +237,8 @@ impl HttpClientError {
             Self::InvalidRequest(_) => "HTTP_INVALID_REQUEST",
             // The network or host failed.
             Self::Transport { .. } => "HTTP_TRANSPORT_ERROR",
+            // The peer sent more than the caller accepts.
+            Self::BodyTooLarge { .. } => "HTTP_BODY_TOO_LARGE",
         }
     }
 
@@ -201,6 +253,10 @@ impl HttpClientError {
             // Name the option that takes a client.
             Self::Required { option } => Some(format!(
                 "Pass an incurs::outbound::HttpClient in {option}; this target has no default HTTP client"
+            )),
+            // Name the cap that stopped the read.
+            Self::BodyTooLarge { limit } => Some(format!(
+                "The response body exceeded {limit} bytes; raise the caller's body limit if the peer is trusted"
             )),
             // Other failures carry their detail in the message.
             _ => None,
@@ -219,6 +275,10 @@ impl std::fmt::Display for HttpClientError {
             Self::InvalidRequest(message) => write!(f, "invalid HTTP request: {message}"),
             // Network failure, described exactly as the host reported it.
             Self::Transport { message, .. } => f.write_str(message),
+            // Oversized body.
+            Self::BodyTooLarge { limit } => {
+                write!(f, "response body exceeds the {limit}-byte limit")
+            }
         }
     }
 }
@@ -326,7 +386,7 @@ pub use reqwest_client::ReqwestHttpClient;
 mod reqwest_client {
     use futures::StreamExt;
 
-    use super::{HttpClient, HttpClientError, HttpRequest, HttpResponse};
+    use super::{HttpClient, HttpClientError, HttpRequest, HttpResponse, Sleep};
 
     /// The native default [`HttpClient`], backed by `reqwest`.
     #[derive(Debug, Clone)]
@@ -410,6 +470,11 @@ mod reqwest_client {
                 body: Box::pin(body),
             })
         }
+
+        /// A tokio timer. reqwest already requires a tokio runtime.
+        fn sleep(&self, duration: std::time::Duration) -> Option<Sleep> {
+            Some(Box::pin(tokio::time::sleep(duration)))
+        }
     }
 }
 
@@ -447,5 +512,38 @@ mod tests {
         assert!(response.is_success());
         let text = futures::executor::block_on(response.text()).unwrap();
         assert_eq!(text, "ok");
+    }
+
+    /// A body far longer than the cap stops there with a coded,
+    /// non-retryable error, after pulling only the chunks that fit plus the
+    /// one that overflowed. The stream is finite so that a missing cap fails
+    /// the test instead of exhausting memory.
+    #[test]
+    fn a_long_body_stops_at_the_cap_with_a_coded_error() {
+        let pulled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&pulled);
+        let endless = futures::stream::repeat_with(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![b'x'; 1024])
+        })
+        .take(1000);
+        let response = HttpResponse {
+            status: 200,
+            headers: Vec::new(),
+            body: Box::pin(endless),
+        };
+        let error = futures::executor::block_on(response.bytes_limited(10 * 1024)).unwrap_err();
+        assert_eq!(error.code(), "HTTP_BODY_TOO_LARGE");
+        assert!(!error.retryable());
+        assert_eq!(pulled.load(std::sync::atomic::Ordering::SeqCst), 11);
+        let crate::errors::Error::Incur(error) = crate::errors::Error::from(error) else {
+            panic!("expected a coded error");
+        };
+        assert_eq!(error.code, "HTTP_BODY_TOO_LARGE");
+        let exact = HttpResponse::from_bytes(200, Vec::new(), vec![b'y'; 8]);
+        assert_eq!(
+            futures::executor::block_on(exact.bytes_limited(8)).unwrap(),
+            vec![b'y'; 8]
+        );
     }
 }

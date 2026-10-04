@@ -1,0 +1,98 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Nullable path proof",
+    "version": "1"
+  },
+  "paths": {
+    "/accounts/{account_id}/datasets/{dataset_id}": {
+      "get": {
+        "operationId": "nullablePath",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NullableId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/datasets/{dataset_id}/zones/{zone_id}": {
+      "get": {
+        "operationId": "nullableFirst",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/NullableId"
+            }
+          },
+          {
+            "name": "zone_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/content/{dataset_id}": {
+      "get": {
+        "operationId": "nullableContent",
+        "parameters": [
+          {
+            "name": "dataset_id",
+            "in": "path",
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NullableId"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "NullableId": {
+        "type": "string",
+        "nullable": true,
+        "default": "default dataset"
+      }
+    }
+  }
+}

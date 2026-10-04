@@ -86,9 +86,68 @@ pub struct McpToolFilter {
     pub exclude: Vec<String>,
 }
 
+/// Outcome supplied to an application-defined MCP result mapper.
+pub struct McpResultContext<'a> {
+    /// Tool whose completed outcome is being projected.
+    pub tool: &'a crate::tool::ToolDefinition,
+    /// Completed command outcome before MCP projection.
+    pub outcome: &'a crate::tool::ToolCallOutcome,
+}
+
+/// Application overrides for the MCP result envelope.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct McpResultMapping {
+    /// Override for `isError`; `None` keeps the normal classification.
+    pub is_error: Option<bool>,
+}
+impl McpResultMapping {
+    /// Keeps normal MCP outcome classification.
+    pub fn unchanged() -> Self {
+        Self::default()
+    }
+    /// Projects this outcome as a successful MCP result.
+    pub fn success() -> Self {
+        Self {
+            is_error: Some(false),
+        }
+    }
+    /// Projects this outcome as a failed MCP result.
+    pub fn error() -> Self {
+        Self {
+            is_error: Some(true),
+        }
+    }
+}
+
+/// Shared application hook for classifying completed MCP tool results.
+#[derive(Clone)]
+pub struct McpResultMapper(
+    std::sync::Arc<
+        dyn for<'a> Fn(McpResultContext<'a>) -> McpResultMapping + Send + Sync + 'static,
+    >,
+);
+impl std::fmt::Debug for McpResultMapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("McpResultMapper").finish_non_exhaustive()
+    }
+}
+impl McpResultMapper {
+    /// Creates a mapper called with the tool and its completed outcome.
+    pub fn new(
+        mapper: impl for<'a> Fn(McpResultContext<'a>) -> McpResultMapping + Send + Sync + 'static,
+    ) -> Self {
+        Self(std::sync::Arc::new(mapper))
+    }
+    pub(super) fn map(&self, context: McpResultContext<'_>) -> McpResultMapping {
+        (self.0)(context)
+    }
+}
+
 /// Options for the MCP server.
 #[derive(Debug, Clone, Default)]
 pub struct McpServeOptions {
+    /// Application hook for overriding the result envelope's error classification.
+    pub result_mapper: Option<McpResultMapper>,
     /// CLI version string.
     pub version: Option<String>,
     /// Instructions describing how clients should use the server.
@@ -100,8 +159,19 @@ pub struct McpServeOptions {
     pub standards: incurs_mcp_protocol::McpStandardSet,
 }
 
+/// Default for [`McpRemoteOptions::request_timeout`]: 60 seconds.
+pub const DEFAULT_REMOTE_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Most `tools/list` pages, or progressive catalog `search_tools` pages, a
+/// remote projection follows before failing with `MCP_TOOL_LIMIT_EXCEEDED`.
+pub const MAX_REMOTE_TOOL_PAGES: usize = 256;
+
+/// Most tools a remote projection accepts before failing with
+/// `MCP_TOOL_LIMIT_EXCEEDED`.
+pub const MAX_REMOTE_TOOLS: usize = 16 * 1024;
+
 /// Options for projecting a remote MCP server as incurs commands.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct McpRemoteOptions {
     /// Exact MCP standards the client accepts, in preference order.
     pub standards: incurs_mcp_protocol::McpStandardSet,
@@ -123,6 +193,35 @@ pub struct McpRemoteOptions {
     /// `rmcp`, and wasm32 builds, which have no default client, fail with
     /// `HTTP_CLIENT_REQUIRED`.
     pub http_client: Option<crate::outbound::SharedHttpClient>,
+    /// Deadline for one request of the portable
+    /// [`crate::mcp_client::McpHttpClient`], from sending it until its
+    /// response arrives, including waiting for a legacy stream lock. A catalog
+    /// projection shares this deadline across all pages and detail requests.
+    /// Defaults to [`DEFAULT_REMOTE_REQUEST_TIMEOUT`];
+    /// `None` waits without a deadline.
+    ///
+    /// A request past its deadline fails with the retryable `MCP_TIMEOUT`
+    /// error. The timer comes from [`crate::outbound::HttpClient::sleep`];
+    /// a client without a timer enforces no deadline. The long-lived legacy
+    /// SSE event stream itself has no deadline, only each request on it.
+    pub request_timeout: Option<std::time::Duration>,
+    /// Largest response body the portable client buffers, in bytes.
+    /// Defaults to [`crate::outbound::DEFAULT_MAX_RESPONSE_BYTES`]; a longer
+    /// body fails with `HTTP_BODY_TOO_LARGE`.
+    pub max_response_bytes: usize,
+}
+
+impl Default for McpRemoteOptions {
+    fn default() -> Self {
+        Self {
+            standards: incurs_mcp_protocol::McpStandardSet::default(),
+            auth_token: None,
+            headers: Vec::new(),
+            http_client: None,
+            request_timeout: Some(DEFAULT_REMOTE_REQUEST_TIMEOUT),
+            max_response_bytes: crate::outbound::DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
 }
 
 impl std::fmt::Debug for McpRemoteOptions {
@@ -135,6 +234,8 @@ impl std::fmt::Debug for McpRemoteOptions {
                 "http_client",
                 &self.http_client.as_ref().map(|_| "dyn HttpClient"),
             )
+            .field("request_timeout", &self.request_timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
             .finish()
     }
 }
@@ -232,7 +333,13 @@ impl RemoteTool {
             output_schema: value
                 .get("outputSchema")
                 .filter(|schema| schema.is_object())
-                .cloned(),
+                .cloned()
+                .map(|schema| {
+                    incurs_mcp_protocol::structured::restore_output_schema(
+                        schema,
+                        value.get("_meta").and_then(Value::as_object),
+                    )
+                }),
             read_only: value
                 .pointer("/annotations/readOnlyHint")
                 .and_then(Value::as_bool)
@@ -247,13 +354,17 @@ impl RemoteTool {
 ))]
 impl From<rmcp::model::Tool> for RemoteTool {
     fn from(tool: rmcp::model::Tool) -> Self {
+        let wire = serde_json::to_value(&tool).unwrap_or(Value::Null);
         Self {
             name: tool.name.to_string(),
             description: tool.description.map(|description| description.to_string()),
             input_schema: Value::Object((*tool.input_schema).clone()),
-            output_schema: tool
-                .output_schema
-                .map(|schema| Value::Object((*schema).clone())),
+            output_schema: tool.output_schema.map(|schema| {
+                incurs_mcp_protocol::structured::restore_output_schema(
+                    Value::Object((*schema).clone()),
+                    wire.get("_meta").and_then(Value::as_object),
+                )
+            }),
             read_only: tool
                 .annotations
                 .as_ref()
@@ -277,10 +388,12 @@ impl RemoteCallResult {
     fn from_value(value: &Value) -> Self {
         Self {
             is_error: value.get("isError").and_then(Value::as_bool) == Some(true),
-            structured_content: value
-                .get("structuredContent")
-                .filter(|content| !content.is_null())
-                .cloned(),
+            structured_content: value.get("structuredContent").cloned().map(|content| {
+                incurs_mcp_protocol::structured::restore_structured_content(
+                    content,
+                    value.get("_meta").and_then(Value::as_object),
+                )
+            }),
             first_text: value
                 .pointer("/content/0")
                 .filter(|content| content.get("type").and_then(Value::as_str) == Some("text"))
@@ -313,6 +426,7 @@ impl RemoteCallResult {
 ))]
 impl From<rmcp::model::CallToolResult> for RemoteCallResult {
     fn from(result: rmcp::model::CallToolResult) -> Self {
+        let wire = serde_json::to_value(&result).unwrap_or(Value::Null);
         Self {
             is_error: result.is_error == Some(true),
             first_text: result
@@ -320,7 +434,12 @@ impl From<rmcp::model::CallToolResult> for RemoteCallResult {
                 .first()
                 .and_then(|content| content.as_text())
                 .map(|text| text.text.clone()),
-            structured_content: result.structured_content,
+            structured_content: result.structured_content.map(|content| {
+                incurs_mcp_protocol::structured::restore_structured_content(
+                    content,
+                    wire.get("_meta").and_then(Value::as_object),
+                )
+            }),
         }
     }
 }
@@ -335,15 +454,21 @@ trait RemoteToolClient: Send + Sync {
     /// Lists every tool the server exposes.
     async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error>;
 
+    /// Host timer for the complete projection, when one is available.
+    fn remote_deadline(&self) -> Option<(std::time::Duration, crate::outbound::Sleep)> {
+        None
+    }
+
     /// Reads one tool object returned by a progressive catalog.
     fn remote_parse_tool(&self, value: Value) -> Result<RemoteTool, crate::errors::Error>;
 
-    /// Calls one tool; a failed request is reported by its display text.
+    /// Calls one tool. A failed request keeps its code, retryability, and
+    /// hint as [`crate::errors::Error::Incur`].
     async fn remote_call_tool(
         &self,
         name: String,
         arguments: serde_json::Map<String, Value>,
-    ) -> Result<RemoteCallResult, String>;
+    ) -> Result<RemoteCallResult, crate::errors::Error>;
 }
 
 #[cfg(all(
@@ -352,11 +477,43 @@ trait RemoteToolClient: Send + Sync {
 ))]
 #[async_trait::async_trait]
 impl RemoteToolClient for rmcp::service::RunningService<rmcp::RoleClient, rmcp::model::ClientInfo> {
+    fn remote_deadline(&self) -> Option<(std::time::Duration, crate::outbound::Sleep)> {
+        Some((
+            DEFAULT_REMOTE_REQUEST_TIMEOUT,
+            Box::pin(tokio::time::sleep(DEFAULT_REMOTE_REQUEST_TIMEOUT)),
+        ))
+    }
+
     async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error> {
-        let tools = rmcp::service::Peer::<rmcp::RoleClient>::list_all_tools(self)
-            .await
-            .map_err(remote_error)?;
-        Ok(tools.into_iter().map(RemoteTool::from).collect())
+        let mut tools = Vec::new();
+        let mut cursor = None;
+        for page in 1..=MAX_REMOTE_TOOL_PAGES {
+            let params = cursor.clone().map(|cursor| {
+                rmcp::model::PaginatedRequestParams::default().with_cursor(Some(cursor))
+            });
+            let result = rmcp::service::Peer::<rmcp::RoleClient>::list_tools(self, params)
+                .await
+                .map_err(rmcp_service_error)?;
+            if result.tools.len() > MAX_REMOTE_TOOLS.saturating_sub(tools.len()) {
+                return Err(tool_limit_error(format!(
+                    "MCP tool catalog lists more than {MAX_REMOTE_TOOLS} tools"
+                )));
+            }
+            tools.extend(result.tools.into_iter().map(RemoteTool::from));
+            match result.next_cursor {
+                Some(next) if cursor.as_deref() == Some(next.as_str()) => {
+                    return Err(remote_error("tools/list returned a non-advancing cursor"));
+                }
+                Some(_) if page == MAX_REMOTE_TOOL_PAGES => {
+                    return Err(tool_limit_error(format!(
+                        "tools/list returned more than {MAX_REMOTE_TOOL_PAGES} pages"
+                    )));
+                }
+                Some(next) => cursor = Some(next),
+                None => return Ok(tools),
+            }
+        }
+        unreachable!("the final page returns a result or the page-limit error")
     }
 
     fn remote_parse_tool(&self, value: Value) -> Result<RemoteTool, crate::errors::Error> {
@@ -369,20 +526,102 @@ impl RemoteToolClient for rmcp::service::RunningService<rmcp::RoleClient, rmcp::
         &self,
         name: String,
         arguments: serde_json::Map<String, Value>,
-    ) -> Result<RemoteCallResult, String> {
+    ) -> Result<RemoteCallResult, crate::errors::Error> {
         rmcp::service::Peer::<rmcp::RoleClient>::call_tool(
             self,
             rmcp::model::CallToolRequestParams::new(name).with_arguments(arguments),
         )
         .await
         .map(RemoteCallResult::from)
-        .map_err(|error| error.to_string())
+        .map_err(rmcp_service_error)
     }
+}
+
+/// A coded remote error with the given code and retryability, whose message
+/// is `error`'s display text.
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+fn coded_remote_error(
+    code: &str,
+    retryable: bool,
+    hint: Option<String>,
+    error: impl std::fmt::Display,
+) -> crate::errors::Error {
+    crate::errors::Error::Incur(crate::errors::IncurError {
+        message: error.to_string(),
+        code: code.to_string(),
+        hint,
+        retryable,
+        exit_code: None,
+        cause: None,
+    })
+}
+
+/// Converts an `rmcp` request failure into a coded error whose message is
+/// the failure's display text.
+#[cfg(all(
+    any(feature = "http", feature = "agent-plugins-mcp"),
+    not(target_arch = "wasm32")
+))]
+fn rmcp_service_error(error: rmcp::ServiceError) -> crate::errors::Error {
+    use rmcp::ServiceError;
+
+    let (code, retryable, hint) = match &error {
+        // A JSON-RPC error response.
+        ServiceError::McpError(_) => ("MCP_JSONRPC_ERROR", false, None),
+        // The request could not be sent. rmcp reports why only as text.
+        ServiceError::TransportSend(_) => ("MCP_TRANSPORT_ERROR", true, None),
+        // The connection closed under the request.
+        ServiceError::TransportClosed => ("MCP_TRANSPORT_ERROR", true, None),
+        // No response within rmcp's own deadline.
+        ServiceError::Timeout { .. } => ("MCP_TIMEOUT", true, None),
+        // The request was cancelled locally.
+        ServiceError::Cancelled { .. } => ("MCP_TRANSPORT_ERROR", false, None),
+        // A response the protocol does not allow.
+        _ => ("MCP_PROTOCOL_ERROR", false, None),
+    };
+    coded_remote_error(code, retryable, hint, error)
+}
+
+/// Converts an `rmcp` connection failure into a coded error whose message is
+/// the failure's display text.
+#[cfg(all(
+    any(feature = "http", feature = "agent-plugins-mcp"),
+    not(target_arch = "wasm32")
+))]
+fn rmcp_initialize_error(error: rmcp::service::ClientInitializeError) -> crate::errors::Error {
+    use rmcp::service::ClientInitializeError;
+
+    let (code, retryable, hint) = match &error {
+        // A JSON-RPC error response to the lifecycle request.
+        ClientInitializeError::JsonRpcError(_) => ("MCP_JSONRPC_ERROR", false, None),
+        // The request could not be sent. rmcp reports why only as text.
+        ClientInitializeError::TransportError { .. } => ("MCP_TRANSPORT_ERROR", true, None),
+        // The connection closed during the lifecycle.
+        ClientInitializeError::ConnectionClosed(_) => ("MCP_TRANSPORT_ERROR", true, None),
+        // No common standard.
+        ClientInitializeError::NoCompatibleProtocolVersion { .. } => (
+            "MCP_NEGOTIATION_FAILED",
+            false,
+            Some(
+                "Enable an MCP standard the server supports in McpRemoteOptions::standards"
+                    .to_string(),
+            ),
+        ),
+        // The connection was cancelled locally.
+        ClientInitializeError::Cancelled => ("MCP_TRANSPORT_ERROR", false, None),
+        // A lifecycle response the protocol does not allow.
+        _ => ("MCP_PROTOCOL_ERROR", false, None),
+    };
+    coded_remote_error(code, retryable, hint, error)
 }
 
 #[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 #[async_trait::async_trait]
 impl RemoteToolClient for crate::mcp_client::McpHttpClient {
+    fn remote_deadline(&self) -> Option<(std::time::Duration, crate::outbound::Sleep)> {
+        self.deadline()
+    }
+
     async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error> {
         let tools = self.list_tools().await?;
         tools.iter().map(RemoteTool::from_value).collect()
@@ -396,11 +635,11 @@ impl RemoteToolClient for crate::mcp_client::McpHttpClient {
         &self,
         name: String,
         arguments: serde_json::Map<String, Value>,
-    ) -> Result<RemoteCallResult, String> {
+    ) -> Result<RemoteCallResult, crate::errors::Error> {
         self.call_tool(&name, arguments)
             .await
             .map(|result| RemoteCallResult::from_value(&result))
-            .map_err(|error| error.to_string())
+            .map_err(crate::errors::Error::from)
     }
 }
 
@@ -447,11 +686,20 @@ impl crate::command::CommandHandler for RemoteToolHandler {
                 exit_code: Some(1),
                 cta: None,
             },
-            // The request failed or the server rejected it.
-            Err(message) => crate::output::CommandResult::Error {
+            // The request failed or the server rejected it: keep its code
+            // and retryability.
+            Err(crate::errors::Error::Incur(error)) => crate::output::CommandResult::Error {
+                code: error.code,
+                message: error.message,
+                retryable: error.retryable,
+                exit_code: Some(error.exit_code.unwrap_or(1)),
+                cta: None,
+            },
+            // An uncoded failure.
+            Err(error) => crate::output::CommandResult::Error {
                 code: "REMOTE_MCP_ERROR".to_string(),
-                message,
-                retryable: true,
+                message: error.to_string(),
+                retryable: false,
                 exit_code: Some(1),
                 cta: None,
             },
@@ -592,14 +840,31 @@ where
         .with_protocol_version(legacy_version.unwrap_or(rmcp::model::ProtocolVersion::V_2026_07_28))
         .serve_with_lifecycle(transport, lifecycle)
         .await
-        .map_err(|error| {
-            crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
-        })?;
+        .map_err(rmcp_initialize_error)?;
     project_remote_commands(std::sync::Arc::new(client)).await
 }
 
 #[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 async fn project_remote_commands(
+    client: std::sync::Arc<dyn RemoteToolClient>,
+) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
+    let work = std::pin::pin!(project_remote_commands_unbounded(std::sync::Arc::clone(
+        &client
+    )));
+    if let Some((after, timer)) = client.remote_deadline() {
+        match futures::future::select(work, timer).await {
+            futures::future::Either::Left((result, _)) => result,
+            futures::future::Either::Right(((), _)) => {
+                Err(crate::mcp_client::McpClientError::Timeout { after }.into())
+            }
+        }
+    } else {
+        work.await
+    }
+}
+
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+async fn project_remote_commands_unbounded(
     client: std::sync::Arc<dyn RemoteToolClient>,
 ) -> Result<std::collections::BTreeMap<String, crate::command::CommandDef>, crate::errors::Error> {
     let listed = client.remote_list_tools().await?;
@@ -684,7 +949,9 @@ async fn discover_remote_tools(
 ) -> Result<Vec<RemoteTool>, crate::errors::Error> {
     let mut tools = Vec::new();
     let mut offset = 0_u64;
+    let mut pages = 0_usize;
     loop {
+        pages += 1;
         let search = client
             .remote_call_tool(
                 "search_tools".to_string(),
@@ -694,8 +961,7 @@ async fn discover_remote_tools(
                     ("offset".to_string(), Value::from(offset)),
                 ]),
             )
-            .await
-            .map_err(remote_error)?;
+            .await?;
         let value = remote_result_value(search)?;
         for name in value["tools"]
             .as_array()
@@ -703,6 +969,11 @@ async fn discover_remote_tools(
             .flatten()
             .filter_map(|tool| tool["name"].as_str())
         {
+            if tools.len() >= MAX_REMOTE_TOOLS {
+                return Err(tool_limit_error(format!(
+                    "MCP tool catalog lists more than {MAX_REMOTE_TOOLS} tools"
+                )));
+            }
             let details = client
                 .remote_call_tool(
                     "get_tool_details".to_string(),
@@ -711,16 +982,20 @@ async fn discover_remote_tools(
                         Value::String(name.to_string()),
                     )]),
                 )
-                .await
-                .map_err(remote_error)?;
+                .await?;
             tools.push(client.remote_parse_tool(remote_result_value(details)?)?);
         }
         let Some(next) = value.get("nextOffset").and_then(Value::as_u64) else {
             break;
         };
         if next <= offset {
-            return Err(remote_error(std::io::Error::other(
+            return Err(remote_error(
                 "MCP tool catalog returned a non-advancing offset",
+            ));
+        }
+        if pages >= MAX_REMOTE_TOOL_PAGES {
+            return Err(tool_limit_error(format!(
+                "MCP tool catalog has more than {MAX_REMOTE_TOOL_PAGES} pages"
             )));
         }
         offset = next;
@@ -731,16 +1006,26 @@ async fn discover_remote_tools(
 #[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 fn remote_result_value(result: RemoteCallResult) -> Result<Value, crate::errors::Error> {
     if result.is_error {
-        return Err(remote_error(std::io::Error::other(
+        return Err(coded_remote_error(
+            "REMOTE_MCP_ERROR",
+            false,
+            None,
             result.failure_message(),
-        )));
+        ));
     }
     Ok(result.data())
 }
 
+/// A remote response that violates the MCP tool contract.
 #[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 fn remote_error(error: impl std::fmt::Display) -> crate::errors::Error {
-    crate::errors::Error::Other(Box::new(std::io::Error::other(error.to_string())))
+    coded_remote_error("MCP_PROTOCOL_ERROR", false, None, error)
+}
+
+/// A remote catalog past [`MAX_REMOTE_TOOL_PAGES`] or [`MAX_REMOTE_TOOLS`].
+#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
+fn tool_limit_error(message: String) -> crate::errors::Error {
+    coded_remote_error("MCP_TOOL_LIMIT_EXCEEDED", false, None, message)
 }
 
 #[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
@@ -1182,6 +1467,10 @@ mod server {
                     });
             #[cfg(not(feature = "http"))]
             let transport_request = None;
+            let protocol_version = context
+                .protocol_version()
+                .map(|version| version.as_str().to_string())
+                .unwrap_or_else(|| "2025-03-26".to_string());
             let peer = context.peer;
             let cancellation = context.ct;
 
@@ -1191,6 +1480,7 @@ mod server {
                         request.name.to_string(),
                         request.arguments,
                         CallContext {
+                            protocol_version,
                             request: transport_request,
                             control: ToolCallControl {
                                 cancellation,
@@ -1765,5 +2055,117 @@ mod tests {
         let options = super::McpRemoteOptions::bearer("secret-token");
         assert_eq!(options.auth_token.as_deref(), Some("secret-token"));
         assert!(options.headers.is_empty());
+    }
+
+    #[cfg(all(
+        any(feature = "http", feature = "agent-plugins-mcp"),
+        not(target_arch = "wasm32")
+    ))]
+    #[test]
+    fn remote_adapters_restore_only_the_exact_output_projection_marker() {
+        let payload_schema = serde_json::json!({ "type": "array", "items": { "type": "integer" } });
+        let wrapped_schema = serde_json::json!({
+            "type": "object", "properties": { "data": payload_schema.clone() },
+            "required": ["data"], "additionalProperties": false
+        });
+        let wrapped_content = serde_json::json!({ "data": [1, 2] });
+        let cases = [
+            (None, false),
+            (
+                Some(serde_json::json!({
+                    "version": 1, "shape": "value-wrapper", "field": "data",
+                    "schemaRefBase": "#/properties/data"
+                })),
+                true,
+            ),
+            (
+                Some(serde_json::json!({
+                    "version": 2, "shape": "value-wrapper", "field": "data",
+                    "schemaRefBase": "#/properties/data"
+                })),
+                false,
+            ),
+            (
+                Some(serde_json::json!({
+                    "version": 1, "shape": "value-wrapper", "field": "other",
+                    "schemaRefBase": "#/properties/data"
+                })),
+                false,
+            ),
+            (
+                Some(serde_json::json!({
+                    "version": 1, "shape": "value-wrapper", "field": "data",
+                    "schemaRefBase": "#/properties/data", "extra": true
+                })),
+                false,
+            ),
+        ];
+        for (marker, restore) in cases {
+            let mut tool = serde_json::json!({
+                "name": "echo", "inputSchema": { "type": "object" },
+                "outputSchema": wrapped_schema.clone()
+            });
+            let mut result = serde_json::json!({
+                "content": [], "structuredContent": wrapped_content.clone(), "isError": false
+            });
+            if let Some(marker) = marker {
+                let metadata = serde_json::json!({ "io.incurs.outputProjection": marker });
+                tool["_meta"] = metadata.clone();
+                result["_meta"] = metadata;
+            }
+            let expected_schema = if restore {
+                &payload_schema
+            } else {
+                &wrapped_schema
+            };
+            let expected_content = if restore {
+                serde_json::json!([1, 2])
+            } else {
+                wrapped_content.clone()
+            };
+            let portable_tool = super::RemoteTool::from_value(&tool).unwrap();
+            assert_eq!(portable_tool.output_schema.as_ref(), Some(expected_schema));
+            let native_tool: super::RemoteTool = serde_json::from_value::<rmcp::model::Tool>(tool)
+                .unwrap()
+                .into();
+            assert_eq!(native_tool.output_schema.as_ref(), Some(expected_schema));
+            assert_eq!(
+                super::RemoteCallResult::from_value(&result).data(),
+                expected_content
+            );
+            let native_result: super::RemoteCallResult =
+                serde_json::from_value::<rmcp::model::CallToolResult>(result)
+                    .unwrap()
+                    .into();
+            assert_eq!(native_result.data(), expected_content);
+        }
+    }
+
+    /// The native client keeps a stable code, keeps the JSON-RPC error text
+    /// unchanged, and calls only transport failures retryable.
+    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    #[test]
+    fn rmcp_failures_keep_a_code_and_only_transport_failures_are_retryable() {
+        let coded = |error: crate::errors::Error| match error {
+            crate::errors::Error::Incur(error) => (error.code, error.retryable, error.message),
+            other => panic!("expected a coded error, got {other}"),
+        };
+        let (code, retryable, message) =
+            coded(super::rmcp_service_error(rmcp::ServiceError::McpError(
+                rmcp::model::ErrorData::new(rmcp::model::ErrorCode(-32602), "bad", None),
+            )));
+        assert_eq!(code, "MCP_JSONRPC_ERROR");
+        assert!(!retryable);
+        assert_eq!(message, "Mcp error: -32602: bad");
+        let (code, retryable, _) = coded(super::rmcp_service_error(
+            rmcp::ServiceError::TransportClosed,
+        ));
+        assert_eq!(code, "MCP_TRANSPORT_ERROR");
+        assert!(retryable);
+        let (code, retryable, _) = coded(super::rmcp_service_error(
+            rmcp::ServiceError::UnexpectedResponse,
+        ));
+        assert_eq!(code, "MCP_PROTOCOL_ERROR");
+        assert!(!retryable);
     }
 }

@@ -35,6 +35,25 @@ Worker build failed.
 - toon output no longer pulls toon-format's bundled terminal app, and the
   unused axum-streams, hyper, and tower-http dependencies are gone.
 
+- Remote MCP discovery is bounded by 256 pages and 16,384 tools. Portable
+  clients cap buffered responses and accumulated SSE data, preserve coded
+  transport errors, and apply host-provided deadlines to queued requests and
+  complete catalog discovery.
+- MCP output projects scalar, array, and nullable roots into a marked object
+  envelope without changing the underlying ToolCatalog contract. Remote
+  clients restore only the exact projection marker.
+- Commands can classify MCP results with a host-owned result mapper and publish
+  audio or resource links when the negotiated MCP standard supports them.
+  Older standards retain the JSON text fallback.
+- Code Mode MCP hosts can supply an ExecutionProjector and its argument
+  schemas. Search results, artifacts, and service errors bypass projection.
+- The unpublished Forge extension compiles OpenAPI contracts into packaged
+  Rust SDKs and validates request and response boundaries. Its separate
+  Emscripten proof runs HTTP probes in CI; it does not replace the default
+  Cloudflare target.
+
+incurs-mcp-protocol 0.2.1 adds the reversible structured-output helpers.
+
 Every crate built on incurs moves with it: incurs-cli and incurs-extras
 0.11.0; incurs-codemode, incurs-codemode-local, incurs-codemode-mcp and
 incurs-codemode-cloudflare 0.9.0; incurs-mcp-client, incurs-mcp-registry,

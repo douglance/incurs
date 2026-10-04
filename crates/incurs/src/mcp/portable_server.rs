@@ -560,6 +560,7 @@ impl McpHttpServer {
                         name,
                         arguments,
                         CallContext {
+                            protocol_version: protocol_version.clone(),
                             request: transport,
                             control: ToolCallControl {
                                 cancellation,

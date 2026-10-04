@@ -1,0 +1,28 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Text body proof",
+    "version": "1"
+  },
+  "paths": {
+    "/text": {
+      "post": {
+        "operationId": "sendText",
+        "requestBody": {
+          "content": {
+            "text/plain": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Received"
+          }
+        }
+      }
+    }
+  }
+}

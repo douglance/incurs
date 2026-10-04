@@ -1,0 +1,41 @@
+{
+  "checked_at": "2026-09-30T02:49:20.006604+00:00",
+  "sources": [
+    {
+      "name": "github",
+      "repository": "https://github.com/github/rest-api-description",
+      "commit": "af2c102501766f14fe4edc688e449427a971e66a",
+      "source": "https://raw.githubusercontent.com/github/rest-api-description/af2c102501766f14fe4edc688e449427a971e66a/descriptions-next/api.github.com/api.github.com.json",
+      "path": "descriptions-next/api.github.com/api.github.com.json",
+      "sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+      "bytes": 13121397,
+      "openapi": "3.1.0",
+      "paths": 815,
+      "schemas": 973
+    },
+    {
+      "name": "cloudflare",
+      "repository": "https://github.com/cloudflare/api-schemas",
+      "commit": "3d55f05897c73dcf44664096c73cdd95b81da061",
+      "source": "https://raw.githubusercontent.com/cloudflare/api-schemas/3d55f05897c73dcf44664096c73cdd95b81da061/openapi.json",
+      "path": "openapi.json",
+      "sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+      "bytes": 26486980,
+      "openapi": "3.0.3",
+      "paths": 2275,
+      "schemas": 6948
+    },
+    {
+      "name": "stripe",
+      "repository": "https://github.com/stripe/openapi",
+      "commit": "ce576d4f145edeef361a64d9d51b2153e3696b0b",
+      "source": "https://raw.githubusercontent.com/stripe/openapi/ce576d4f145edeef361a64d9d51b2153e3696b0b/latest/openapi.spec3.json",
+      "path": "latest/openapi.spec3.json",
+      "sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+      "bytes": 4663536,
+      "openapi": "3.0.0",
+      "paths": 454,
+      "schemas": 1701
+    }
+  ]
+}
