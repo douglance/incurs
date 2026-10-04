@@ -164,7 +164,7 @@ fn a_jsonc_document_with_comments_and_a_trailing_comma_parses() {
     let root = temp_root("jsonc");
     write(
         &root,
-        "Library/Application Support/Code/User/mcp.json",
+        "vscode-user/mcp.json",
         r#"{
             // VS Code documents this file as JSONC, and real files use it.
             "servers": {
@@ -174,7 +174,9 @@ fn a_jsonc_document_with_comments_and_a_trailing_comma_parses() {
         }"#,
     );
 
-    let found = discover(&HostPaths::rooted(&root));
+    let mut paths = HostPaths::rooted(&root);
+    paths.vscode_user = root.join("vscode-user");
+    let found = discover(&paths);
     assert!(
         found.unreadable.is_empty(),
         "JSONC must parse, got {:?}",
