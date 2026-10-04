@@ -1,10 +1,10 @@
 //! MCP structured-output projection helpers.
 //!
-//! The MCP specification requires `structuredContent` and `outputSchema` to be
-//! JSON objects. Incurs commands may legitimately return arrays, strings,
-//! numbers, booleans, or null. This module provides the shared reversible
-//! wrapper used at MCP boundaries while preserving each command's original
-//! output schema inside Incurs-native catalogs.
+//! Object wrapping keeps non-object command results compatible with legacy MCP
+//! consumers. The wrapper is reversible and preserves the original output
+//! schema inside Incurs-native catalogs. Only the default or explicitly declared
+//! JSON Schema 2020-12 dialect is supported when wrapping relocates a schema;
+//! explicit object roots are returned unchanged.
 
 use serde_json::{Map, Value, json};
 use thiserror::Error;
@@ -60,19 +60,62 @@ pub enum McpOutputProjectionError {
     /// Object-shaped schemas require object-shaped runtime values.
     #[error("object-shaped MCP structured output must be a JSON object")]
     ObjectShapeRequiresObject,
+    /// The declared schema dialect is not supported for output wrapping.
+    #[error("MCP output wrapping does not support declared schema dialect {dialect}")]
+    UnsupportedWrappingDialect {
+        /// The declared dialect URI, or serialized non-string declaration.
+        dialect: String,
+    },
+}
+
+impl McpOutputProjectionError {
+    /// Returns the stable machine-readable code for this projection failure.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::ObjectShapeRequiresObject => "MCP_OUTPUT_SHAPE_INVALID",
+            Self::UnsupportedWrappingDialect { .. } => "MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED",
+        }
+    }
 }
 
 /// Projects an Incurs output schema into an MCP-compatible object schema.
 ///
 /// Only a root schema with explicit `"type": "object"` is treated as already
 /// object-shaped. Nullable unions, `$ref`, and composed schemas are wrapped so
-/// the operation remains conservative and reversible.
-pub fn project_output_schema(schema: &Value) -> McpOutputProjection {
+/// the operation remains conservative and reversible. Wrapping supports the
+/// default JSON Schema 2020-12 dialect and its explicit HTTP/HTTPS schema URIs,
+/// with an optional empty fragment. Object roots are returned unchanged.
+///
+/// # Errors
+///
+/// Returns an unsupported-dialect error when a schema requiring wrapping
+/// declares another dialect, or its dialect declaration is not a string.
+pub fn project_output_schema(
+    schema: &Value,
+) -> Result<McpOutputProjection, McpOutputProjectionError> {
     if is_explicit_object_schema(schema) {
-        return McpOutputProjection {
+        return Ok(McpOutputProjection {
             schema: schema.clone(),
             shape: McpStructuredShape::Object,
-        };
+        });
+    }
+
+    if let Some(declaration) = schema.get("$schema") {
+        let supported = declaration.as_str().is_some_and(|dialect| {
+            matches!(
+                dialect.strip_suffix('#').unwrap_or(dialect),
+                "https://json-schema.org/draft/2020-12/schema"
+                    | "http://json-schema.org/draft/2020-12/schema"
+            )
+        });
+        if !supported {
+            return Err(McpOutputProjectionError::UnsupportedWrappingDialect {
+                dialect: declaration
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| declaration.to_string()),
+            });
+        }
     }
 
     let (data_schema, promoted) = promote_anonymous_root_keywords(schema);
@@ -88,10 +131,10 @@ pub fn project_output_schema(schema: &Value) -> McpOutputProjection {
     wrapper.insert("required".to_string(), json!([WRAPPER_FIELD]));
     wrapper.insert("additionalProperties".to_string(), Value::Bool(false));
 
-    McpOutputProjection {
+    Ok(McpOutputProjection {
         schema: Value::Object(wrapper),
         shape: McpStructuredShape::WrappedValue,
-    }
+    })
 }
 
 /// Returns MCP metadata identifying a reversible output projection.

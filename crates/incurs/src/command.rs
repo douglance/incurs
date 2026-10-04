@@ -641,6 +641,10 @@ impl CommandHandler for McpHandler {
 /// can store heterogeneous handlers in the command tree. Implementations
 /// receive a [`CommandContext`] and return a [`CommandResult`].
 #[async_trait::async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait CommandHandler: Send + Sync {
     /// Execute the command with the given context.
     async fn run(&self, ctx: CommandContext) -> CommandResult;

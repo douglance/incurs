@@ -39,6 +39,10 @@ McpRemoteOptions adds request_timeout and max_response_bytes. Use
 to enforce deadlines; without a host timer the portable client cannot enforce
 one. Catalog discovery is bounded separately by page and tool counts.
 
+Wrapping requires JSON Schema 2020-12, either implicit or explicitly declared.
+Unsupported declared wrapping dialects reject server construction with
+`MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED`; object roots remain intact.
+
 Non-object MCP output schemas use a marked object envelope on the MCP wire.
 The original ToolCatalog and CLI results stay unchanged. Remote clients
 restore the inner value only for the exact io.incurs.outputProjection marker;

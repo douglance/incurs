@@ -46,6 +46,13 @@
 
 ## Testing Conventions
 
+- **MCP schema relocation preserves dialect meaning** - wrapping non-object output changes reference scope. Wrap only supported declared dialects, reject unsupported relocation with a coded error before constructing either MCP server, and retain object roots unchanged. Keep declared 2019 recursive-schema rejection and 2020 positive controls, plus a confirmed guard-bypass mutation.
+
+- **Cold caches are part of Worker proof** - the first locked native Forge build must fetch its complete feature graph before later offline archive packaging. The base Worker disables native adapters and does not populate those dependencies; run both HTTP probes on CI without assuming a developer cache.
+
+- **Generated future lints stay at their boundary** - async_trait annotates generated futures with must_use. Scope the double_must_use compatibility allowance to the affected trait declarations and retain warnings-denied Clippy across the workspace.
+
+
 - **Response media checks stop at the response value** — skip binary-annotation discovery for JSON media before traversing schemas. A binary child property, array item, or unused definition does not make its container a binary response. Follow only value-level references and compositions with a visited set; profiling the full Stripe document exposed repeated traversal through unrelated JSON properties.
 
 - **Nullable read models retain their original root schema** — removing null to choose a Rust payload type must not remove null from response validation. JSON Schema type arrays may contain several non-null types; preserve that union and exercise nullable object roots as well as scalar roots.

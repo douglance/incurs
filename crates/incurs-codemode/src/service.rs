@@ -5,6 +5,10 @@ use crate::{CodeModeRunOptions, ExecutionState, SearchOutput};
 
 /// Send-safe lifecycle boundary used by transports and native actor handles.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait CodeModeService: Send + Sync {
     /// Searches current connector methods and saved snippets.
     async fn search(&self, query: String) -> Result<SearchOutput, String>;

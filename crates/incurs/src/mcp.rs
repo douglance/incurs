@@ -450,6 +450,10 @@ impl From<rmcp::model::CallToolResult> for RemoteCallResult {
 /// the portable [`crate::mcp_client::McpHttpClient`].
 #[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 #[async_trait::async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 trait RemoteToolClient: Send + Sync {
     /// Lists every tool the server exposes.
     async fn remote_list_tools(&self) -> Result<Vec<RemoteTool>, crate::errors::Error>;

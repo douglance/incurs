@@ -46,8 +46,18 @@ pub(crate) struct SharedTool {
     pub(crate) result_content: Vec<McpResultContent>,
 }
 
-fn shared_tool(definition: &ToolDefinition) -> SharedTool {
-    let projection = definition.output_schema.as_ref().map(project_output_schema);
+fn shared_tool(definition: &ToolDefinition) -> Result<SharedTool, crate::errors::Error> {
+    let projection = definition.output_schema.as_ref().map(project_output_schema)
+        .transpose().map_err(|error| {
+            crate::errors::Error::Incur(crate::errors::IncurError {
+                message: format!("Cannot publish MCP output schema for {}: {error}", definition.name),
+                code: error.code().to_string(),
+                hint: Some("Use JSON Schema 2020-12 for non-object output, or declare an object-root output schema.".to_string()),
+                retryable: false,
+                exit_code: None,
+                cause: Some(Box::new(error)),
+            })
+        })?;
     let annotations = definition.annotations.as_ref().map(|annotations| {
         let mut wire = Map::new();
         if let Some(title) = &annotations.title {
@@ -65,7 +75,7 @@ fn shared_tool(definition: &ToolDefinition) -> SharedTool {
         }
         Value::Object(wire)
     });
-    SharedTool {
+    Ok(SharedTool {
         definition: definition.clone(),
         output_shape: projection.as_ref().map(|projection| projection.shape),
         name: definition.name.clone(),
@@ -86,7 +96,7 @@ fn shared_tool(definition: &ToolDefinition) -> SharedTool {
         annotations,
         instructions: definition.instructions.clone(),
         result_content: definition.result_content.clone(),
-    }
+    })
 }
 
 /// Borrowed CLI parts a server is built from.
@@ -159,22 +169,17 @@ pub(crate) fn wildcard_matches(pattern: &str, value: &str) -> bool {
     pattern.ends_with('*') || parts.last().is_some_and(|part| value.ends_with(part))
 }
 
-pub(crate) fn filter_tools(tools: Vec<SharedTool>, filter: &McpToolFilter) -> Vec<SharedTool> {
-    tools
-        .into_iter()
-        .filter(|tool| {
-            let included = filter.include.is_empty()
-                || filter
-                    .include
-                    .iter()
-                    .any(|pattern| wildcard_matches(pattern, &tool.name));
-            let excluded = filter
-                .exclude
-                .iter()
-                .any(|pattern| wildcard_matches(pattern, &tool.name));
-            included && !excluded
-        })
-        .collect()
+fn tool_is_exposed(name: &str, filter: &McpToolFilter) -> bool {
+    let included = filter.include.is_empty()
+        || filter
+            .include
+            .iter()
+            .any(|pattern| wildcard_matches(pattern, name));
+    let excluded = filter
+        .exclude
+        .iter()
+        .any(|pattern| wildcard_matches(pattern, name));
+    included && !excluded
 }
 
 /// The MCP `Tool` wire value for a directly exposed command.
@@ -657,15 +662,16 @@ impl ToolServer {
         #[cfg(not(target_arch = "wasm32"))]
         let resolved = catalog
             .resolved()
+            .filter(|tool| tool_is_exposed(&tool.definition.name, &options.tools))
             .map(|tool| shared_tool(&tool.definition))
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         #[cfg(target_arch = "wasm32")]
         let resolved = catalog
             .definitions()
             .iter()
+            .filter(|definition| tool_is_exposed(&definition.name, &options.tools))
             .map(shared_tool)
-            .collect::<Vec<_>>();
-        let resolved = filter_tools(resolved, &options.tools);
+            .collect::<Result<Vec<_>, _>>()?;
         let mut names = HashSet::new();
         for tool in &resolved {
             if !names.insert(tool.name.clone()) {
@@ -777,7 +783,7 @@ impl ToolServer {
                     return Ok(tool_call_result(
                         &self.server_name,
                         ToolCallOutcome::Error {
-                            code: "MCP_OUTPUT_SHAPE_INVALID".to_string(),
+                            code: error.code().to_string(),
                             message: error.to_string(),
                             retryable: Some(false),
                             field_errors: None,

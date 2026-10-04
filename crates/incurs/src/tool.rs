@@ -106,6 +106,10 @@ pub enum ToolEvent {
 
 /// Consumer for ordered tool invocation events.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait ToolEventSink: Send + Sync {
     /// Receives one event before the next event is emitted.
     async fn emit(&self, event: ToolEvent);

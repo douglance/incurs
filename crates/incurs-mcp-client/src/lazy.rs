@@ -54,6 +54,10 @@ impl Default for ClientLimits {
 
 /// How a connection is produced, so tests can supply one in process.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait TransportFactory: Send + Sync {
     /// Opens one connection to the described server.
     async fn connect(&self, transport: &McpTransport) -> Result<Arc<Connection>, HealthReport>;

@@ -39,6 +39,8 @@ Worker build failed.
   clients cap buffered responses and accumulated SSE data, preserve coded
   transport errors, and apply host-provided deadlines to queued requests and
   complete catalog discovery.
+- MCP schema projection rejects unsupported declared wrapping dialects with
+  `MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED`; explicit object roots stay intact.
 - MCP output projects scalar, array, and nullable roots into a marked object
   envelope without changing the underlying ToolCatalog contract. Remote
   clients restore only the exact projection marker.

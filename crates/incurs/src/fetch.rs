@@ -186,6 +186,10 @@ pub fn is_streaming_response(content_type: Option<&str>) -> bool {
 /// Implementations receive a parsed [`FetchInput`] and return a [`FetchOutput`].
 /// This allows CLIs to proxy HTTP-style requests through a command gateway.
 #[async_trait::async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait FetchHandler: Send + Sync {
     /// Handle a fetch request and return a response.
     async fn handle(&self, request: FetchInput) -> FetchOutput;

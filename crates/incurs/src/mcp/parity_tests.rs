@@ -1589,3 +1589,96 @@ async fn mcp_output_boundary_rejects_wrong_object_shape_with_coded_error() {
         assert_eq!(result.get("_meta"), None);
     }
 }
+
+#[tokio::test]
+async fn mcp_output_boundary_rejects_unsupported_wrapping_dialects() {
+    let schema = json!({
+        "$schema": "https://json-schema.org/draft/2019-09/schema",
+        "type": "array",
+        "items": {"anyOf": [{"type": "integer"}, {"$recursiveRef": "#"}]}
+    });
+    let mut command = CommandDef::build("recursive", OutputValue(json!([1, [2]]))).done();
+    command.output_schema = Some(schema.clone());
+    let cli = Cli::create("recursive")
+        .mcp(McpServeOptions {
+            tools: McpToolFilter {
+                discovery: McpDiscovery::Direct,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .command("recursive", command);
+    let portable = match McpHttpServer::from_cli(&cli, portable_config()) {
+        Err(error) => error,
+        Ok(_) => panic!("portable server must reject unsupported relocation"),
+    };
+    let native = match super::http_service(&cli) {
+        Err(error) => error,
+        Ok(_) => panic!("native server must reject unsupported relocation"),
+    };
+    for error in [portable, native] {
+        let crate::errors::Error::Incur(error) = error else {
+            panic!("dialect rejection must preserve a machine-readable error");
+        };
+        assert_eq!(error.code, "MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED");
+        assert!(!error.retryable);
+        assert!(
+            error
+                .message
+                .contains("https://json-schema.org/draft/2019-09/schema")
+        );
+    }
+
+    let mut hidden = CommandDef::build("recursive", OutputValue(json!([1, [2]]))).done();
+    hidden.output_schema = Some(schema);
+    let filtered = Cli::create("filtered")
+        .mcp(McpServeOptions {
+            tools: McpToolFilter {
+                discovery: McpDiscovery::Direct,
+                exclude: vec!["recursive".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .command("recursive", hidden);
+    for listed in
+        output_boundary_version(&filtered, rpc(json!(307), "tools/list", None), "2025-11-25").await
+    {
+        assert_eq!(
+            listed["tools"],
+            json!([]),
+            "excluded schemas are never projected"
+        );
+    }
+
+    // The policy applies only when wrapping relocates the schema.
+    let schema = json!({
+        "$schema": "https://json-schema.org/draft/2019-09/schema",
+        "type": "object",
+        "properties": {"children": {"type": "array", "items": {"$recursiveRef": "#"}}}
+    });
+    let data = json!({"children": [{"children": []}]});
+    let mut command = CommandDef::build("object", OutputValue(data.clone())).done();
+    command.output_schema = Some(schema.clone());
+    let cli = Cli::create("object")
+        .mcp(McpServeOptions {
+            tools: McpToolFilter {
+                discovery: McpDiscovery::Direct,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .command("object", command);
+    for listed in
+        output_boundary_version(&cli, rpc(json!(305), "tools/list", None), "2025-11-25").await
+    {
+        assert_eq!(listed["tools"][0]["outputSchema"], schema);
+        assert!(listed["tools"][0].get("_meta").is_none());
+    }
+    for called in
+        output_boundary_version(&cli, call(json!(306), "object", json!({})), "2025-11-25").await
+    {
+        assert_eq!(called["structuredContent"], data);
+        assert_eq!(called["isError"], false);
+    }
+}

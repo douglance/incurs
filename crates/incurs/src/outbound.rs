@@ -159,6 +159,10 @@ impl HttpResponse {
 /// successful exchange. An error means no response arrived, or the body
 /// failed while it was read.
 #[async_trait::async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait HttpClient: Send + Sync {
     /// Performs one exchange.
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpClientError>;

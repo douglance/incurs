@@ -132,6 +132,10 @@ pub struct ToolContext {
 
 /// A transport-neutral source of sandbox-callable tools.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait Connector: Send + Sync {
     /// Returns the namespace this connector is bound to.
     ///
@@ -354,6 +358,10 @@ pub struct McpTool {
 
 /// Minimal MCP client contract required by Code Mode.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait McpClient: Send + Sync {
     /// Lists tools from the remote MCP server.
     async fn list_tools(&self) -> Result<Vec<McpTool>, String>;
@@ -519,6 +527,10 @@ pub struct OpenApiRequest {
 
 /// Host operations required by the OpenAPI connector.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait OpenApiClient: Send + Sync {
     /// Returns the OpenAPI document.
     async fn specification(&self) -> Result<Value, String>;

@@ -18,7 +18,7 @@ fn object_schemas_are_identity_projected() {
         "required": ["name"]
     });
 
-    let projection = project_output_schema(&schema);
+    let projection = project_output_schema(&schema).expect("supported wrapping dialect");
 
     assert_eq!(projection.shape, McpStructuredShape::Object);
     assert_eq!(projection.schema, schema);
@@ -35,7 +35,7 @@ fn arrays_and_scalars_are_wrapped_and_restored() {
         json!({ "type": "array", "items": { "type": "string" } }),
         json!({ "type": "string" }),
     ] {
-        let projection = project_output_schema(&schema);
+        let projection = project_output_schema(&schema).expect("supported wrapping dialect");
 
         assert_eq!(projection.shape, McpStructuredShape::WrappedValue);
         assert_eq!(
@@ -76,7 +76,9 @@ fn anonymous_root_dialect_keywords_are_promoted_to_wrapper_root() {
         "items": { "type": "string" }
     });
 
-    let projected = project_output_schema(&schema).schema;
+    let projected = project_output_schema(&schema)
+        .expect("supported wrapping dialect")
+        .schema;
 
     assert_eq!(
         projected.pointer("/$schema"),
@@ -98,7 +100,7 @@ fn mixed_nullable_unions_and_references_are_conservatively_wrapped() {
         json!({ "anyOf": [{ "type": "object" }, { "type": "null" }] }),
         json!({ "$ref": "#/$defs/output", "$defs": { "output": { "type": "object" } } }),
     ] {
-        let projection = project_output_schema(&schema);
+        let projection = project_output_schema(&schema).expect("supported wrapping dialect");
 
         assert_eq!(projection.shape, McpStructuredShape::WrappedValue);
         assert_eq!(
@@ -126,7 +128,9 @@ fn local_json_pointers_rebase_inside_schema_keywords() {
         }
     });
 
-    let projected = project_output_schema(&schema).schema;
+    let projected = project_output_schema(&schema)
+        .expect("supported wrapping dialect")
+        .schema;
 
     assert_eq!(
         projected.pointer("/properties/data/items/$ref"),
@@ -160,7 +164,9 @@ fn root_self_and_property_references_round_trip_exactly() {
         }
     });
 
-    let projected = project_output_schema(&schema).schema;
+    let projected = project_output_schema(&schema)
+        .expect("supported wrapping dialect")
+        .schema;
 
     assert_eq!(
         projected.pointer("/properties/data/allOf/0/$ref"),
@@ -183,7 +189,9 @@ fn schema_resources_with_ids_are_not_rebased() {
             "item": { "type": "string" }
         }
     });
-    let root_projected = project_output_schema(&root_id_schema).schema;
+    let root_projected = project_output_schema(&root_id_schema)
+        .expect("supported wrapping dialect")
+        .schema;
     assert_eq!(root_projected.pointer("/$schema"), None);
     assert_eq!(
         root_projected.pointer("/properties/data/$schema"),
@@ -208,7 +216,9 @@ fn schema_resources_with_ids_are_not_rebased() {
             }
         }
     });
-    let nested_projected = project_output_schema(&nested_id_schema).schema;
+    let nested_projected = project_output_schema(&nested_id_schema)
+        .expect("supported wrapping dialect")
+        .schema;
     assert_eq!(
         nested_projected.pointer("/properties/data/items/$ref"),
         Some(&json!("#/$defs/item"))
@@ -230,7 +240,9 @@ fn references_inside_arbitrary_data_are_untouched() {
         "x-extension": { "$ref": "#/$defs/item" }
     });
 
-    let projected = project_output_schema(&schema).schema;
+    let projected = project_output_schema(&schema)
+        .expect("supported wrapping dialect")
+        .schema;
 
     assert_eq!(
         projected.pointer("/properties/data/const/$ref"),
@@ -344,4 +356,81 @@ fn malformed_metadata_never_unwraps_natural_data() {
         ),
         json!({"data": ["natural"], "extra": true})
     );
+}
+
+#[test]
+fn wrapping_rejects_declared_non_2020_dialects() {
+    let recursive = json!({
+        "$schema": "https://json-schema.org/draft/2019-09/schema",
+        "type": "array",
+        "items": {"anyOf": [{"type": "integer"}, {"$recursiveRef": "#"}]}
+    });
+    let error = project_output_schema(&recursive).expect_err("2019 recursion cannot be relocated");
+    assert_eq!(error.code(), "MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED");
+    assert_eq!(
+        error,
+        incurs_mcp_protocol::structured::McpOutputProjectionError::UnsupportedWrappingDialect {
+            dialect: "https://json-schema.org/draft/2019-09/schema".into()
+        }
+    );
+    for declaration in [
+        json!("http://json-schema.org/draft-07/schema#"),
+        json!("https://example.test/custom-dialect"),
+        json!("https://json-schema.org/draft/2020-12/schema##"),
+        json!(false),
+    ] {
+        let schema = json!({"$schema": declaration, "type": "array"});
+        assert_eq!(
+            project_output_schema(&schema).unwrap_err().code(),
+            "MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED"
+        );
+    }
+}
+
+#[test]
+fn default_and_recognized_2020_dialects_preserve_legacy_annotations() {
+    for declaration in [
+        None,
+        Some("https://json-schema.org/draft/2020-12/schema"),
+        Some("https://json-schema.org/draft/2020-12/schema#"),
+        Some("http://json-schema.org/draft/2020-12/schema"),
+        Some("http://json-schema.org/draft/2020-12/schema#"),
+    ] {
+        let mut schema = json!({
+            "type": "array", "items": {"$recursiveRef": "#"}
+        });
+        if let Some(declaration) = declaration {
+            schema["$schema"] = json!(declaration);
+        }
+        let projection = project_output_schema(&schema).expect("2020-12 wrapping");
+        assert_eq!(projection.shape, McpStructuredShape::WrappedValue);
+        assert_eq!(
+            projection
+                .schema
+                .pointer("/properties/data/items/$recursiveRef"),
+            Some(&json!("#")),
+            "legacy annotation has no recursive-reference semantics in 2020-12"
+        );
+        assert_eq!(
+            restore_output_schema(projection.schema, Some(&metadata())),
+            schema
+        );
+    }
+}
+
+#[test]
+fn declared_legacy_object_roots_remain_identity_projected() {
+    for dialect in [
+        "https://json-schema.org/draft/2019-09/schema",
+        "http://json-schema.org/draft-07/schema#",
+    ] {
+        let schema = json!({
+            "$schema": dialect, "type": "object",
+            "properties": {"children": {"type": "array", "items": {"$recursiveRef": "#"}}}
+        });
+        let projected = project_output_schema(&schema).unwrap();
+        assert_eq!(projected.schema, schema);
+        assert_eq!(projected.shape, McpStructuredShape::Object);
+        assert_eq!(projection_metadata(projected.shape), None);
+    }
 }

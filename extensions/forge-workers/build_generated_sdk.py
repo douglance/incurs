@@ -28,7 +28,7 @@ def main():
     native["CARGO_TARGET_DIR"] = str(FORGE / "target")
     native["CARGO_INCREMENTAL"] = "0"
     run([cargo, "build", "--manifest-path", FORGE / "Cargo.toml",
-         "--examples", "--all-features", "--locked", "--offline", "-j2"],
+         "--examples", "--all-features", "--locked", "-j2"],
         cwd=FORGE, env=native)
     examples = FORGE / "target/debug/examples"
     run([examples / "compile",
