@@ -6,8 +6,21 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-WORKER_PORT="${WORKER_PORT:-8799}"
-API_PORT=8801
+read -r WORKER_PORT API_PORT < <(
+  python3 - "${WORKER_PORT:-0}" "${API_PORT:-0}" <<'PY'
+import socket
+import sys
+
+sockets = []
+ports = []
+for requested in sys.argv[1:]:
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", int(requested)))
+    sockets.append(sock)
+    ports.append(sock.getsockname()[1])
+print(*ports)
+PY
+)
 BASE="http://127.0.0.1:${WORKER_PORT}"
 LOG="$(mktemp)"
 
@@ -18,7 +31,6 @@ API_PID=$!
 WORKER_PID=""
 stop_worker() {
   [ -n "$WORKER_PID" ] || return 0
-  pkill -P "$WORKER_PID" 2>/dev/null || true
   kill "$WORKER_PID" 2>/dev/null || true
   wait "$WORKER_PID" 2>/dev/null || true
   WORKER_PID=""
@@ -26,11 +38,15 @@ stop_worker() {
     curl -s -m 1 "$BASE" >/dev/null 2>&1 || return 0
     sleep 1
   done
+  echo "FAIL owned Worker port remains open after cleanup"
+  exit 1
 }
 # Starts the Worker; extra arguments go to `wrangler dev`.
 start_worker() {
   : >"$LOG"
-  npm exec --yes --package=wrangler@4 -- wrangler dev --port "$WORKER_PORT" --ip 127.0.0.1 "$@" >"$LOG" 2>&1 &
+  python3 owned_process.py "$LOG" -- npm exec --yes --package=wrangler@4 -- wrangler dev \
+    --port "$WORKER_PORT" --ip 127.0.0.1 \
+    --var "SELF_URL:$BASE" --var "OPENAPI_BASE:http://127.0.0.1:$API_PORT" "$@" &
   WORKER_PID=$!
   for _ in $(seq 1 300); do
     grep -q "Ready on" "$LOG" && return 0

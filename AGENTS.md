@@ -46,6 +46,10 @@
 
 ## Testing Conventions
 
+- **Worker fixture cleanup owns a process group** — launch Wrangler in a dedicated session and terminate that group with bounded waits before reusing its port. Use available fixture ports and forward their URLs into the Worker; a parent-only kill left workerd listening during the authenticated restart.
+
+- **Source fixtures compare logical newlines** — normalize CRLF in checked-in expected source before a complete generated-source comparison. Preserve full compile-failure snapshots and refresh compiler location rendering when the diagnostic format changes; Windows checkout conversion and a newer Rust diagnostic are platform differences, not reasons to weaken the assertions.
+
 - **MCP schema relocation preserves dialect meaning** - wrapping non-object output changes reference scope. Wrap only supported declared dialects, reject unsupported relocation with a coded error before constructing either MCP server, and retain object roots unchanged. Keep declared 2019 recursive-schema rejection and 2020 positive controls, plus a confirmed guard-bypass mutation.
 
 - **Cold caches are part of Worker proof** - the first locked native Forge build must fetch its complete feature graph before later offline archive packaging. The base Worker disables native adapters and does not populate those dependencies; run both HTTP probes on CI without assuming a developer cache.
