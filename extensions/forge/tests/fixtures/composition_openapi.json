@@ -1,0 +1,186 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Composition SDK proof",
+    "version": "1"
+  },
+  "components": {
+    "schemas": {
+      "Cat": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "hunts": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Dog": {
+        "type": "object",
+        "required": [
+          "name",
+          "barkVolume"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "barkVolume": {
+            "type": "integer"
+          }
+        }
+      },
+      "Pet": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Cat"
+          },
+          {
+            "$ref": "#/components/schemas/Dog"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "BaseEvent": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          }
+        }
+      },
+      "TaggedEvent": {
+        "type": "object",
+        "required": [
+          "tags"
+        ],
+        "properties": {
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Event": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/BaseEvent"
+          },
+          {
+            "$ref": "#/components/schemas/TaggedEvent"
+          },
+          {
+            "type": "object",
+            "required": [
+              "pet"
+            ],
+            "properties": {
+              "pet": {
+                "$ref": "#/components/schemas/Pet"
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "Color": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "red"
+            ]
+          },
+          {
+            "type": "string",
+            "enum": [
+              "blue"
+            ]
+          }
+        ]
+      },
+      "NumberChoice": {
+        "oneOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          }
+        ]
+      },
+      "Exact": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "maximum": 9007199254740992
+          },
+          {
+            "type": "integer",
+            "minimum": 9007199254740993
+          }
+        ]
+      },
+      "Closed": {
+        "allOf": [
+          {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "b": {
+                "type": "string"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "paths": {
+    "/compose": {
+      "post": {
+        "operationId": "sendComposition",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Event"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Received"
+          }
+        }
+      }
+    }
+  }
+}

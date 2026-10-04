@@ -7,6 +7,7 @@ pub mod core;
 mod generated;
 pub mod negotiation;
 pub mod standards;
+pub mod structured;
 pub mod wire;
 
 pub use core::{McpClientMetadata, McpLifecycleFamily, McpVersion};

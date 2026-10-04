@@ -59,6 +59,10 @@ pub enum DispatchRequest {
 /// Executors provide isolation and host bridging. The durable lifecycle,
 /// connector policy, approvals, replay, and rollback remain in [`crate::CodeMode`].
 #[async_trait(?Send)]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait CodeExecutor {
     /// Executes one pass and returns its result or captured program error.
     async fn execute(

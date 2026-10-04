@@ -542,7 +542,8 @@ mod tests {
         let source = rust_source(&manifest).expect("the real manifest generates");
 
         assert_eq!(
-            source, TODOAPP_GENERATED,
+            source,
+            TODOAPP_GENERATED.replace("\r\n", "\n"),
             "`incurs gen` output changed for the todoapp manifest. If that is \
              intended, regenerate crates/incurs-cli/fixtures/todoapp.generated.rs.txt \
              and review the diff as the wire-format change it is."

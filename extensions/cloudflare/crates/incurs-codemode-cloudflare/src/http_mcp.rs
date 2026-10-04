@@ -24,6 +24,10 @@ pub const CODEMODE_MCP_TOOL_NAMES: [&str; 5] = [
 
 /// Single-thread service boundary used by a Worker isolate.
 #[async_trait::async_trait(?Send)]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait WorkerCodeModeService {
     /// Searches available methods and snippets.
     async fn search(&self, query: String) -> Result<SearchOutput, String>;

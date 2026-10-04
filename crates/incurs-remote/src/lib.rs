@@ -286,6 +286,10 @@ pub enum RemoteToolResult {
 
 /// Provider-neutral runtime boundary for remote tool execution.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait RemoteToolRuntime: Send + Sync {
     /// Returns the current capability manifest.
     fn manifest(&self) -> CapabilityManifest;

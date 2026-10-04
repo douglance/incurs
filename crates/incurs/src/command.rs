@@ -76,6 +76,22 @@ pub enum McpResultContent {
         /// JSON Pointer to the image MIME type.
         mime_type_pointer: String,
     },
+    /// Present base64-encoded audio data as an MCP audio content block.
+    Audio {
+        /// JSON Pointer to the base64-encoded audio bytes.
+        data_pointer: String,
+        /// JSON Pointer to the audio MIME type.
+        mime_type_pointer: String,
+    },
+    /// Present a URI as an MCP resource link content block.
+    ResourceLink {
+        /// JSON Pointer to the resource URI.
+        uri_pointer: String,
+        /// JSON Pointer to a display name for the resource.
+        name_pointer: String,
+        /// JSON Pointer to the resource MIME type.
+        mime_type_pointer: String,
+    },
 }
 
 /// MCP exposure and metadata overrides for a command.
@@ -625,6 +641,10 @@ impl CommandHandler for McpHandler {
 /// can store heterogeneous handlers in the command tree. Implementations
 /// receive a [`CommandContext`] and return a [`CommandResult`].
 #[async_trait::async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait CommandHandler: Send + Sync {
     /// Execute the command with the given context.
     async fn run(&self, ctx: CommandContext) -> CommandResult;

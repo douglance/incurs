@@ -1,3 +1,76 @@
+# Migrating from incurs 0.10 to 0.11
+
+Require every incurs crate at its new minor version together (see
+CHANGELOG.md) so one copy of incurs is in the graph.
+
+Several public types gained a field or variant. Struct literals and exhaustive
+matches of them no longer compile until you add it; values built with
+`..Default::default()` need no change.
+
+```rust
+http::AppState { /* ...existing fields... */ env: None }
+mcp::McpRemoteOptions { /* ... */ http_client: None, ..Default::default() }
+agent_plugin_runtime::AgentPluginRuntimeOptions { /* ... */ http_client: None, ..Default::default() }
+agent_plugin_runtime::AgentPluginMcpServerStatus { /* ... */ error_code: None }
+```
+
+`openapi::OpenApiSource` has a new `Url { url, client }` variant; a `match`
+without a wildcard arm needs one more arm.
+
+The `http` feature no longer depends on axum-streams, hyper, or tower-http,
+and incurs no longer depends on sse-stream. A crate that used them through
+incurs adds them itself.
+
+The `cli` feature no longer turns tokio features on. Native builds always
+have tokio's multi-thread runtime, signals, process, time, and net, so nothing
+changes for a native build with default features. A native build with
+`default-features = false` now also compiles those tokio features.
+
+## MCP results and remote clients
+
+McpCommandOptions gains a result_mapper field. Struct literals must set it
+to None or use ..Default::default(). Exhaustive McpResultContent matches need
+Audio and ResourceLink arms. Those blocks are emitted only when the selected
+MCP standard supports them; the JSON text block remains available.
+
+McpRemoteOptions adds request_timeout and max_response_bytes. Use
+..Default::default() to retain the 60-second portable request deadline and
+16 MiB buffered-response cap. Custom HttpClient implementations supply sleep
+to enforce deadlines; without a host timer the portable client cannot enforce
+one. Catalog discovery is bounded separately by page and tool counts.
+
+Wrapping requires JSON Schema 2020-12, either implicit or explicitly declared.
+Unsupported declared wrapping dialects reject server construction with
+`MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED`; object roots remain intact.
+
+Non-object MCP output schemas use a marked object envelope on the MCP wire.
+The original ToolCatalog and CLI results stay unchanged. Remote clients
+restore the inner value only for the exact io.incurs.outputProjection marker;
+a natural third-party object named data is preserved.
+
+CodeModeMcpServer::with_projector accepts a host-owned ExecutionProjector.
+Its argument properties are added to lifecycle tool schemas without replacing
+built-in properties. Host projection takes precedence over the fixed
+ExecutionProjection setting and skips search, artifacts, and service errors.
+
+## Run on Cloudflare Workers
+
+Build with `default-features = false` and any other features, and serve the
+router through the Workers SDK's axum support. A Worker has no process
+environment, so pass its variables explicitly, and guard the routes:
+
+```rust
+let router = incurs::http::build_cli_router_with(&cli, RouterOptions {
+    env: Some(worker_vars),
+    guard: Some(RequestGuard::bearer(token)),
+    ..RouterOptions::default()
+})?;
+```
+
+Outbound calls (remote MCP, Agent Plugin HTTP servers, OpenAPI documents by
+URL) need a client on wasm32; pass `incurs_mcp_cloudflare::WorkersHttpClient`
+through `http_client`, or they fail with `HTTP_CLIENT_REQUIRED`.
+
 # Migrating from incurs 0.9 to 0.10
 
 A command that was tolerant of stray argv tokens now fails on them. Before,

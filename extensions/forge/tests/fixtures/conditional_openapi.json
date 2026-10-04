@@ -1,0 +1,73 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Constraint-only composition proof",
+    "version": "1"
+  },
+  "components": {
+    "schemas": {
+      "Conditional": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "left": {
+            "type": "integer"
+          },
+          "right": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "left"
+            ]
+          },
+          {
+            "required": [
+              "right"
+            ]
+          }
+        ]
+      },
+      "UntypedRequired": {
+        "oneOf": [
+          {
+            "required": [
+              "left"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "paths": {
+    "/conditional": {
+      "post": {
+        "operationId": "sendConditional",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Conditional"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Received"
+          }
+        }
+      }
+    }
+  }
+}

@@ -34,6 +34,53 @@ jobs:
       - name: Build examples
         run: cargo build --examples --workspace --all-features
 
+  features:
+    # `--all-features` hides a feature that only compiles alongside another, so
+    # each one is built alone. wasm32 is how Cloudflare Workers run incurs.
+    name: Feature ${{ matrix.feature }} (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [native, wasm32-unknown-unknown]
+        feature: [none, default, cli, toon, tokens, yaml, http, openapi, agent-plugins, agent-plugins-mcp, all]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target != 'native' && matrix.target || '' }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Check
+        run: |
+          target=()
+          [ "${{ matrix.target }}" = native ] || target=(--target "${{ matrix.target }}")
+          case "${{ matrix.feature }}" in
+            none) features=(--no-default-features) ;;
+            default) features=() ;;
+            all) features=(--all-features) ;;
+            *) features=(--no-default-features --features "${{ matrix.feature }}") ;;
+          esac
+          cargo check -p incurs "${target[@]}" "${features[@]}"
+
+  workers-smoke:
+    # Compiling for wasm32 does not prove a feature runs: std clocks, process
+    # environment, and exit all compile there and fail at runtime.
+    name: Workers smoke (every feature under wrangler dev)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: extensions/cloudflare
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo install worker-build --locked
+      - run: extensions/cloudflare/examples/feature-worker/smoke.sh
+
   plugin-installers:
     name: Plugin installers (${{ matrix.os }})
     strategy:
@@ -102,6 +149,9 @@ jobs:
           - workspace: cloudflare
             os: ubuntu-latest
             wasm: true
+          - workspace: forge
+            os: ubuntu-latest
+            wasm: true
           - workspace: gpui
             os: macos-latest
             wasm: false
@@ -115,9 +165,50 @@ jobs:
       - name: Format
         run: cargo fmt --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --all --check
       - name: Test
+        if: matrix.workspace != 'forge'
         run: cargo test --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-features
+      - name: Forge test
+        if: matrix.workspace == 'forge'
+        run: cargo test --manifest-path extensions/forge/Cargo.toml --workspace --all-features --locked -j 2 -- --test-threads=1
       - name: Clippy
         run: cargo clippy --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-targets --all-features -- -D warnings
       - name: Wasm target
         if: matrix.wasm
         run: cargo check --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --target wasm32-unknown-unknown
+
+      - name: Forge documentation
+        if: matrix.workspace == 'forge'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --manifest-path extensions/forge/Cargo.toml --all-features --no-deps --locked
+      - name: Forge portable adapters
+        if: matrix.workspace == 'forge'
+        run: cargo check --manifest-path extensions/forge/Cargo.toml --all-features --target wasm32-unknown-unknown --locked
+      - name: Forge independent features
+        if: matrix.workspace == 'forge'
+        run: |
+          for feature in adapters native-cli; do
+            cargo check --manifest-path extensions/forge/Cargo.toml --no-default-features --features "$feature" --all-targets --locked
+            cargo check --manifest-path extensions/forge/Cargo.toml --no-default-features --features "$feature" --target wasm32-unknown-unknown --locked
+          done
+      - name: Forge imported CLI and MCP
+        if: matrix.workspace == 'forge'
+        run: |
+          cargo build --manifest-path extensions/forge/Cargo.toml --features native-cli --example openapi --locked
+          python3 extensions/forge/probe_cli.py
+
+  forge-emscripten:
+    # Experimental proof only; the existing Cloudflare target stays unchanged.
+    name: Forge Worker proof build (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: extensions/forge-workers
+      - name: Run pinned Emscripten HTTP proof
+        run: python3 extensions/forge-workers/smoke.py

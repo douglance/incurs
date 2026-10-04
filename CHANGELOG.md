@@ -1,5 +1,67 @@
 # incurs
 
+## 0.11.0
+
+Every incurs feature runs on Cloudflare Workers. 0.10 made MCP serving
+unconditional, which put the stdio server, its HTTP stack, and native runtime
+capabilities into every build; none of that compiles for wasm32, so every
+Worker build failed.
+
+- Each Cargo feature builds on its own for native and wasm32, and CI checks all
+  of them. `http` alone did not compile before, on any target.
+- `McpHttpServer` serves MCP over Streamable HTTP without an async runtime. It
+  answers like the native server across all five standards (a parity suite
+  pins that) and passes the same conformance baseline, and it also rejects
+  disallowed `Origin`s. `http::build_cli_router_with` and `http::mcp_router`
+  serve it; on wasm32 `build_cli_router` uses it for `/mcp`.
+- `mcp_client::McpHttpClient` consumes MCP over HTTP (Streamable HTTP and
+  legacy SSE) without an async runtime; remote MCP commands and Agent Plugin
+  HTTP servers use it on wasm32.
+- `outbound::HttpClient` lets a host supply HTTP for every outbound call
+  (remote MCP, plugin servers, OpenAPI documents by URL). Native defaults to
+  reqwest; `incurs_mcp_cloudflare::WorkersHttpClient` sends through Workers
+  `fetch`. reqwest is no longer in wasm32 builds.
+- `http::RequestGuard` admits requests to every route, `/mcp` included;
+  `RequestGuard::bearer` compares tokens in constant time.
+- HTTP routes and MCP tool calls accept a host-supplied environment
+  (`AppState::with_env`, `RouterOptions::env`), because a Worker has none.
+- Agent Plugin packages load from in-memory files
+  (`agent_plugin::loader::load_agent_plugin_from_files`).
+- On wasm32, `--mcp` answers `MCP_STDIO_UNAVAILABLE`, and `plugin build`,
+  `skills add`/`list`, and `mcp add` answer `LOCAL_INSTALL_UNAVAILABLE`,
+  instead of failing or panicking.
+- `/mcp` reads at most one byte past the configured body limit instead of
+  buffering the whole request.
+- toon output no longer pulls toon-format's bundled terminal app, and the
+  unused axum-streams, hyper, and tower-http dependencies are gone.
+
+- Remote MCP discovery is bounded by 256 pages and 16,384 tools. Portable
+  clients cap buffered responses and accumulated SSE data, preserve coded
+  transport errors, and apply host-provided deadlines to queued requests and
+  complete catalog discovery.
+- MCP schema projection rejects unsupported declared wrapping dialects with
+  `MCP_OUTPUT_SCHEMA_DIALECT_UNSUPPORTED`; explicit object roots stay intact.
+- MCP output projects scalar, array, and nullable roots into a marked object
+  envelope without changing the underlying ToolCatalog contract. Remote
+  clients restore only the exact projection marker.
+- Commands can classify MCP results with a host-owned result mapper and publish
+  audio or resource links when the negotiated MCP standard supports them.
+  Older standards retain the JSON text fallback.
+- Code Mode MCP hosts can supply an ExecutionProjector and its argument
+  schemas. Search results, artifacts, and service errors bypass projection.
+- The unpublished Forge extension compiles OpenAPI contracts into packaged
+  Rust SDKs and validates request and response boundaries. Its separate
+  Emscripten proof runs HTTP probes in CI; it does not replace the default
+  Cloudflare target.
+
+incurs-mcp-protocol 0.2.1 adds the reversible structured-output helpers.
+
+Every crate built on incurs moves with it: incurs-cli and incurs-extras
+0.11.0; incurs-codemode, incurs-codemode-local, incurs-codemode-mcp and
+incurs-codemode-cloudflare 0.9.0; incurs-mcp-client, incurs-mcp-registry,
+incurs-remote and incurs-mcp-cloudflare 0.7.0; incurs-app-model,
+incurs-app-ratatui and incurs-app-gpui 0.6.0.
+
 ## 0.10.3
 
 Markdown output lists an array of plain values under its key. `{"terms":

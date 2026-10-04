@@ -1,0 +1,594 @@
+{
+  "checked_at": "2026-10-02T01:51:41.641726+00:00",
+  "scope": "Generated composition validation, packaged Rust SDKs, local native and Emscripten HTTP proof, and stage-specific pinned API audit. Universal OpenAPI compatibility and hosted production parity remain unproven.",
+  "source_manifest": "corpus-sources.json",
+  "baseline_report": "corpus-graph-report.json",
+  "source_sha256": {
+    "extensions/forge-workers/Cargo.lock": "ae0a3a9063f098c602cebe5324bf5b5e6fa91b602bc41924bdc2632fcb7069cf",
+    "extensions/forge-workers/Cargo.toml": "dda91a743c6fef4cfb6fc996bf1cc9ea34ca3adc2d46e1418e7569868573a8ff",
+    "extensions/forge-workers/build.py": "b8b7ee0921d03980a4fdcc6929954fd78d07f435dbffec4ecbd0981ee8290dfd",
+    "extensions/forge-workers/fixtures/generated_sdk_consumer.rs": "cf028e2abe350c9066ad5cdb56ac7b636531d816779fb598bcea47b19a5cfc07",
+    "extensions/forge-workers/fixtures/proof-openapi.json": "ae19ef70be756ea9a986c17a8b1b7e2f2cf430aab108999b1c10b4688ae5c0ba",
+    "extensions/forge-workers/probe.py": "b4a660728ba11dd46bc8f45c3c7f4e28b9562a8a5ce743d66948101f3c29acdf",
+    "extensions/forge-workers/src/main.rs": "17913cdeb7f7cb030c055074d2ed0e42649b51f7a0f0943985070853a8a1e18f",
+    "extensions/forge-workers/wrangler.toml": "5cb88ed1f934321e43c83396e9a2bffe57845a0d135aeafbe34e43d7b33d4e4e",
+    "extensions/forge/Cargo.lock": "e0f61caf95bd428f8744d32b770d8b94f3bde528e5e949ed1dbd69f8446b1b76",
+    "extensions/forge/Cargo.toml": "c2ddd5fbc6cd222261e8867d096df9621fc7b2f3e25c20ba6750f8e8806630cb",
+    "extensions/forge/examples/compatibility.rs": "cfadae8a606a948d8f1cf13521c0d0df329ddeb3bd1160c5ffd6ddc0d54f2bf0",
+    "extensions/forge/probe_cli.py": "53224fb8cb63f351fe0fbfc21e24a5c794e1012c9568dd929af6c65fbd9bdef0",
+    "extensions/forge/src/adapters.rs": "aa065aae1a3691cf7638568d8d23fc3c8d95f79cc495dce64a6380e1784d7629",
+    "extensions/forge/src/artifacts.rs": "68549a91620ab4a8159fdb1916756b1dc572102427aa69d8aa1e8356214f4643",
+    "extensions/forge/src/artifacts/docs.rs": "e5f8d25f567744dd7775a4d22337bfcc73174501eb20a80b5491d343bad56d25",
+    "extensions/forge/src/artifacts/publish.rs": "61f9e14955d6510b8dabdfc29a6e942f604d5e7a0d58ab2ae31a1dd51ae925d3",
+    "extensions/forge/src/artifacts/sdk.rs": "f261896361908403e2530b7f7895d455a3bfd5cb88b8924eb8740804888b9d6d",
+    "extensions/forge/src/artifacts/sdk_composition.rs": "feb38c46d59f52b88536e1e8344e4e853bbbe998cfe9c22d14a254d138e2068d",
+    "extensions/forge/src/artifacts/sdk_validation.lock": "f8b7034807f744744dce94f8d28fde84bae4b0966294f6602fe1d459f1b7c1d3",
+    "extensions/forge/src/artifacts/sdk_validation.rs": "318ab3453f4e201a80324bbc27c3e0f11c58e8e65e6afe065d67e217297bfef2",
+    "extensions/forge/src/catalog.rs": "4a5331fe023886f7965c7ab0cd65a2234d9fb00410abdaffaffceb94f2eb3a0b",
+    "extensions/forge/src/form.rs": "6592a138ea68e74d498db74a76e41fda6e3015655a5d415f875d5217300b63e5",
+    "extensions/forge/src/lib.rs": "027a4297c23d83a64c45345bb651305f23864cd5304f775a783c8607055cd319",
+    "extensions/forge/src/model.rs": "565a0ce1cf21c73caebd0082d37e17acf7f3cf635b5121ddf40981af2b10cbab",
+    "extensions/forge/src/multipart.rs": "b10eaab34923cc2e791de56bb601159004c42e0d35a9ad256c8604338546168a",
+    "extensions/forge/src/parameters.rs": "9b75ec2abe9c9bcbb0759df8aac392920cd1af17245ba35b86d18c3a577c9995",
+    "extensions/forge/src/resolver.rs": "76a18d3e0e4fcbae0c17c1ae92ca00692baf33c2f3b30ed8dfd09d528fac8c9b",
+    "extensions/forge/src/runtime.rs": "fc3e4f80a01e4e069eff9a2cae369f70e8ac79518268310a65912977f43fba05",
+    "extensions/forge/src/schema.rs": "8e60cbc585559c4e1137ed889af2cb83933f4ab5f80e40343bae08e6a30517ba",
+    "extensions/forge/src/servers.rs": "4fbbd7f50f0267730783081037581952a5c63e19ceb259a8fb4f7327c6cf4db7",
+    "extensions/forge/tests/adapters.rs": "b07c231020d7e69351099baf2561f97ef1f6f0791e71a45de55db6ded032d1f7",
+    "extensions/forge/tests/artifacts.rs": "706c76a4f6247ec98b4b7f7fd346d83ff2ad219815a2bc29a5ee2cab92655189",
+    "extensions/forge/tests/catalog.rs": "09632feee1d363fcae5d757a46d24d8ebbfeab6e8cffcf1cde6419e22a8f76fd",
+    "extensions/forge/tests/composition_sdk.rs": "47b672a7d8a02bc61df4afa3afac5323065f86a32b8d03311f18ca53b665155e",
+    "extensions/forge/tests/consumer.rs": "ac9589a2dec7425cd0622728fcf87b45cc191d6e87cd1ddcb7b93bca40740218",
+    "extensions/forge/tests/fixtures/advanced_composition_consumer.rs": "a97c9fe974924cef41fd4313973166517c73fec87d610c72ad93f568061b1401",
+    "extensions/forge/tests/fixtures/advanced_composition_openapi.json": "a5c889deda974be1fafeb7b64ed62415b136709c13f33cde1493b2c02e0846c2",
+    "extensions/forge/tests/fixtures/composition_consumer.rs": "6decba6df331a5484b1a1bf68a899f77d5bcaa3959e99b55a154f617a28571cb",
+    "extensions/forge/tests/fixtures/composition_openapi.json": "26892689250e6db7624f4fb62a2d6abf78d6173360edfc09c0eb754efa23e5db",
+    "extensions/forge/tests/fixtures/conditional_consumer.rs": "b3f9a912fe0a0b698e4a5e328cd04373786337dd380ccf59aeb6fb0fc3a23740",
+    "extensions/forge/tests/fixtures/conditional_openapi.json": "010260a0a1a5ba4bd06f6ba07ac378f3646fa6050930d729de758d295fc41f76",
+    "extensions/forge/tests/fixtures/corpus_stripe_consumer.rs": "1f85722a80a218c3cc2efff1dc90cda40b1c919e2a1a15523b7b1fe8d15a60f1",
+    "extensions/forge/tests/fixtures/form_consumer.rs": "d543f5af9f2fd1d3b7668b2dcef067293d6e9db8ec4d02d3c675ce2993a71d1c",
+    "extensions/forge/tests/fixtures/form_openapi.json": "c936ccdaa51b3197dbcc679c01adffeb1174e8ac512a012a51cb674c71265f3c",
+    "extensions/forge/tests/fixtures/http_consumer.rs": "745c7e66096c2a7554449f33b8896a71c92a48ea029508293c22b8e3fb7b3083",
+    "extensions/forge/tests/fixtures/multipart_consumer.rs": "98dd5287a4e74f935df45cbd0bee6d9bdae6bf7d26e8aa1971c0521940f269e6",
+    "extensions/forge/tests/fixtures/multipart_openapi.json": "86a9cfb256e0d411b8ee5bfab5540a41d39d26601c44ae85258f5f9f1a4287fd",
+    "extensions/forge/tests/fixtures/openapi32.json": "47ad8cd930bfc2f97d144974c426427739a64e5238536ee54eac2c722d48877c",
+    "extensions/forge/tests/fixtures/openapi32_consumer.rs": "39c0e68073af1e3f2bcfaf49898ede6f70353a7b9cfdc552af84c23b36b97faf",
+    "extensions/forge/tests/fixtures/schema_consumer.rs": "066ccf168f9b532a23f621762a7b6c290e1cc29a0a5cd399b8852bd3e4cbf6ef",
+    "extensions/forge/tests/fixtures/schema_openapi.json": "a4ab366a34bc19f2e33bf1c0ae253878f0260d65ef6e3fbe646068e3f2a13d44",
+    "extensions/forge/tests/fixtures/text_consumer.rs": "88de03fff8b0295bb426c69076ecb14ab56d99030552b8a7d3e365cb99fa278b",
+    "extensions/forge/tests/fixtures/text_openapi.json": "eee82f050941121e2e72cfcb1cea9483a8283334c91470ba6c7e9fc96fd267b9",
+    "extensions/forge/tests/form_body.rs": "cfb4df465815567eed15a7e31ec195d5f259d73c81c79ddfa12f7f1ea4cb29cd",
+    "extensions/forge/tests/generated_sdk.rs": "5113696a2ca4087797a3c58baad52c1af2e4d459b284b1125cf3988c19b99bcd",
+    "extensions/forge/tests/http_binding.rs": "155b3d641e138b9248d5ceff37252731cc0b03ca959fde0f04c2f0649b1ce71d",
+    "extensions/forge/tests/local_catalog.rs": "4cfe10e78880ed3cde4d7524ef6834ee80e6ad1418f43a972642b0fc8b42bbaf",
+    "extensions/forge/tests/multipart_body.rs": "a217014a2e1e79a77d8818a1ed85fb452de07a79592b2c9c30d8f9c5a98d4a75",
+    "extensions/forge/tests/openapi32.rs": "89afa97bc12da7d9c2669431f935d7ebfd6d59526c0b43786c627db251b29076",
+    "extensions/forge/tests/parameter_styles.rs": "cf33ebbbc7d01f1bb24cccbc45de214a83e098864ad135ffc2395abd5ea99387",
+    "extensions/forge/tests/resolver.rs": "f25d0ac4b051def1c3d64dce6192126c4df81f83fe406a7da2fb78293f10a1d3",
+    "extensions/forge/tests/schema_body.rs": "60ac3a690e28a5265ea00894d6a255a86a0179b30d0a81cabad0008e3c7b65d2",
+    "extensions/forge/tests/schema_graph.rs": "3aea8037fe2d36a6697f8396744c07d0dde1d57ab6a9c2d061e2eb26a95415dd",
+    "extensions/forge/tests/servers.rs": "811a22154f97a5029fe6e79cb6f90f12a74f26dce889f7ebb3b30da9eaef3315",
+    "extensions/forge/tests/text_body.rs": "58a593e3ac0da53f9c932b61a7c0ccc9b3454dfb2f3e2cb9d75564d66b7ce2c8",
+    "extensions/forge/tests/tool_http.rs": "c6be573a1e6e00f692a285c0ed47a6f70ba83e1e8f49af1eff95f99bce2147eb"
+  },
+  "cases": [
+    {
+      "name": "github",
+      "source_sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+      "stages": {
+        "artifact_compilation": {
+          "elapsed_ms": 33935,
+          "error": "field name collision after sanitizing -1",
+          "status": "failed"
+        },
+        "parse": {
+          "elapsed_ms": 3362,
+          "openapi": "3.1.0",
+          "path_operations": 1231,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_requested"
+        },
+        "resolution": {
+          "elapsed_ms": 3558,
+          "operation_json_bytes": 2201436,
+          "operations": 1231,
+          "resolved_json_bytes": 4787312,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 2585709,
+          "schemas": 973,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof"
+      },
+      "execution": {
+        "id": "01a0f832-849b-7c73-8251-fd732fc466be",
+        "outcome": "passed",
+        "status": "failed",
+        "exit_code": 1,
+        "replayed": false,
+        "inspect": [
+          "apoc execution logs 01a0f832-849b-7c73-8251-fd732fc466be"
+        ]
+      },
+      "generated_sdk_build": {
+        "status": "not_run"
+      },
+      "generated_sdk_package": {
+        "status": "not_run"
+      },
+      "http_execution": {
+        "status": "not_run"
+      },
+      "independent_document_validation": {
+        "name": "github",
+        "sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+        "validator": "0.9.0",
+        "status": "passed"
+      }
+    },
+    {
+      "name": "cloudflare",
+      "source_sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+      "stages": {
+        "artifact_compilation": {
+          "status": "aborted",
+          "reason": "EXECUTION_TIMEOUT",
+          "timeout_ms": 180000
+        },
+        "parse": {
+          "elapsed_ms": 7204,
+          "openapi": "3.0.3",
+          "path_operations": 3627,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_requested"
+        },
+        "resolution": {
+          "elapsed_ms": 9644,
+          "operation_json_bytes": 8822242,
+          "operations": 3627,
+          "resolved_json_bytes": 12123837,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 3301418,
+          "schemas": 6948,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof"
+      },
+      "execution": {
+        "id": "01a0f832-848b-7b52-b171-8151a6d8ae12",
+        "outcome": "error",
+        "status": "canceled",
+        "exit_code": 128,
+        "error_code": "EXECUTION_TIMEOUT",
+        "replayed": false,
+        "inspect": [
+          "apoc execution logs 01a0f832-848b-7b52-b171-8151a6d8ae12"
+        ]
+      },
+      "generated_sdk_build": {
+        "status": "not_run"
+      },
+      "generated_sdk_package": {
+        "status": "not_run"
+      },
+      "http_execution": {
+        "status": "not_run"
+      },
+      "independent_document_validation": {
+        "name": "cloudflare",
+        "sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+        "validator": "0.9.0",
+        "status": "failed",
+        "error": "'type' is not one of ['name', 'created_on', 'modified_on']\n\nFailed validating 'enum' in schema:\n    {'description': 'Field to order DNS views by.',\n     'type': 'string',\n     'default': 'type',\n     'enum': ['name', 'created_on', 'modified_on']}\n\nOn instance:\n    'type'",
+        "path": []
+      }
+    },
+    {
+      "name": "stripe",
+      "source_sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+      "stages": {
+        "artifact_compilation": {
+          "elapsed_ms": 99639,
+          "status": "passed"
+        },
+        "parse": {
+          "elapsed_ms": 1489,
+          "openapi": "3.0.0",
+          "path_operations": 644,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_requested"
+        },
+        "resolution": {
+          "elapsed_ms": 2722,
+          "operation_json_bytes": 2555817,
+          "operations": 644,
+          "resolved_json_bytes": 4620179,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 2064202,
+          "schemas": 1701,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof"
+      },
+      "execution": {
+        "id": "01a0f832-840b-7292-8259-1c002fc886ca",
+        "outcome": "passed",
+        "status": "completed",
+        "exit_code": 0,
+        "replayed": false,
+        "inspect": [
+          "apoc execution logs 01a0f832-840b-7292-8259-1c002fc886ca"
+        ]
+      },
+      "generated_sdk_build": {
+        "id": "01a0f83b-5d7e-7da2-a1f7-0e33e351b4f8",
+        "outcome": "passed",
+        "status": "completed",
+        "exit_code": 0,
+        "replayed": false,
+        "inspect": [
+          "apoc execution logs 01a0f83b-5d7e-7da2-a1f7-0e33e351b4f8"
+        ]
+      },
+      "generated_sdk_package": {
+        "id": "01a0f83e-60a5-7f23-ae19-dd566a1ca544",
+        "outcome": "passed",
+        "status": "completed",
+        "exit_code": 0,
+        "replayed": false,
+        "inspect": [
+          "apoc execution logs 01a0f83e-60a5-7f23-ae19-dd566a1ca544"
+        ]
+      },
+      "http_execution": {
+        "status": "passed",
+        "execution_id": "01a0f853-9e70-7280-814c-7017ffbf6c94",
+        "scope": "One loopback GET /v1/balance through the full generated SDK and Forge HTTP binder; no vendor API call.",
+        "unsupported": "expand array declares deepObject; explicit value fails with deepObject requires an object."
+      },
+      "publication": {
+        "elapsed_ms": 19,
+        "files": 10,
+        "status": "passed"
+      },
+      "independent_document_validation": {
+        "name": "stripe",
+        "sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+        "validator": "0.9.0",
+        "status": "passed"
+      }
+    }
+  ],
+  "quality": {
+    "status": "passed",
+    "tests_passed": 87,
+    "execution": {
+      "id": "01a0f84a-6797-7580-8b00-3059f0bfd28b",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f84a-6797-7580-8b00-3059f0bfd28b"
+      ]
+    },
+    "test_results": [
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 365.19s",
+      "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 937.92s",
+      "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "gate_log": [
+      "QUALITY_STEP ['test', '--manifest-path', 'extensions/forge/Cargo.toml', '--all-features', '--locked', '--offline', '-j2', '--', '--test-threads=1']",
+      "QUALITY_STEP ['clippy', '--manifest-path', 'extensions/forge/Cargo.toml', '--all-features', '--all-targets', '--locked', '--offline', '-j2', '--', '-D', 'warnings']",
+      "QUALITY_STEP ['fmt', '--manifest-path', 'extensions/forge/Cargo.toml', '--', '--check']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--no-default-features', '--locked', '--offline', '-j2']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--no-default-features', '--locked', '--offline', '-j2', '--features', 'adapters']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--no-default-features', '--locked', '--offline', '-j2', '--features', 'native-cli']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--no-default-features', '--locked', '--offline', '-j2', '--target', 'wasm32-unknown-unknown']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--no-default-features', '--locked', '--offline', '-j2', '--target', 'wasm32-unknown-unknown', '--features', 'adapters']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--no-default-features', '--locked', '--offline', '-j2', '--target', 'wasm32-unknown-unknown', '--features', 'native-cli']",
+      "INTEGRATED_VALIDATOR_QUALITY_PASSED",
+      " Documenting incurs-forge v0.1.0 (/Users/douglance/Developer/lv/incurs/extensions/forge)",
+      "   Generated /Users/douglance/Developer/lv/incurs/extensions/forge/target/doc/incurs_forge/index.html"
+    ],
+    "test_threads": 1,
+    "process_family_memory_mib": 4096,
+    "prior_parallel_attempt": {
+      "execution_id": "01a0f83a-ba0d-7903-b238-cbe94f019f28",
+      "status": "aborted",
+      "cause": "process-family memory limit",
+      "limit_bytes": 4294967296,
+      "observed_bytes": 4302290944
+    }
+  },
+  "compatibility": {
+    "report": "compatibility-current.json",
+    "report_sha256": "cbcd22948c82ffddc068c75de1c5ba0f7a01c0b76d0d02273274c014defc49ad",
+    "passed": 19,
+    "total": 19
+  },
+  "runtime_and_independent_controls": [
+    {
+      "id": "01a0f83b-ae6b-79b1-bb2a-44371c2aef1d",
+      "lines": [
+        "{",
+        "  \"passed\": true,",
+        "  \"requests\": 8,",
+        "  \"concurrent_elapsed_ms\": 429.62599999736995,",
+        "  \"verified\": [",
+        "    \"emscripten\",",
+        "    \"temporary-files\",",
+        "    \"task-spawn\",",
+        "    \"timers\",",
+        "    \"concurrency\",",
+        "    \"limits\",",
+        "    \"native-worker-contract-parity\",",
+        "    \"declared-server-binding\",",
+        "    \"parameter-styles\",",
+        "    \"text-body-presence\",",
+        "    \"integer-body-preservation\",",
+        "    \"false-body-schema\",",
+        "    \"urlencoded-form-wire\",",
+        "    \"multipart-MIME-parser\",",
+        "    \"openapi32-QUERY\",",
+        "    \"custom-method-case\",",
+        "    \"querystring-content\",",
+        "    \"cookie-style\",",
+        "    \"parameter-content\",",
+        "    \"shared-schema-graph\",",
+        "    \"referenced-multipart-MIME-parser\",",
+        "    \"false-schema-alias\"",
+        "  ],",
+        "  \"default_switch_eligible\": false,",
+        "  \"note\": \"Runtime proof only; production parity and comparative performance gate not run.\"",
+        "}"
+      ]
+    },
+    {
+      "id": "01a0f83e-c1f1-74d1-af19-8ce655da8cef",
+      "lines": [
+        "{\"generated_sdk_http\": {\"body\": \"4\", \"decimal\": true, \"exact\": \"18446744073709551615\", \"impossible\": true, \"invalid_decimal\": true, \"invalid_low\": true, \"invalid_multiple\": true, \"invalid_pattern\": true, \"overlap\": \"3\", \"recursive\": \"{\\\"next\\\":{\\\"value\\\":2},\\\"value\\\":1}\"}, \"concurrent_requests\": 8, \"all_equal\": true}"
+      ]
+    },
+    {
+      "id": "01a0f840-cc9f-79b0-9a94-11e71cc68d84",
+      "lines": [
+        "OPENAPI_VALID composition_openapi.json",
+        "OPENAPI_VALID advanced_composition_openapi.json",
+        "OPENAPI_VALID conditional_openapi.json",
+        "{\"independent_controls\": 30, \"positive\": 11, \"negative\": 19, \"openapi_spec_validator\": \"0.9.0\", \"jsonschema\": \"4.26.0\"}",
+        "Installed 20 packages in 48ms"
+      ]
+    }
+  ],
+  "verification_receipts": {
+    "quality": {
+      "id": "01a0f84a-6797-7580-8b00-3059f0bfd28b",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f84a-6797-7580-8b00-3059f0bfd28b"
+      ]
+    },
+    "stripe_wire": {
+      "id": "01a0f853-9e70-7280-814c-7017ffbf6c94",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f853-9e70-7280-814c-7017ffbf6c94"
+      ]
+    },
+    "stripe_package": {
+      "id": "01a0f83e-60a5-7f23-ae19-dd566a1ca544",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f83e-60a5-7f23-ae19-dd566a1ca544"
+      ]
+    },
+    "stripe_build": {
+      "id": "01a0f83b-5d7e-7da2-a1f7-0e33e351b4f8",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f83b-5d7e-7da2-a1f7-0e33e351b4f8"
+      ]
+    },
+    "github": {
+      "id": "01a0f832-849b-7c73-8251-fd732fc466be",
+      "outcome": "passed",
+      "status": "failed",
+      "exit_code": 1,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f832-849b-7c73-8251-fd732fc466be"
+      ]
+    },
+    "cloudflare": {
+      "id": "01a0f832-848b-7b52-b171-8151a6d8ae12",
+      "outcome": "error",
+      "status": "canceled",
+      "exit_code": 128,
+      "error_code": "EXECUTION_TIMEOUT",
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f832-848b-7b52-b171-8151a6d8ae12"
+      ]
+    },
+    "stripe": {
+      "id": "01a0f832-840b-7292-8259-1c002fc886ca",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f832-840b-7292-8259-1c002fc886ca"
+      ]
+    },
+    "stripe_publication": {
+      "id": "01a0f836-c0ee-78c2-894b-05c80d71d4ff",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f836-c0ee-78c2-894b-05c80d71d4ff"
+      ]
+    },
+    "worker": {
+      "id": "01a0f83b-ae6b-79b1-bb2a-44371c2aef1d",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f83b-ae6b-79b1-bb2a-44371c2aef1d"
+      ]
+    },
+    "generated_worker": {
+      "id": "01a0f83e-c1f1-74d1-af19-8ce655da8cef",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f83e-c1f1-74d1-af19-8ce655da8cef"
+      ]
+    },
+    "mutations": {
+      "id": "01a0f834-e800-73b3-b416-342cfa5fccf3",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f834-e800-73b3-b416-342cfa5fccf3"
+      ]
+    },
+    "expansion_mutation": {
+      "id": "01a0f839-6612-7163-ae0d-2b3b6d114795",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f839-6612-7163-ae0d-2b3b6d114795"
+      ]
+    },
+    "independent": {
+      "id": "01a0f840-cc9f-79b0-9a94-11e71cc68d84",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f840-cc9f-79b0-9a94-11e71cc68d84"
+      ]
+    },
+    "vendor_inputs": {
+      "id": "01a0f84e-05f1-7223-9531-d3d3dfcac2f9",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f84e-05f1-7223-9531-d3d3dfcac2f9"
+      ]
+    },
+    "cli_mcp": {
+      "id": "01a0f843-c543-7e91-9c41-e9d78b945733",
+      "outcome": "passed",
+      "status": "completed",
+      "exit_code": 0,
+      "replayed": false,
+      "inspect": [
+        "apoc execution logs 01a0f843-c543-7e91-9c41-e9d78b945733"
+      ]
+    }
+  },
+  "mutation_controls": [
+    {
+      "change": "Remove selected-branch validation from generated oneOf serialization",
+      "observed": "Unchanged Color::String(\"blue\") negative control failed",
+      "restored": true,
+      "execution_id": "01a0f834-e800-73b3-b416-342cfa5fccf3"
+    },
+    {
+      "change": "Bypass the generated shared validator",
+      "observed": "Unchanged Bounded integer zero negative control failed",
+      "restored": true,
+      "execution_id": "01a0f834-e800-73b3-b416-342cfa5fccf3"
+    },
+    {
+      "change": "Expand shared allOf references into copied schema targets",
+      "observed": "Unchanged 40000-byte graph bound failed at 1078151 bytes; restored implementation passed",
+      "restored": true,
+      "execution_id": "01a0f839-6612-7163-ae0d-2b3b6d114795"
+    }
+  ],
+  "artifact_sha256": {
+    "/tmp/incurs-stripe-sdk-20261001/sdk/src/lib.rs": "c823e3cf9757b9fff09b735fb081ce335f9caebce87d7d6cdbb9b46033bcc34f",
+    "/tmp/incurs-stripe-sdk-20261001/sdk/src/schemas.json": "a0545e6d5d416128ea50a4f96c2118be471984af7dcdd78af2b80f83755e34f8",
+    "/tmp/incurs-jsonschema-proof-20261001/target/package/corpus-proof-sdk-0.1.0.crate": "0f39e0af9b7abf23ec42ea4d1b13d23c871b953a114c81c863acf6271c1b182d",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/index_bg.wasm": "41f9166ef17897efaa56f36650e84a046a6e014a584db81742515491681b7aaf",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/index.js": "1ee393707ec3644d3bbe981775d673c24694137c5ef0e6528647738f9e09eb7f",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/package.json": "19488dedfce2a81cfb01780078ebbf4627620ef6921a2c7df4c186f305546867",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/worker/shim.mjs": "ac99177861405a6046923cbacabbd6adfa1853a56d0c679b9f5e09097c2f4728",
+    "/tmp/incurs-generated-sdk-worker-20261001/build/index_bg.wasm": "dc722cdb71d8b93d87711e32a73a121751c662055cd9548db6ba2001e14292b7",
+    "/tmp/incurs-generated-sdk-worker-20261001/build/index.js": "302b5b5e282816d61f38b8829362061663100657f347baa99278e689b910aecf",
+    "/tmp/incurs-generated-sdk-worker-20261001/build/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "/tmp/incurs-generated-sdk-worker-20261001/build/package.json": "922436548fa67163f9b26be6b5aa9a58fefe6383cc5ae878b38646034f3f7dae",
+    "/tmp/incurs-generated-sdk-worker-20261001/build/worker/shim.mjs": "ac99177861405a6046923cbacabbd6adfa1853a56d0c679b9f5e09097c2f4728"
+  },
+  "cleanup": {
+    "checked_at": "2026-10-02T01:51:41.655212+00:00",
+    "listener_ports_absent": [
+      18978,
+      18979,
+      18980,
+      18981
+    ]
+  },
+  "limits": [
+    "GitHub full artifact generation rejects colliding sanitized field names +1 and -1; build, package, and HTTP stages are unrun.",
+    "Cloudflare full artifact generation exceeded the 180-second limit; build, package, and HTTP stages are unrun.",
+    "Cloudflare original input fails independent validation because dns-settings_order default type is outside its enum. The source was not repaired.",
+    "Stripe full SDK builds and packages, but the HTTP proof covers only GET /v1/balance without expand, not all 644 operations.",
+    "Generated validation guards composed values. This does not claim general instance validation throughout the HTTP binder.",
+    "Unsupported schema dialects, resource IDs, anchors, and dynamic references fail explicitly.",
+    "Worker proofs use the local runtime; hosted production parity, comparative performance, and default-target promotion are unproven.",
+    "Timings are observations on a shared machine, not controlled performance measurements."
+  ]
+}

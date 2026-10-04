@@ -14,7 +14,8 @@
 //! responses, where each line is a JSON object with `type: "chunk"` or
 //! `type: "done"`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+#[cfg(not(target_arch = "wasm32"))]
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -39,6 +40,10 @@ use crate::schema::FieldMeta;
 // ---------------------------------------------------------------------------
 
 /// Starts an HTTP server that exposes all registered commands as routes.
+///
+/// Binds a TCP socket, so it exists only off wasm32. A Worker passes each
+/// request to [`build_cli_router`] instead.
+#[cfg(not(target_arch = "wasm32"))]
 pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     let app = build_cli_router(cli)?;
 
@@ -49,9 +54,210 @@ pub async fn serve_http(cli: &Cli, addr: SocketAddr) -> Result<(), Box<dyn std::
 }
 
 /// Builds an Axum router with command routes and stateless MCP-over-HTTP.
+///
+/// Native builds serve `/mcp` with the rmcp-based server. wasm32 builds, which
+/// have no async runtime for it, serve the runtime-free
+/// [`crate::mcp::McpHttpServer`] with its default configuration. A wasm32 host
+/// has no process environment, so env-backed fields read as absent here; a
+/// Worker passes its environment through [`build_cli_router_with`].
 pub fn build_cli_router(cli: &Cli) -> Result<Router, crate::errors::Error> {
     let router = build_router(build_app_state(cli));
-    Ok(router.nest_service("/mcp", crate::mcp::http_service(cli)?))
+    #[cfg(not(target_arch = "wasm32"))]
+    let router = router.nest_service("/mcp", crate::mcp::http_service(cli)?);
+    #[cfg(target_arch = "wasm32")]
+    let router = router.merge(mcp_router(crate::mcp::McpHttpServer::from_cli(
+        cli,
+        crate::mcp::McpHttpConfig::default(),
+    )?));
+    Ok(router)
+}
+
+/// Host-supplied inputs for [`build_cli_router_with`].
+#[derive(Default)]
+pub struct RouterOptions {
+    /// Environment for command routes and MCP tool calls. `None` reads the
+    /// process environment, which is empty on wasm32.
+    pub env: Option<HashMap<String, String>>,
+    /// Allowed hosts, origins, and body limit for `/mcp`. Its `environment` is
+    /// replaced by [`Self::env`] when that is set.
+    pub mcp: crate::mcp::McpHttpConfig,
+    /// Admission check run before every route, `/mcp` included. `None` admits
+    /// every request, so a host reachable from outside must set one.
+    pub guard: Option<RequestGuard>,
+}
+
+/// Decides whether a request may reach any route.
+///
+/// A refused request is answered `401 Unauthorized` with an `UNAUTHORIZED`
+/// error before any command or MCP handler runs.
+#[derive(Clone)]
+pub struct RequestGuard(Arc<dyn Fn(&axum::http::request::Parts) -> bool + Send + Sync>);
+
+impl RequestGuard {
+    /// Admits a request whose `Authorization` header is `Bearer <token>`.
+    ///
+    /// The comparison takes the same time for every token of the same length,
+    /// so response timing does not reveal how much of a guess was right.
+    pub fn bearer(token: impl Into<String>) -> Self {
+        let expected = format!("Bearer {}", token.into()).into_bytes();
+        Self::custom(move |parts| {
+            parts
+                .headers
+                .get(header::AUTHORIZATION)
+                .is_some_and(|value| constant_time_eq(value.as_bytes(), &expected))
+        })
+    }
+
+    /// Admits a request when `check` returns `true`.
+    pub fn custom(
+        check: impl Fn(&axum::http::request::Parts) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(check))
+    }
+
+    /// Runs this guard before every route of `router`, including routes a
+    /// host adds beside the incurs ones.
+    pub fn protect(self, router: Router) -> Router {
+        router.layer(axum::middleware::from_fn_with_state(self, enforce_guard))
+    }
+
+    fn admits(&self, parts: &axum::http::request::Parts) -> bool {
+        (self.0)(parts)
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    left.iter()
+        .zip(right)
+        .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+        == 0
+}
+
+async fn enforce_guard(
+    State(guard): State<RequestGuard>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let (parts, body) = request.into_parts();
+    if !guard.admits(&parts) {
+        let body = serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "UNAUTHORIZED",
+                "message": "This request is not authorized",
+                "retryable": false,
+            },
+        });
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            axum::Json(body),
+        )
+            .into_response();
+    }
+    next.run(axum::extract::Request::from_parts(parts, body))
+        .await
+}
+
+/// Builds the command routes and `/mcp` from host-supplied inputs.
+///
+/// Every target serves `/mcp` with the runtime-free
+/// [`crate::mcp::McpHttpServer`], so a Cloudflare Worker gets the same routes
+/// as a native host that passes the same options.
+pub fn build_cli_router_with(
+    cli: &Cli,
+    options: RouterOptions,
+) -> Result<Router, crate::errors::Error> {
+    let RouterOptions {
+        env,
+        mut mcp,
+        guard,
+    } = options;
+    let mut state = build_app_state(cli);
+    if let Some(env) = env {
+        mcp.environment = crate::tool::EnvironmentSource::Values(env.clone());
+        state = state.with_env(env);
+    }
+    let server = crate::mcp::McpHttpServer::from_cli(cli, mcp)?;
+    let router = build_router(state).merge(mcp_router(server));
+    Ok(match guard {
+        Some(guard) => guard.protect(router),
+        None => router,
+    })
+}
+
+/// Serves a runtime-free MCP server at `/mcp`.
+///
+/// Converts each request into a [`crate::mcp::McpHttpRequest`] and streams
+/// event-stream responses as they are produced; dropping the response body
+/// cancels the tool call.
+pub fn mcp_router(server: crate::mcp::McpHttpServer) -> Router {
+    Router::new()
+        .route("/mcp", axum::routing::any(handle_mcp))
+        .with_state(server)
+}
+
+/// Reads up to `cap` bytes of a body and drops the rest unread.
+async fn read_bounded(body: Body, cap: usize) -> Result<Vec<u8>, axum::Error> {
+    let mut stream = body.into_data_stream();
+    let mut bytes = Vec::new();
+    while bytes.len() < cap {
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
+        let chunk = chunk?;
+        let take = chunk.len().min(cap - bytes.len());
+        bytes.extend_from_slice(&chunk[..take]);
+    }
+    Ok(bytes)
+}
+
+async fn handle_mcp(
+    State(server): State<crate::mcp::McpHttpServer>,
+    request: axum::extract::Request,
+) -> Response {
+    let (parts, body) = request.into_parts();
+    // Read at most one byte past the limit, so an oversized body is never
+    // buffered whole; the server still answers it `413` in its usual order.
+    let Ok(body) = read_bounded(body, server.max_request_body_bytes().saturating_add(1)).await
+    else {
+        return (StatusCode::BAD_REQUEST, "Failed to read request body").into_response();
+    };
+    let headers = parts
+        .headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect();
+    let response = server
+        .handle(crate::mcp::McpHttpRequest {
+            method: parts.method.to_string(),
+            path: parts.uri.path().to_string(),
+            headers,
+            body: body.to_vec(),
+        })
+        .await;
+    let mut builder = Response::builder().status(response.status);
+    for (name, value) in &response.headers {
+        builder = builder.header(name, value);
+    }
+    let body = match response.body {
+        crate::mcp::McpHttpBody::Empty => Body::empty(),
+        crate::mcp::McpHttpBody::Full(bytes) => Body::from(bytes),
+        crate::mcp::McpHttpBody::EventStream(events) => {
+            Body::from_stream(events.map(Ok::<_, std::convert::Infallible>))
+        }
+    };
+    builder
+        .body(body)
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 /// Builds an Axum router from the CLI. Useful for testing without binding
@@ -103,6 +309,18 @@ pub struct AppState {
     pub skills: Arc<BTreeMap<String, String>>,
     /// Fetch gateways keyed by their mounted command path.
     pub gateways: Arc<BTreeMap<String, HttpGateway>>,
+    /// Environment read by env-backed command fields. `None` reads the process
+    /// environment on every request; a host without one, such as a Cloudflare
+    /// Worker, supplies its bindings here through [`AppState::with_env`].
+    pub env: Option<Arc<HashMap<String, String>>>,
+}
+
+impl AppState {
+    /// Replaces the process environment with an explicit one for every route.
+    pub fn with_env(mut self, env: HashMap<String, String>) -> Self {
+        self.env = Some(Arc::new(env));
+        self
+    }
 }
 
 /// Fetch gateway projected into the HTTP router.
@@ -162,6 +380,7 @@ pub fn build_app_state(cli: &Cli) -> AppState {
         skill_index: Arc::new(skill_index),
         skills: Arc::new(skills),
         gateways: Arc::new(gateways),
+        env: None,
     }
 }
 
@@ -337,7 +556,7 @@ async fn execute_http_command(
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    let start = std::time::Instant::now();
+    let start = web_time::Instant::now();
     let path = command_key.replace('/', " ");
 
     let command = match state.commands.get(command_key) {
@@ -395,7 +614,10 @@ async fn execute_http_command(
 
     all_middleware.extend(command.middleware.iter().cloned());
 
-    let env_source: std::collections::HashMap<String, String> = std::env::vars().collect();
+    let env_source: HashMap<String, String> = match &state.env {
+        Some(env) => env.as_ref().clone(),
+        None => crate::process_env(),
+    };
 
     let result = command::execute(
         command,
@@ -571,7 +793,7 @@ fn skill_description(content: &str) -> String {
 fn ndjson_stream_response(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = Value> + Send>>,
     path: &str,
-    start: std::time::Instant,
+    start: web_time::Instant,
 ) -> Response {
     let path = path.to_string();
 
@@ -609,7 +831,7 @@ fn ndjson_stream_response(
 fn record_stream_response(
     stream: std::pin::Pin<Box<dyn futures::Stream<Item = StreamRecord> + Send>>,
     path: &str,
-    start: std::time::Instant,
+    start: web_time::Instant,
 ) -> Response {
     let path = path.to_string();
     let output = async_stream::stream! {
@@ -672,7 +894,7 @@ fn record_stream_response(
         })
 }
 
-fn format_duration(start: std::time::Instant) -> String {
+fn format_duration(start: web_time::Instant) -> String {
     format!("{}ms", start.elapsed().as_millis())
 }
 
@@ -726,6 +948,7 @@ mod tests {
             data.insert("args".to_string(), ctx.args);
             data.insert("globals".to_string(), ctx.globals);
             data.insert("options".to_string(), ctx.options);
+            data.insert("env".to_string(), ctx.env);
             data.insert(
                 "request".to_string(),
                 ctx.request
@@ -859,6 +1082,7 @@ mod tests {
             skill_index: Arc::new(serde_json::json!({ "skills": [] })),
             skills: Arc::new(BTreeMap::new()),
             gateways: Arc::new(BTreeMap::new()),
+            env: None,
         }
     }
 
@@ -1083,6 +1307,174 @@ mod tests {
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["error"]["fieldErrors"][0]["path"], "limit");
         assert_eq!(json["error"]["fieldErrors"][0]["expected"], "number");
+    }
+
+    fn guarded_router(guard: Option<RequestGuard>) -> Router {
+        let cli =
+            Cli::create("guarded").command("echo", CommandDef::build("echo", EchoHandler).done());
+        build_cli_router_with(
+            &cli,
+            RouterOptions {
+                guard,
+                ..RouterOptions::default()
+            },
+        )
+        .unwrap()
+    }
+
+    fn guarded_requests(authorization: Option<&str>) -> [axum::http::Request<Body>; 2] {
+        let command = axum::http::Request::builder()
+            .method("POST")
+            .uri("/echo")
+            .header("content-type", "application/json");
+        let mcp = axum::http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("host", "localhost")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream");
+        let (command, mcp) = match authorization {
+            Some(value) => (
+                command.header("authorization", value),
+                mcp.header("authorization", value),
+            ),
+            None => (command, mcp),
+        };
+        [
+            command.body(Body::from("{}")).unwrap(),
+            mcp.body(Body::from(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+            ))
+            .unwrap(),
+        ]
+    }
+
+    #[tokio::test]
+    async fn a_bearer_guard_covers_command_routes_and_mcp() {
+        let guard = || Some(RequestGuard::bearer("s3cret"));
+        for (authorization, expected) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (Some("Bearer wrong"), StatusCode::UNAUTHORIZED),
+            // Same length as the real token, so only the content check refuses it.
+            (Some("Bearer s3creT"), StatusCode::UNAUTHORIZED),
+            (Some("Bearer s3cret-and-more"), StatusCode::UNAUTHORIZED),
+            (Some("s3cret"), StatusCode::UNAUTHORIZED),
+            (Some("Bearer s3cret"), StatusCode::OK),
+        ] {
+            for request in guarded_requests(authorization) {
+                let path = request.uri().path().to_string();
+                let response = guarded_router(guard()).oneshot(request).await.unwrap();
+                assert_eq!(response.status(), expected, "{path} with {authorization:?}");
+                if expected == StatusCode::UNAUTHORIZED {
+                    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+                    let json: Value = serde_json::from_slice(&body).unwrap();
+                    assert_eq!(json["error"]["code"], "UNAUTHORIZED");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_oversized_mcp_body_is_refused_without_reading_it_all() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        const CHUNK: usize = 512;
+        const CHUNKS: usize = 10_000;
+        let pulled = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&pulled);
+        let body = Body::from_stream(futures::stream::iter(0..CHUNKS).map(move |_| {
+            counter.fetch_add(CHUNK, Ordering::SeqCst);
+            Ok::<_, std::convert::Infallible>(vec![b' '; CHUNK])
+        }));
+        let cli =
+            Cli::create("bounded").command("echo", CommandDef::build("echo", EchoHandler).done());
+        let router = build_cli_router_with(
+            &cli,
+            RouterOptions {
+                mcp: crate::mcp::McpHttpConfig {
+                    max_request_body_bytes: 1024,
+                    ..crate::mcp::McpHttpConfig::default()
+                },
+                ..RouterOptions::default()
+            },
+        )
+        .unwrap();
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("host", "localhost")
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .body(body)
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let pulled = pulled.load(Ordering::SeqCst);
+        assert!(
+            pulled <= 1024 + 2 * CHUNK,
+            "read {pulled} of {} bytes",
+            CHUNK * CHUNKS
+        );
+    }
+
+    #[tokio::test]
+    async fn without_a_guard_every_request_is_admitted() {
+        for request in guarded_requests(None) {
+            let path = request.uri().path().to_string();
+            let response = guarded_router(None).oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_host_supplied_environment_reaches_env_fields() {
+        // The name is unique to this test, so the process environment cannot
+        // supply it: only the explicit environment can.
+        let name = "INCURS_HTTP_TEST_HOST_ONLY_TOKEN";
+        assert!(std::env::var(name).is_err());
+        let mut state = make_test_state();
+        let mut echo = make_echo_command("echo");
+        echo.env_fields = vec![FieldMeta {
+            name: "token",
+            cli_name: "token".to_string(),
+            description: None,
+            field_type: crate::schema::FieldType::String,
+            required: true,
+            default: None,
+            alias: None,
+            deprecated: false,
+            env_name: Some(name),
+        }];
+        let mut commands = state.commands.as_ref().clone();
+        commands.insert("echo".to_string(), Arc::new(echo));
+        state.commands = Arc::new(commands);
+        let request = || {
+            axum::http::Request::builder()
+                .method("POST")
+                .uri("/echo")
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap()
+        };
+
+        let supplied = build_router(
+            state
+                .clone()
+                .with_env(HashMap::from([(name.to_string(), "from-host".to_string())])),
+        )
+        .oneshot(request())
+        .await
+        .unwrap();
+        let body = to_bytes(supplied.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["env"]["token"], "from-host", "{json}");
+
+        let missing = build_router(state).oneshot(request()).await.unwrap();
+        let body = to_bytes(missing.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["data"]["env"]["token"], Value::Null, "{json}");
     }
 
     #[tokio::test]

@@ -1,0 +1,89 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Multipart proof",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/multipart": {
+      "post": {
+        "operationId": "sendMultipart",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "count": {
+                    "type": "integer"
+                  },
+                  "tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "address": {
+                    "type": "object",
+                    "properties": {
+                      "city": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "encoded": {
+                    "type": "string",
+                    "contentEncoding": "base64"
+                  },
+                  "packed": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "encoding": {
+                "packed": {
+                  "style": "form",
+                  "explode": false
+                },
+                "address": {
+                  "contentType": "application/json",
+                  "headers": {
+                    "X-Part": {
+                      "$ref": "#/components/headers/PartProof"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "headers": {
+      "PartProof": {
+        "schema": {
+          "type": "string",
+          "const": "proof"
+        }
+      }
+    }
+  }
+}

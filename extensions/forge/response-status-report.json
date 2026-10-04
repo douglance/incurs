@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "scope": "Generated Rust SDK response status classification, packaged native consumers, full pinned Cloudflare SDK, and local Emscripten Worker runtime.",
+  "change": {
+    "before": "Declared 1XX through 5XX variants existed but from_response skipped them, selecting default or Other when no exact code matched.",
+    "after": "from_response checks exact status codes, inclusive declared status families, then default or Other; status, body, and header pairs are retained.",
+    "precedence": [
+      "exact status",
+      "declared status family",
+      "default or Other"
+    ]
+  },
+  "native": {
+    "fixture": "tests/fixtures/response_status_openapi.json",
+    "layouts": 3,
+    "statuses_per_layout": 65536,
+    "classifications": 196608,
+    "real_loopback_http_responses": 9,
+    "checks": [
+      "all five families",
+      "exact 201 and 404 overrides",
+      "sparse families with exact 418",
+      "default and Other fallbacks",
+      "binary body",
+      "duplicate Set-Cookie headers"
+    ],
+    "oracle": "Arithmetic status / 100 and independent exact-code cases, not generated match arms.",
+    "red_execution": "01a0fb57-a3e9-7131-85be-7140890c336d",
+    "green_execution": "01a0fb5b-7c47-7022-a142-904c02fe1210",
+    "source_document_validation_execution": "01a0fb57-a3dd-7dc1-808c-54634da00353"
+  },
+  "mutations": {
+    "execution": "01a0fb63-802d-71f1-b2d9-e597288fdf88",
+    "source_edit_confirmed": true,
+    "unchanged_tests": true,
+    "exact_source_restored": true,
+    "controls": [
+      {
+        "change": "upper endpoint 99 -> 98",
+        "caught_at_status": 199
+      },
+      {
+        "change": "disable exact-code arms",
+        "caught_at_status": 201
+      },
+      {
+        "change": "disable default fallback",
+        "caught_at_status": 0
+      }
+    ]
+  },
+  "cloudflare": {
+    "source_sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+    "source_manifest": "corpus-sources.json",
+    "operations": 3627,
+    "schemas": 6948,
+    "operations_with_response_families": 2366,
+    "classifications": 65536,
+    "real_loopback_http_requests": 5,
+    "checks": [
+      "GET /user 200 exact",
+      "GET /user 429 family",
+      "binary DLP upload",
+      "JSONL request",
+      "NDJSON request"
+    ],
+    "validated_http_binding": true,
+    "extracted_archive_consumer": true,
+    "generation_and_test_execution": "01a0fb65-da78-75a0-bff0-7064e4207d0b",
+    "successful_package_and_http_execution": "01a0fb6c-983e-7812-b122-d6a8e953ef7d",
+    "scope_limit": "Complete SDK compilation and packaging; five HTTP cases and one generated response type are behaviorally exercised."
+  },
+  "worker": {
+    "target": "wasm32-unknown-emscripten",
+    "package_archives": 4,
+    "classifications": 196608,
+    "layouts": 3,
+    "exhaustive_result_cached_per_isolate": true,
+    "concurrent_http_requests": 8,
+    "media_bindings": 12,
+    "sdk_rejections": 3,
+    "request_schema_rejections": 18,
+    "valid_request_cases": 2,
+    "numeric_controls": [
+      "exact bound accepted",
+      "adjacent integer rejected",
+      "malformed token rejected",
+      "exact defaults retained"
+    ],
+    "build_execution": "01a0fb65-da78-75a0-bff0-70733200cd99",
+    "http_probe_execution": "01a0fb68-e6c0-7280-a1b6-5e7103d5f7b3",
+    "server_execution": "01a0fb68-6b65-7461-8c46-8e40ea31915b",
+    "server_stopped": true,
+    "scope_limit": "Local Worker HTTP observes generated classifier and request binding results; no vendor call or hosted deployment."
+  },
+  "quality": {
+    "execution": "01a0fb6b-bd49-7623-81c9-0e64c53e25ff",
+    "tests_passed": 124,
+    "checks": [
+      "cargo fmt --check",
+      "strict all-feature all-target clippy",
+      "complete all-feature test suite",
+      "strict all-feature rustdoc",
+      "all-feature wasm32-unknown-unknown check"
+    ],
+    "tests_failed": 0,
+    "suites": 24,
+    "passed": true
+  },
+  "recovery": {
+    "reason": "Initial complete test run and Cloudflare package verification exhausted disk space.",
+    "interrupted_quality_execution": "01a0fb66-52fb-7303-8988-106a3d59a237",
+    "cleanup_execution": "01a0fb6b-765e-7ea0-b6e9-ad43241cf16d",
+    "action": "Removed only three inactive, owned compiled debug caches; retained source and package archives were hash-verified unchanged. Reran complete tests sequentially and resumed package verification.",
+    "changed_test_expectations": false
+  },
+  "limits": [
+    "No universal OpenAPI conformance claim.",
+    "Response payloads remain raw; automatic schema-specific decoding is not implemented.",
+    "Full vendor API behavior and hosted deployment remain unverified."
+  ],
+  "recorded_at_utc": "2026-10-02T07:10:00Z",
+  "artifact_identity_execution": "01a0fb6e-a958-7e12-a3d4-4c68cc605cb3",
+  "source_and_artifact_sha256": {
+    "extensions/forge/src/artifacts/sdk.rs": "48412358e44adea97498ffa64210d63ef2f14f2e83108fb0f083be9c78bc5d86",
+    "extensions/forge/tests/consumer.rs": "8149145fe38a7ed8910a12714f1d748c63d9e46efb3f2ef7f46eb7cbec6048b9",
+    "extensions/forge/tests/fixtures/response_status_openapi.json": "04159cfb97f0d01b8ada5ea137fe931bcca04b89316a826b87c8f7a9fd8850ed",
+    "extensions/forge/tests/fixtures/response_status_consumer.rs": "16529273011a8ddd5518039f0aae55c5350d1e152018ad7a2a5db68dd1d296c3",
+    "extensions/forge/tests/fixtures/corpus_cloudflare_consumer.rs": "b9b5c60249be97a49c87d6356bb70a0dc98b99e8abcedad239b311a1959be36a",
+    "extensions/forge-workers/build_generated_sdk.py": "128d5cead3bd28e5263fc1261a6cb3aafbdbc47f91e69b1a9c914521a76cc8ae",
+    "extensions/forge-workers/fixtures/generated_sdk_media_consumer.rs": "e96609df9e607d2b397371240b26ff5dc2e50b19ae60569220f99b6373caa61b",
+    "extensions/forge-workers/probe_generated_sdk.py": "b4e5941e9123274d893ac7accc4c72e1d97de68085f3d0285717dd80f6568683",
+    "extensions/forge/README.md": "1ac779ae71709bece6032c67f6be58c4a8982f09a52b0efd3587093f193b81f4",
+    "extensions/forge-workers/README.md": "cabdf2c12aadb093c30f36464e2aa7796b333b1a61dbfcc6268bfdbfd09ca072",
+    "AGENTS.md": "4f2442b1e3178d821560f59e9c18193dbfe6bc4ee718d30c58ee56b820c6992b",
+    "/tmp/incurs-sdk-worker-response-status-20261002/advanced/sdk/src/lib.rs": "e6dfaa5b7c0994669a36806e11311d8743c97dffd5eba552b83e441ed61ef67f",
+    "/tmp/incurs-sdk-worker-response-status-20261002/target/native/package/worker-proof-sdk-0.1.0.crate": "46f02ff96759995c7c9bd57cfa0cc80d8c15055c29d3a89f6cf0c26d7aa5c232",
+    "/tmp/incurs-sdk-worker-response-status-20261002/media/sdk/src/lib.rs": "9f272e00c06a25c135d21b7612ace2e29b379efdc00833c7713f089d7411142a",
+    "/tmp/incurs-sdk-worker-response-status-20261002/target/native/package/corpus-proof-sdk-0.1.0.crate": "ff642c6f3737476b0393206e484d6c5daa0cbc78bbc0f510e664e376be9cf75e",
+    "/tmp/incurs-sdk-worker-response-status-20261002/numeric/sdk/src/lib.rs": "4d72bba027543d41737f27639f5c9ec844b889efc66796aedcfc7eab3823454d",
+    "/tmp/incurs-sdk-worker-response-status-20261002/target/native/package/numeric-proof-sdk-0.1.0.crate": "08dd2974b6243545f4a7cfec4f72b2d63349f14d4fd8e9da44090a5782162372",
+    "/tmp/incurs-sdk-worker-response-status-20261002/response/sdk/src/lib.rs": "01f60c5801fd6b9db3cb676166ece1738875581a886f254093bf957669d59199",
+    "/tmp/incurs-sdk-worker-response-status-20261002/target/native/package/response-proof-sdk-0.1.0.crate": "c6d5aca7d15562d0464a4dd5912a8dc9928d1b08192a09afc5399cabc249193b",
+    "/tmp/incurs-sdk-worker-response-status-20261002/worker/build/index_bg.wasm": "91779033bd08daba0b14f0a96ae1228517c048996d55fdd8a0b20f4fa5bfef98",
+    "/tmp/incurs-cloudflare-sdk-20261002-response-status/sdk/src/lib.rs": "34ded49b32596105d70b32e00f2c284693444e4fcdd9f20ad88b6a0e789835a5",
+    "/tmp/incurs-cloudflare-sdk-20261002-response-status/sdk/target/package/corpus-proof-sdk-0.1.0.crate": "61403c35c3bfa4729afd78397a89afefc638e3ba0bb7404d412f52399edfdf48",
+    "/tmp/incurs-cloudflare-sdk-20261002-response-status/contract.json": "6d15f54d362af9e2cd08c554001a38d3bfcb25868ad891761ab7c0379498e73b",
+    "/tmp/incurs-cloudflare-full-wire-20261002-response-status/src/main.rs": "b9b5c60249be97a49c87d6356bb70a0dc98b99e8abcedad239b311a1959be36a"
+  }
+}

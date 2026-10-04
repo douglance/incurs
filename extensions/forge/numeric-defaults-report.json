@@ -1,0 +1,105 @@
+{
+  "checked_at": "2026-10-02T05:38:04.815168+00:00",
+  "scope": "Generated numeric defaults, complete JSON number token validation, exact schema validation, packaged native HTTP and local Emscripten Worker binding",
+  "status": "passed",
+  "baseline": {
+    "execution_id": "01a0fb0e-b760-7110-a61a-d5e4360564e5",
+    "expected_positive": "18446744073709551617",
+    "observed_positive": "18446744073709552000",
+    "expected_negative": "-9223372036854775809",
+    "observed_negative": "-9223372036854776000",
+    "packaged_regression_execution_id": "01a0fb12-63f5-71a3-8f3c-f4def1e26834",
+    "additional_failure": "Generation rejected the valid numeric default 1e+400"
+  },
+  "independent_source_validation": {
+    "validator": "openapi-spec-validator 0.9.0",
+    "parse_float": "decimal.Decimal",
+    "execution_id": "01a0fb19-12c0-74b3-974e-6b5612e330ce",
+    "passed": true
+  },
+  "implementation": {
+    "defaults": "Preserve number text outside i64/u64 without f64 conversion, recursively through arrays and objects",
+    "encoding": "JsonValue::ExactNumber(String) requires a complete JSON number token before encoding",
+    "validation": "Parse the checked token as arbitrary-precision serde_json::Number for the existing schema graph",
+    "new_runtime_dependency": false
+  },
+  "native": {
+    "packaged_regression_execution_id": "01a0fb14-389c-79f2-aa7f-bf1da17edf77",
+    "valid_number_tokens": 16,
+    "malformed_number_tokens_rejected": 33,
+    "schema_bounds": "18446744073709551617 accepted; 18446744073709551616 and 18446744073709551618 rejected",
+    "http": "One literal POST request line with exact positive and negative query defaults, plus literal body bytes containing precise decimal, 1e+400, 1e-400, and nested numeric defaults",
+    "standalone_archive_execution_id": "01a0fb1c-86c5-73b2-a992-76e32a12caff",
+    "standalone": "Original two-integer reproducer passes using a dependency-free extracted SDK archive; archive also checks for wasm32-unknown-unknown"
+  },
+  "mutation_controls": {
+    "execution_id": "01a0fb16-6156-7222-bc46-e7ee0ae95c1b",
+    "source_confirmed": true,
+    "unchanged_regressions_failed": true,
+    "exact_source_restored": true,
+    "cases": [
+      "Change 18446744073709551617 to 18446744073709551618 in default generation; literal nested body assertion failed",
+      "Accept unchecked trailing characters after number parsing; malformed token 01 was accepted and rejected by the regression"
+    ],
+    "restored_sdk_sha256": "333ade2bb2ca3b7565da14df82cebd2b3d64665bf4044aeac764834c7148a0aa"
+  },
+  "integrated": {
+    "execution_id": "01a0fb18-8d52-7383-acf4-572d13f5794d",
+    "tests_passed": 114,
+    "tests_failed": 0,
+    "formatting": "passed",
+    "clippy_all_features_all_targets_deny_warnings": "passed",
+    "documentation_and_wasm_execution_id": "01a0fb1a-160f-7e52-94eb-c09ba889cc0a",
+    "rustdoc_all_features_no_deps_deny_warnings": "passed",
+    "wasm32_unknown_unknown_all_features": "passed"
+  },
+  "worker": {
+    "build_execution_id": "01a0fb18-8d52-7383-acf4-57351e63f54e",
+    "probe_execution_id": "01a0fb1b-2644-7c63-a72c-ec8ba39fe4ba",
+    "server_execution_id": "01a0fb1a-c974-74d2-98b2-45fa37eff761",
+    "package_archives": [
+      "worker-proof-sdk",
+      "corpus-proof-sdk",
+      "numeric-proof-sdk"
+    ],
+    "numeric": "Exact query and body default bytes, accepted exact bound, rejected adjacent integer and malformed number token",
+    "existing_media_cases": 12,
+    "existing_media_rejection_controls": 3,
+    "concurrent_http_requests": 8,
+    "existing_composition_and_base64_controls": "passed",
+    "server_cleanup": "Canceled owned server; ports 18988 and 18989 independently observed empty",
+    "scope": "HTTP observes local generated SDK encoding, validation and binding; no vendor request and no hosted deployment"
+  },
+  "source_sha256": {
+    "extensions/forge/src/artifacts/sdk.rs": "333ade2bb2ca3b7565da14df82cebd2b3d64665bf4044aeac764834c7148a0aa",
+    "extensions/forge/src/artifacts/sdk_validation.rs": "9cd468140be471faffdb0006c4f24666404fb23043fbd0925cb5c69493632265",
+    "extensions/forge/examples/compile.rs": "bedb7652181bef60977de6be4fd260aa158ffabb23b644a27175e4b13b626339",
+    "extensions/forge/tests/consumer.rs": "06485ae6817bf3f31aa3f3508f42c4b4e57e437d6230fba47b6f76846f355686",
+    "extensions/forge/tests/fixtures/numeric_defaults_openapi.json": "5182e5e8e1abf64fca37c7241ad89ccdba915ac9ea795d0a2bbbb5763bac074c",
+    "extensions/forge/tests/fixtures/numeric_defaults_consumer.rs": "6651ce7f014042df0e280955fcf31a297277d0efa6b7f88494e9e8e80273a48e",
+    "extensions/forge-workers/build_generated_sdk.py": "36c5ba4a3114734e7ee03a39b5afe7ef1d2f9c214923ee22c27fed63de61532f",
+    "extensions/forge-workers/probe_generated_sdk.py": "e1040b76c38ebba92cfb9c85442626dc25cd08004b32a667d342ae0ae7b4c8f1",
+    "extensions/forge-workers/fixtures/generated_sdk_media_consumer.rs": "a041b0d7eb7639d59e873889cd6fa52986cf21afcceef9fa9786ef70bfa0221c"
+  },
+  "artifact_sha256": {
+    "/tmp/incurs-sdk-worker-numeric-20261002/advanced/sdk/src/lib.rs": "660dbade8bf6f7317ad60aaeec6256beb713a6613c4546a8e014df47cb5ceff3",
+    "/tmp/incurs-sdk-worker-numeric-20261002/target/native/package/worker-proof-sdk-0.1.0/src/lib.rs": "660dbade8bf6f7317ad60aaeec6256beb713a6613c4546a8e014df47cb5ceff3",
+    "/tmp/incurs-sdk-worker-numeric-20261002/target/native/package/worker-proof-sdk-0.1.0.crate": "c7d76915e5b49041d615c39cc0a8bedf13bd182d605be33df90644f817d1429c",
+    "/tmp/incurs-sdk-worker-numeric-20261002/advanced/contract.json": "d85ad98876708393a46964f14f658d14a6d992aac7a4d7e37cbbe30ea9fd654e",
+    "/tmp/incurs-sdk-worker-numeric-20261002/media/sdk/src/lib.rs": "b09c05be737f93d12898161cd0c9e05eaf9f744d44530293c1c2b269d72c8eee",
+    "/tmp/incurs-sdk-worker-numeric-20261002/target/native/package/corpus-proof-sdk-0.1.0/src/lib.rs": "b09c05be737f93d12898161cd0c9e05eaf9f744d44530293c1c2b269d72c8eee",
+    "/tmp/incurs-sdk-worker-numeric-20261002/target/native/package/corpus-proof-sdk-0.1.0.crate": "12ee18ee5285df9858c0018e87d130911e02f8de3bccc7348959d1aa5af70949",
+    "/tmp/incurs-sdk-worker-numeric-20261002/media/contract.json": "e26b0d86e8e0a92f366296f3078b06e6d67e0cfce08609dd612f6a5ffc311a22",
+    "/tmp/incurs-sdk-worker-numeric-20261002/numeric/sdk/src/lib.rs": "7449b1c27c7a1bfc29fa35b8cee915e2c4c9950543334fe9cd05e9504e12c015",
+    "/tmp/incurs-sdk-worker-numeric-20261002/target/native/package/numeric-proof-sdk-0.1.0/src/lib.rs": "7449b1c27c7a1bfc29fa35b8cee915e2c4c9950543334fe9cd05e9504e12c015",
+    "/tmp/incurs-sdk-worker-numeric-20261002/target/native/package/numeric-proof-sdk-0.1.0.crate": "119895530130c0ef3d16d7916bddd58403062e2dc013e1fb75562b3c23f98c25",
+    "/tmp/incurs-sdk-worker-numeric-20261002/numeric/contract.json": "0f9327e1c0fffad9be6d0cbc6ccd593783cd2b603ffcec44d6a3c55e4241971d",
+    "/tmp/incurs-sdk-worker-numeric-20261002/worker/build/index_bg.wasm": "254dc27ba8dea6fc1a7c15024fe0f22a77aeda34014b2767b81fb1266d19613a",
+    "/tmp/incurs-sdk-worker-numeric-20261002/worker/src/main.rs": "a041b0d7eb7639d59e873889cd6fa52986cf21afcceef9fa9786ef70bfa0221c"
+  },
+  "limits": [
+    "Explicit typed integer and number fields retain their generated Rust types; this change does not provide arbitrary precision for every typed input",
+    "Earlier full-vendor corpus reports describe their recorded source/artifact revisions; those full SDKs were not regenerated in this numeric slice",
+    "Universal OpenAPI conformance, every-operation HTTP compatibility, hosted production parity and comparative performance remain unproven"
+  ]
+}

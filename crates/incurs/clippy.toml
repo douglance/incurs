@@ -1,0 +1,4 @@
+disallowed-methods = [
+  { path = "std::env::vars", reason = "panics on wasm32; use crate::process_env" },
+  { path = "std::env::vars_os", reason = "panics on wasm32; use crate::process_env_os" },
+]

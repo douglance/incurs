@@ -1,0 +1,708 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Typed response proof",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "https://example.test"
+    }
+  ],
+  "paths": {
+    "/record": {
+      "get": {
+        "operationId": "fetchRecord",
+        "responses": {
+          "200": {
+            "description": "Record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Missing",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "Client error",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Fallback",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/represent": {
+      "get": {
+        "operationId": "represent",
+        "responses": {
+          "200": {
+            "description": "Selected representation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "minLength": 1,
+                  "pattern": "^hello"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/empty": {
+      "get": {
+        "operationId": "noContent",
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "304": {
+            "description": "Not modified"
+          }
+        }
+      }
+    },
+    "/head": {
+      "head": {
+        "operationId": "headRecord",
+        "responses": {
+          "200": {
+            "description": "Headers only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/any": {
+      "get": {
+        "operationId": "anyValue",
+        "responses": {
+          "200": {
+            "description": "Any JSON",
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "/image": {
+      "get": {
+        "operationId": "image",
+        "responses": {
+          "200": {
+            "description": "Any image",
+            "content": {
+              "image/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/numbers": {
+      "get": {
+        "operationId": "numbers",
+        "responses": {
+          "200": {
+            "description": "Integral spellings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bounded-ref": {
+      "get": {
+        "operationId": "boundedRef",
+        "responses": {
+          "200": {
+            "description": "Response boundary control",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TextAlias",
+                  "maxLength": 2
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bounded-binary": {
+      "get": {
+        "operationId": "boundedBinary",
+        "responses": {
+          "200": {
+            "description": "Response boundary control",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary",
+                  "minLength": 2,
+                  "maxLength": 4
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/json-binary": {
+      "get": {
+        "operationId": "jsonBinary",
+        "responses": {
+          "200": {
+            "description": "Response boundary control",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nullable": {
+      "get": {
+        "operationId": "nullable",
+        "responses": {
+          "200": {
+            "description": "Response boundary control",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/false-binary": {
+      "get": {
+        "operationId": "falseBinary",
+        "responses": {
+          "200": {
+            "description": "Response boundary control",
+            "content": {
+              "application/octet-stream": {
+                "schema": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/loose": {
+      "get": {
+        "operationId": "looseObject",
+        "responses": {
+          "200": {
+            "description": "A constraint-only JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/loose-allof": {
+      "get": {
+        "operationId": "looseAllOf",
+        "responses": {
+          "200": {
+            "description": "A constraint-only JSON response.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "required": [
+                        "name"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/keywords": {
+      "get": {
+        "operationId": "keywords",
+        "responses": {
+          "200": {
+            "description": "Wire names and empty objects.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Keywords"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nullable-refs": {
+      "get": {
+        "operationId": "nullableRefs",
+        "responses": {
+          "200": {
+            "description": "Nullable referenced properties and array items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "items"
+                  ],
+                  "properties": {
+                    "name": {
+                      "$ref": "#/components/schemas/MaybeText"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MaybeText"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/binary-reference": {
+      "get": {
+        "operationId": "binaryReference",
+        "responses": {
+          "200": {
+            "description": "Binary limits preserve referenced constraints.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/BinaryChunk",
+                  "maxLength": 4
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/binary-allof": {
+      "get": {
+        "operationId": "binaryAllOf",
+        "responses": {
+          "200": {
+            "description": "Binary limits preserve referenced constraints.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/BinaryChunk"
+                    },
+                    {
+                      "maxLength": 2
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mixed-types": {
+      "get": {
+        "operationId": "mixedTypes",
+        "responses": {
+          "200": {
+            "description": "Several scalar types, including null.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "null"
+                  ],
+                  "minLength": 2,
+                  "minimum": 2
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/nullable-object": {
+      "get": {
+        "operationId": "nullableObject",
+        "responses": {
+          "200": {
+            "description": "A nullable response object.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "required": [
+                    "flag"
+                  ],
+                  "properties": {
+                    "flag": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Record": {
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "stamp",
+          "secret",
+          "labels",
+          "amount",
+          "choice",
+          "joined"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 9007199254740993,
+            "maximum": 18446744073709551617
+          },
+          "state": {
+            "$ref": "#/components/schemas/State"
+          },
+          "stamp": {
+            "type": "string",
+            "readOnly": true,
+            "minLength": 1
+          },
+          "secret": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "amount": {
+            "type": "number"
+          },
+          "child": {
+            "$ref": "#/components/schemas/Node"
+          },
+          "choice": {
+            "$ref": "#/components/schemas/Choice"
+          },
+          "joined": {
+            "$ref": "#/components/schemas/Joined"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": "not inserted"
+          }
+        },
+        "additionalProperties": true
+      },
+      "State": {
+        "type": "string",
+        "enum": [
+          "active",
+          "paused"
+        ]
+      },
+      "Node": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": "integer"
+          },
+          "next": {
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Node"
+              }
+            ],
+            "description": "Nested recursive response object through an anonymous composition."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Choice": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^ok$"
+          },
+          {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        ]
+      },
+      "Joined": {
+        "allOf": [
+          {
+            "type": "object",
+            "required": [
+              "key"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "count"
+            ],
+            "properties": {
+              "count": {
+                "type": "integer"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "Problem": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ResponseDecodeError": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "TextAlias": {
+        "type": "string",
+        "minLength": 1
+      },
+      "Keywords": {
+        "type": "object",
+        "properties": {
+          "abstract": {
+            "type": "string"
+          },
+          "become": {
+            "type": "string"
+          },
+          "box": {
+            "type": "string"
+          },
+          "do": {
+            "type": "string"
+          },
+          "final": {
+            "type": "string"
+          },
+          "gen": {
+            "type": "string"
+          },
+          "macro": {
+            "type": "string"
+          },
+          "override": {
+            "type": "string"
+          },
+          "priv": {
+            "type": "string"
+          },
+          "try": {
+            "type": "string"
+          },
+          "typeof": {
+            "type": "string"
+          },
+          "unsized": {
+            "type": "string"
+          },
+          "virtual": {
+            "type": "string"
+          },
+          "yield": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "known": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          },
+          "additional_properties": {
+            "type": "string"
+          },
+          "empty": {
+            "type": "object",
+            "additionalProperties": false
+          },
+          "line\nbreak\rcell\u0000": {
+            "type": "string"
+          }
+        }
+      },
+      "MaybeText": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "minLength": 2
+      },
+      "BinaryChunk": {
+        "type": "string",
+        "format": "binary",
+        "minLength": 2,
+        "maxLength": 3
+      }
+    }
+  }
+}

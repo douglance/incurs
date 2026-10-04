@@ -1,0 +1,4 @@
+[toolchain]
+channel = "beta-2026-09-29"
+targets = ["wasm32-unknown-emscripten"]
+profile = "minimal"

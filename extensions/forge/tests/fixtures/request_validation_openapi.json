@@ -1,0 +1,131 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Validated request contract proof",
+    "version": "1"
+  },
+  "servers": [
+    {
+      "url": "https://example.test"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "Profile": {
+        "type": "object",
+        "required": [
+          "age",
+          "state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "age": {
+            "type": "integer",
+            "minimum": 18
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "pattern": "^[A-Z]"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "admin",
+                "viewer"
+              ]
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "id": {
+            "type": "integer",
+            "minimum": 9007199254740993,
+            "maximum": 9007199254740993
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 20
+              }
+            ]
+          },
+          "child": {
+            "$ref": "#/components/schemas/Profile"
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/submit": {
+      "post": {
+        "operationId": "submit",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "profile"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "profile": {
+                    "$ref": "#/components/schemas/Profile"
+                  }
+                }
+              }
+            },
+            "application/vnd.other+json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "other"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "other": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepted"
+          }
+        }
+      }
+    }
+  }
+}

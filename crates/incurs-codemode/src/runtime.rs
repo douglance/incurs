@@ -57,6 +57,10 @@ pub struct ArtifactRef {
 
 /// Storage contract for oversized replay and final values.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait ArtifactStore: Send + Sync {
     /// Stores one JSON value and returns its durable reference.
     async fn put(&self, execution_id: &str, value: &Value) -> Result<ArtifactRef, String>;
@@ -298,6 +302,10 @@ pub struct Snippet {
 
 /// Persistent operations required by the portable runtime.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait RuntimeStore: Send + Sync {
     /// Loads one execution.
     async fn get_execution(&self, id: &str) -> Result<Option<ExecutionState>, String>;

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "worker-demo",
+  "version": "1.0.0",
+  "description": "A plugin package bundled into the Worker and loaded from memory"
+}

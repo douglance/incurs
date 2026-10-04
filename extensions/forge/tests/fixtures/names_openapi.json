@@ -1,0 +1,234 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Distinct wire names",
+    "version": "1"
+  },
+  "paths": {
+    "/names/{id}": {
+      "post": {
+        "operationId": "sendNames",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "body",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "body_2",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "+1",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "-1",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 12
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NamePayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "accepted"
+          }
+        }
+      }
+    },
+    "/sample/{id}": {
+      "get": {
+        "operationId": "checkNames",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "body",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "body_2",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "+1",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "-1",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 12
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "accepted"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "NamePayload": {
+        "type": "object",
+        "required": [
+          "+1",
+          "-1",
+          "_1_2",
+          "foo-bar",
+          "foo_bar",
+          "foo_bar_2",
+          "type",
+          "type_",
+          "value",
+          "value_2",
+          "♥",
+          "choices"
+        ],
+        "properties": {
+          "+1": {
+            "type": "integer"
+          },
+          "-1": {
+            "type": "integer",
+            "default": 2
+          },
+          "_1_2": {
+            "type": "integer"
+          },
+          "foo-bar": {
+            "type": "integer"
+          },
+          "foo_bar": {
+            "type": "integer"
+          },
+          "foo_bar_2": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "integer"
+          },
+          "type_": {
+            "type": "integer"
+          },
+          "value": {
+            "type": "integer"
+          },
+          "value_2": {
+            "type": "integer"
+          },
+          "♥": {
+            "type": "integer"
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WireChoice"
+            }
+          }
+        }
+      },
+      "Simple": {
+        "type": "object",
+        "required": [
+          "count",
+          "label"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          }
+        }
+      },
+      "WireChoice": {
+        "type": "string",
+        "enum": [
+          "2",
+          "1000_errors",
+          "500_errors",
+          "self",
+          "value2",
+          "foo-bar",
+          "foo_bar",
+          "foo_bar_2",
+          "",
+          "♥"
+        ]
+      }
+    }
+  }
+}

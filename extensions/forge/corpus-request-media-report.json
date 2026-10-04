@@ -1,0 +1,1024 @@
+{
+  "checked_at": "2026-10-02T05:11:47.382638+00:00",
+  "scope": "Request media, generated Rust names and nullable paths, full pinned SDK builds and package archives, bounded native and local Emscripten execution. Universal OpenAPI compatibility and hosted production parity are not established.",
+  "source_manifest": "corpus-sources.json",
+  "previous_report": "corpus-composition-report.json",
+  "git": {
+    "head": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+    "branch": "feat/workers-all-features",
+    "status": "M .github/workflows/rust.yml\n M AGENTS.md\n?? .claude/\n?? .wrangler/\n?? extensions/forge-workers/\n?? extensions/forge/"
+  },
+  "source_sha256": {
+    ".github/workflows/rust.yml": "15459cc8b02c923416b5fbc1976b7f5db8ae2a9df43f465314624c5561ed3066",
+    "AGENTS.md": "11d6b3b8f7a952ef17e75424983f7922b120292be3daeb941bdcc0d91d991257",
+    "extensions/forge/Cargo.lock": "e0f61caf95bd428f8744d32b770d8b94f3bde528e5e949ed1dbd69f8446b1b76",
+    "extensions/forge/Cargo.toml": "c2ddd5fbc6cd222261e8867d096df9621fc7b2f3e25c20ba6750f8e8806630cb",
+    "extensions/forge/examples/audit.rs": "a50e7f7b6dff9fae0338b8eaddd00d4495c4eb70f3a67483f059a7f93b0267f5",
+    "extensions/forge/examples/compatibility.rs": "cfadae8a606a948d8f1cf13521c0d0df329ddeb3bd1160c5ffd6ddc0d54f2bf0",
+    "extensions/forge/examples/compile.rs": "55b1bdc0217c27f8eb5d0b28f9f418a197f4d99abbad6f1b65a8511aaf28ac67",
+    "extensions/forge/examples/generate.rs": "e5c0973de661c0deca40beeea14b9f0131c8b09dadd4d24171efc64242e1012a",
+    "extensions/forge/examples/openapi.rs": "00fdf390cb29590443e2db9b203404a723f66990cde1c730f30e5d84b5fa51f2",
+    "extensions/forge/examples/resolve.rs": "232ae8d5a5be7fc8054683c005fb5911b8f56349e5a6def162ae513bec3e0339",
+    "extensions/forge/probe_cli.py": "1ba02411e7d455140480caea1993850b863774ff6cc39aa97a4b99893349ea80",
+    "extensions/forge/src/adapters.rs": "aa065aae1a3691cf7638568d8d23fc3c8d95f79cc495dce64a6380e1784d7629",
+    "extensions/forge/src/artifacts/docs.rs": "e5f8d25f567744dd7775a4d22337bfcc73174501eb20a80b5491d343bad56d25",
+    "extensions/forge/src/artifacts/publish.rs": "61f9e14955d6510b8dabdfc29a6e942f604d5e7a0d58ab2ae31a1dd51ae925d3",
+    "extensions/forge/src/artifacts/sdk.rs": "dab64a1858988c108dfbdc6e25a97b5162c45fccecb8fd4259474a557a1c8978",
+    "extensions/forge/src/artifacts/sdk_composition.rs": "0a3e810c1c7fa7511b4d786b654ca1747f36eab7c82ccaadefc9d30229db0c51",
+    "extensions/forge/src/artifacts/sdk_media.rs": "a3393952ee67815c846ad8c1f74ba0ba3884d39daee24de4d785bf2c1abae693",
+    "extensions/forge/src/artifacts/sdk_symbols.rs": "b15bd8afe5925aa3c2d82e45af6e117e09f2984853cf46575f989915a2bf0217",
+    "extensions/forge/src/artifacts/sdk_validation.lock": "f8b7034807f744744dce94f8d28fde84bae4b0966294f6602fe1d459f1b7c1d3",
+    "extensions/forge/src/artifacts/sdk_validation.rs": "318ab3453f4e201a80324bbc27c3e0f11c58e8e65e6afe065d67e217297bfef2",
+    "extensions/forge/src/artifacts.rs": "68549a91620ab4a8159fdb1916756b1dc572102427aa69d8aa1e8356214f4643",
+    "extensions/forge/src/catalog.rs": "c684b2a071b2eebe3f807e07a05517a8932a60e02fb04bd2c6695d2b6ca0db74",
+    "extensions/forge/src/form.rs": "6592a138ea68e74d498db74a76e41fda6e3015655a5d415f875d5217300b63e5",
+    "extensions/forge/src/lib.rs": "7c8de38d3944f9e3a42672d2d4c1b7d89a01cf3f4f625a0fedc0312bf2550770",
+    "extensions/forge/src/media.rs": "2bf8d894a7f6712a3d5146a26c1d0b2f3bda667a5fa09ea9910b181202311561",
+    "extensions/forge/src/model.rs": "565a0ce1cf21c73caebd0082d37e17acf7f3cf635b5121ddf40981af2b10cbab",
+    "extensions/forge/src/multipart.rs": "b10eaab34923cc2e791de56bb601159004c42e0d35a9ad256c8604338546168a",
+    "extensions/forge/src/parameters.rs": "9b75ec2abe9c9bcbb0759df8aac392920cd1af17245ba35b86d18c3a577c9995",
+    "extensions/forge/src/resolver.rs": "76a18d3e0e4fcbae0c17c1ae92ca00692baf33c2f3b30ed8dfd09d528fac8c9b",
+    "extensions/forge/src/runtime.rs": "ab6d98af4ad9921a5b36d43cc105fa9ff408cbfaef2f70ccda0bc01deb4abfdd",
+    "extensions/forge/src/schema.rs": "8e60cbc585559c4e1137ed889af2cb83933f4ab5f80e40343bae08e6a30517ba",
+    "extensions/forge/src/servers.rs": "4fbbd7f50f0267730783081037581952a5c63e19ceb259a8fb4f7327c6cf4db7",
+    "extensions/forge/tests/adapters.rs": "b07c231020d7e69351099baf2561f97ef1f6f0791e71a45de55db6ded032d1f7",
+    "extensions/forge/tests/artifacts.rs": "706c76a4f6247ec98b4b7f7fd346d83ff2ad219815a2bc29a5ee2cab92655189",
+    "extensions/forge/tests/catalog.rs": "342fb863101ee085306fb255d47beca59e1a4fa2c988c6a0f45d1d7e94255145",
+    "extensions/forge/tests/composition_sdk.rs": "a0740520ebbaccf3c54462321b4654a512c5a99210dcb4b9177b74f9ebbcae25",
+    "extensions/forge/tests/consumer.rs": "1d3aafa60ca0c1930f269b085a15d1bae6d507a796e52b50da2a8a377427060d",
+    "extensions/forge/tests/fixtures/advanced_composition_consumer.rs": "a97c9fe974924cef41fd4313973166517c73fec87d610c72ad93f568061b1401",
+    "extensions/forge/tests/fixtures/advanced_composition_openapi.json": "a5c889deda974be1fafeb7b64ed62415b136709c13f33cde1493b2c02e0846c2",
+    "extensions/forge/tests/fixtures/composition_consumer.rs": "6decba6df331a5484b1a1bf68a899f77d5bcaa3959e99b55a154f617a28571cb",
+    "extensions/forge/tests/fixtures/composition_openapi.json": "26892689250e6db7624f4fb62a2d6abf78d6173360edfc09c0eb754efa23e5db",
+    "extensions/forge/tests/fixtures/conditional_consumer.rs": "b3f9a912fe0a0b698e4a5e328cd04373786337dd380ccf59aeb6fb0fc3a23740",
+    "extensions/forge/tests/fixtures/conditional_openapi.json": "010260a0a1a5ba4bd06f6ba07ac378f3646fa6050930d729de758d295fc41f76",
+    "extensions/forge/tests/fixtures/corpus_cloudflare_consumer.rs": "c6aa88a39dc41ca8590caeb7d6ef3e54c9b41e92ee56c81b7fbdccd292804379",
+    "extensions/forge/tests/fixtures/corpus_github_consumer.rs": "aaa49b7d8e8770be34328d697cbdd1d2171658a3609708480ebe3371027e2c10",
+    "extensions/forge/tests/fixtures/corpus_stripe_consumer.rs": "1f85722a80a218c3cc2efff1dc90cda40b1c919e2a1a15523b7b1fe8d15a60f1",
+    "extensions/forge/tests/fixtures/form_consumer.rs": "d543f5af9f2fd1d3b7668b2dcef067293d6e9db8ec4d02d3c675ce2993a71d1c",
+    "extensions/forge/tests/fixtures/form_openapi.json": "c936ccdaa51b3197dbcc679c01adffeb1174e8ac512a012a51cb674c71265f3c",
+    "extensions/forge/tests/fixtures/http_consumer.rs": "745c7e66096c2a7554449f33b8896a71c92a48ea029508293c22b8e3fb7b3083",
+    "extensions/forge/tests/fixtures/media_consumer.rs": "ee3fec27d5e088b876f19effb0c388fd06335014339374c2edb158005602aa60",
+    "extensions/forge/tests/fixtures/media_openapi.json": "06d47ba01fed990dd4dcc9652a96f4e0895854a4a6a7a820b61704649f1fc386",
+    "extensions/forge/tests/fixtures/multipart_consumer.rs": "98dd5287a4e74f935df45cbd0bee6d9bdae6bf7d26e8aa1971c0521940f269e6",
+    "extensions/forge/tests/fixtures/multipart_openapi.json": "86a9cfb256e0d411b8ee5bfab5540a41d39d26601c44ae85258f5f9f1a4287fd",
+    "extensions/forge/tests/fixtures/names_consumer.rs": "aa4935c5621b69c600465450f00c851cef061556f11ba9fa24a74e949baa7171",
+    "extensions/forge/tests/fixtures/names_openapi.json": "0bcca0a4a700c3fb998e54fbf0d9d26e6cae1f9d8d8066af61f328b31c99858b",
+    "extensions/forge/tests/fixtures/nullable_paths_consumer.rs": "df8b23b7b0076cad2c9ca36965da5faba036085434e9973c56142c668961a636",
+    "extensions/forge/tests/fixtures/nullable_paths_openapi.json": "24b4b80f3c0c589e2e61b5aec6a8a2403f3c6a2e72f830dceae6b9b6ec073064",
+    "extensions/forge/tests/fixtures/openapi32.json": "47ad8cd930bfc2f97d144974c426427739a64e5238536ee54eac2c722d48877c",
+    "extensions/forge/tests/fixtures/openapi32_consumer.rs": "39c0e68073af1e3f2bcfaf49898ede6f70353a7b9cfdc552af84c23b36b97faf",
+    "extensions/forge/tests/fixtures/schema_consumer.rs": "066ccf168f9b532a23f621762a7b6c290e1cc29a0a5cd399b8852bd3e4cbf6ef",
+    "extensions/forge/tests/fixtures/schema_openapi.json": "a4ab366a34bc19f2e33bf1c0ae253878f0260d65ef6e3fbe646068e3f2a13d44",
+    "extensions/forge/tests/fixtures/sdk_symbols_consumer.rs": "46b9476b3f5add147909e5d9bd5719e3f7ecd5e37fa7d04b1f70f4bb323b66b2",
+    "extensions/forge/tests/fixtures/sdk_symbols_openapi.json": "c4403843df5e56b00210031a2925d3d1c6628e63b8b1c112e167c50e870051e2",
+    "extensions/forge/tests/fixtures/text_consumer.rs": "88de03fff8b0295bb426c69076ecb14ab56d99030552b8a7d3e365cb99fa278b",
+    "extensions/forge/tests/fixtures/text_openapi.json": "eee82f050941121e2e72cfcb1cea9483a8283334c91470ba6c7e9fc96fd267b9",
+    "extensions/forge/tests/fixtures/untyped_consumer.rs": "8c3528e26f5595912d60e2772351b2249cbce4bef94b5f4276bdb23c5f2501a5",
+    "extensions/forge/tests/fixtures/untyped_openapi.json": "9493ac128281e3dbf38c81a19a4f8069abbe0caf40df792e45b1df76f3e7727c",
+    "extensions/forge/tests/form_body.rs": "cfb4df465815567eed15a7e31ec195d5f259d73c81c79ddfa12f7f1ea4cb29cd",
+    "extensions/forge/tests/generated_sdk.rs": "5113696a2ca4087797a3c58baad52c1af2e4d459b284b1125cf3988c19b99bcd",
+    "extensions/forge/tests/http_binding.rs": "155b3d641e138b9248d5ceff37252731cc0b03ca959fde0f04c2f0649b1ce71d",
+    "extensions/forge/tests/local_catalog.rs": "4cfe10e78880ed3cde4d7524ef6834ee80e6ad1418f43a972642b0fc8b42bbaf",
+    "extensions/forge/tests/media_body.rs": "336f1abd0ff8c65261806731d5c3fee44791e2dd95086a9bbebb511e3f52b1b3",
+    "extensions/forge/tests/multipart_body.rs": "a217014a2e1e79a77d8818a1ed85fb452de07a79592b2c9c30d8f9c5a98d4a75",
+    "extensions/forge/tests/openapi32.rs": "89afa97bc12da7d9c2669431f935d7ebfd6d59526c0b43786c627db251b29076",
+    "extensions/forge/tests/parameter_styles.rs": "cf33ebbbc7d01f1bb24cccbc45de214a83e098864ad135ffc2395abd5ea99387",
+    "extensions/forge/tests/resolver.rs": "f25d0ac4b051def1c3d64dce6192126c4df81f83fe406a7da2fb78293f10a1d3",
+    "extensions/forge/tests/schema_body.rs": "60ac3a690e28a5265ea00894d6a255a86a0179b30d0a81cabad0008e3c7b65d2",
+    "extensions/forge/tests/schema_graph.rs": "3aea8037fe2d36a6697f8396744c07d0dde1d57ab6a9c2d061e2eb26a95415dd",
+    "extensions/forge/tests/sdk_symbols.rs": "f33dece735ac357605480ba83d4c2f8e54da2a97ee5ac344a3895f9e0f0c6a23",
+    "extensions/forge/tests/servers.rs": "811a22154f97a5029fe6e79cb6f90f12a74f26dce889f7ebb3b30da9eaef3315",
+    "extensions/forge/tests/text_body.rs": "58a593e3ac0da53f9c932b61a7c0ccc9b3454dfb2f3e2cb9d75564d66b7ce2c8",
+    "extensions/forge/tests/tool_http.rs": "c6be573a1e6e00f692a285c0ed47a6f70ba83e1e8f49af1eff95f99bce2147eb",
+    "extensions/forge-workers/Cargo.lock": "ae0a3a9063f098c602cebe5324bf5b5e6fa91b602bc41924bdc2632fcb7069cf",
+    "extensions/forge-workers/Cargo.toml": "dda91a743c6fef4cfb6fc996bf1cc9ea34ca3adc2d46e1418e7569868573a8ff",
+    "extensions/forge-workers/build.py": "b8b7ee0921d03980a4fdcc6929954fd78d07f435dbffec4ecbd0981ee8290dfd",
+    "extensions/forge-workers/build_generated_sdk.py": "e1aef622485bb3b6b6274633325009444552d03a874df3a0141d0382093ed585",
+    "extensions/forge-workers/fixtures/generated_sdk_consumer.rs": "cf028e2abe350c9066ad5cdb56ac7b636531d816779fb598bcea47b19a5cfc07",
+    "extensions/forge-workers/fixtures/generated_sdk_media_consumer.rs": "b54c6091166ef070d847e3b96601820bc0dc5fc959ddc92d9affd3a59f71e9b1",
+    "extensions/forge-workers/fixtures/proof-openapi.json": "ae19ef70be756ea9a986c17a8b1b7e2f2cf430aab108999b1c10b4688ae5c0ba",
+    "extensions/forge-workers/fixtures/untyped_sdk_consumer.rs": "cda3613e8dfc644992cf4768a2210751ab8c1a55584f825e5a51d2d731a88c0b",
+    "extensions/forge-workers/probe.py": "b20174cc37001a16fc6ad1e55073381458882d9fc8a61d281cb2abe25108f67e",
+    "extensions/forge-workers/probe_generated_sdk.py": "9244e2ee515865f302d7950ba6d91e10c514f50dc08b2890f979931ae35fd5fc",
+    "extensions/forge-workers/rust-toolchain.toml": "84d078e596033b14bddcc1d41a76e211f6ee0e61164151e4d1260d9056197feb",
+    "extensions/forge-workers/src/main.rs": "17913cdeb7f7cb030c055074d2ed0e42649b51f7a0f0943985070853a8a1e18f",
+    "extensions/forge-workers/wrangler.toml": "5cb88ed1f934321e43c83396e9a2bffe57845a0d135aeafbe34e43d7b33d4e4e",
+    "extensions/forge/README.md": "367c8dbcf2ff54b4dfd93aab73dc5435f19cadd6dd187ba6978c38b1db9733df",
+    "extensions/forge-workers/README.md": "acca3979b76f682f09855eaed2c9a74a2a06f4f63169784e4c4943d169395c44"
+  },
+  "artifact_sha256": {
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/index_bg.wasm": "4cad799b56802fec1f43a36f2de5d9e1256e8ae9a7d1975e47024e9e188a6c57",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/index.js": "1ee393707ec3644d3bbe981775d673c24694137c5ef0e6528647738f9e09eb7f",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/package.json": "19488dedfce2a81cfb01780078ebbf4627620ef6921a2c7df4c186f305546867",
+    "/Users/douglance/Developer/lv/incurs/extensions/forge-workers/build/worker/shim.mjs": "ac99177861405a6046923cbacabbd6adfa1853a56d0c679b9f5e09097c2f4728",
+    "/private/tmp/incurs-sdk-worker-reproducer-20261002/worker/build/index_bg.wasm": "433634a4727f2aace7923ed3208b2dc822d86b45ade4d2ff9c6b9a699c730f71",
+    "/private/tmp/incurs-sdk-worker-reproducer-20261002/worker/build/index.js": "302b5b5e282816d61f38b8829362061663100657f347baa99278e689b910aecf",
+    "/private/tmp/incurs-sdk-worker-reproducer-20261002/worker/build/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "/private/tmp/incurs-sdk-worker-reproducer-20261002/worker/build/package.json": "2cd1980d8307b682d8a53d313fcc5580d258b406538ad093b5bc760f06cd4e58",
+    "/private/tmp/incurs-sdk-worker-reproducer-20261002/worker/build/worker/shim.mjs": "ac99177861405a6046923cbacabbd6adfa1853a56d0c679b9f5e09097c2f4728",
+    "/Users/douglance/Library/Caches/mbx/targets/v1/7be869b176d6187689f0c49e653d09964367c0708db24f07be2f4a921192101d/debug/examples/openapi": "0b1f317ea6c9231b74211b71a38f5a04b84586ff65b23301369a61f6a1493350",
+    "/tmp/incurs-github-sdk-20261002-paths/contract.json": "2dfafffedc71ce0ce1462096482631a600310b26691e592817da19c64725848c",
+    "/tmp/incurs-github-sdk-20261002-paths/sdk/src/lib.rs": "b912d691d76e38efe875c61ce90384b0f6649662a4951105d81dca50404a689e",
+    "/tmp/incurs-github-sdk-20261002-paths/sdk/target/package/corpus-proof-sdk-0.1.0.crate": "4eea10fb7c4dc12af1b6234ac0b63e45ac65a9f2b43906edb53113f8be6362b6",
+    "/tmp/incurs-cloudflare-sdk-20261002-paths/contract.json": "6d15f54d362af9e2cd08c554001a38d3bfcb25868ad891761ab7c0379498e73b",
+    "/tmp/incurs-cloudflare-sdk-20261002-paths/sdk/src/lib.rs": "3a97f7c49d07a7779023c49976689f5669cee075562525a6ff311ffe2c65be84",
+    "/tmp/incurs-cloudflare-sdk-20261002-paths/sdk/target/package/corpus-proof-sdk-0.1.0.crate": "5dd795d62483a96f0f15d686f455ec751ce749e871e3cec90e0f93215c0442d1",
+    "/tmp/incurs-stripe-sdk-20261002-paths/contract.json": "b10075d93ec95224f1fe18b938f3afa2a497b7a7542689a59b28dc2a8e184689",
+    "/tmp/incurs-stripe-sdk-20261002-paths/sdk/src/lib.rs": "986240aa4567de1556bcd31f76dff9a4743ef42b27eba7c70a877bfda8edff32",
+    "/tmp/incurs-stripe-sdk-20261002-paths/sdk/target/package/corpus-proof-sdk-0.1.0.crate": "74b1678521113c8c1844c8bdb8b454fa05dfe5e278b9871cf1242f5efa06c2df"
+  },
+  "cases": [
+    {
+      "name": "github",
+      "stages": {
+        "artifact_compilation": {
+          "elapsed_ms": 12604,
+          "status": "passed"
+        },
+        "parse": {
+          "elapsed_ms": 241,
+          "openapi": "3.1.0",
+          "path_operations": 1231,
+          "status": "passed"
+        },
+        "publication": {
+          "elapsed_ms": 36,
+          "files": 10,
+          "status": "passed"
+        },
+        "resolution": {
+          "elapsed_ms": 716,
+          "operation_json_bytes": 2201436,
+          "operations": 1231,
+          "resolved_json_bytes": 4787312,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 2585709,
+          "schemas": 973,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof"
+      },
+      "public_rust_declarations": 4085,
+      "sdk_build": {
+        "status": "passed",
+        "execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+      },
+      "sdk_package": {
+        "status": "passed",
+        "consumer_uses_extracted_archive": true,
+        "execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+      },
+      "http": {
+        "status": "passed",
+        "requests": 4,
+        "scope": "Loopback GET /zen, both Markdown media types, and literal binary release-asset upload.",
+        "execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+      },
+      "independent_document_validation": {
+        "name": "github",
+        "sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+        "status": "passed"
+      },
+      "source_sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+      "generation_execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+    },
+    {
+      "name": "cloudflare",
+      "stages": {
+        "artifact_compilation": {
+          "elapsed_ms": 31139,
+          "status": "passed"
+        },
+        "parse": {
+          "elapsed_ms": 372,
+          "openapi": "3.0.3",
+          "path_operations": 3627,
+          "status": "passed"
+        },
+        "publication": {
+          "elapsed_ms": 59,
+          "files": 10,
+          "status": "passed"
+        },
+        "resolution": {
+          "elapsed_ms": 1184,
+          "operation_json_bytes": 8822242,
+          "operations": 3627,
+          "resolved_json_bytes": 12123837,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 3301418,
+          "schemas": 6948,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof"
+      },
+      "public_rust_declarations": 16162,
+      "sdk_build": {
+        "status": "passed",
+        "execution_id": "01a0fad9-7038-7d62-9258-1bebecf4f5bb"
+      },
+      "sdk_package": {
+        "status": "passed",
+        "consumer_uses_extracted_archive": true,
+        "execution_id": "01a0fad9-7038-7d62-9258-1bebecf4f5bb"
+      },
+      "http": {
+        "status": "passed",
+        "requests": 4,
+        "scope": "Loopback user lookup, DLP binary upload, JSON Lines usage report, and NDJSON Vectorize insert.",
+        "execution_id": "01a0fad9-7038-7d62-9258-1bebecf4f5bb"
+      },
+      "independent_document_validation": {
+        "name": "cloudflare",
+        "sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+        "status": "failed",
+        "error": "'type' is not one of ['name', 'created_on', 'modified_on']\n\nFailed validating 'enum' in schema:\n    {'description': 'Field to order DNS views by.',\n     'type': 'string',\n     'default': 'type',\n     'enum': ['name', 'created_on', 'modified_on']}\n\nOn instance:\n    'type'"
+      },
+      "source_sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+      "generation_execution_id": "01a0fad3-d238-75d0-b4b3-8831424488c9"
+    },
+    {
+      "name": "stripe",
+      "stages": {
+        "artifact_compilation": {
+          "elapsed_ms": 13664,
+          "status": "passed"
+        },
+        "parse": {
+          "elapsed_ms": 112,
+          "openapi": "3.0.0",
+          "path_operations": 644,
+          "status": "passed"
+        },
+        "publication": {
+          "elapsed_ms": 52,
+          "files": 10,
+          "status": "passed"
+        },
+        "resolution": {
+          "elapsed_ms": 443,
+          "operation_json_bytes": 2555817,
+          "operations": 644,
+          "resolved_json_bytes": 4620179,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 2064202,
+          "schemas": 1701,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof"
+      },
+      "public_rust_declarations": 5722,
+      "sdk_build": {
+        "status": "passed",
+        "execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+      },
+      "sdk_package": {
+        "status": "passed",
+        "consumer_uses_extracted_archive": true,
+        "execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+      },
+      "http": {
+        "status": "passed",
+        "requests": 1,
+        "scope": "Loopback GET /v1/balance; optional expand remains rejected for an array declared as deepObject.",
+        "execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+      },
+      "independent_document_validation": {
+        "name": "stripe",
+        "sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+        "status": "passed"
+      },
+      "source_sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+      "generation_execution_id": "01a0fad9-702a-7bb3-b036-70d3c3099fe5"
+    }
+  ],
+  "quality": {
+    "status": "passed",
+    "tests_passed": 113,
+    "test_groups": 22,
+    "test_threads": 1,
+    "execution": {
+      "id": "01a0fad9-7018-78d0-803c-fd8f2887d6a8",
+      "status": "completed",
+      "outcome": "passed",
+      "result": {
+        "exit_code": 0,
+        "attempts": 1,
+        "output_truncated": false,
+        "expectation_met": true
+      },
+      "budget": {
+        "wall_time_ms": 3600000,
+        "memory_bytes": 4294967296,
+        "cpu_percent": null,
+        "cpu_time_ms": null,
+        "child_processes": null,
+        "artifact_bytes": null,
+        "progress_timeout_ms": null,
+        "cancel_on_stall": false
+      },
+      "created_at": 1790914949144,
+      "updated_at": 1790915629728,
+      "workspace": {
+        "cwd": "/Users/douglance/Developer/lv/incurs",
+        "repository": "/Users/douglance/Developer/lv/incurs",
+        "worktree": "/Users/douglance/Developer/lv/incurs",
+        "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+        "branch": "feat/workers-all-features",
+        "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+      }
+    },
+    "steps": [
+      "QUALITY_STEP ['test', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--workspace', '--all-features', '--', '--test-threads=1']",
+      "QUALITY_STEP ['clippy', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--all-targets', '--all-features', '--', '-D', 'warnings']",
+      "QUALITY_STEP ['fmt', '--manifest-path', 'extensions/forge/Cargo.toml', '--check']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--no-default-features']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--no-default-features', '--features', 'adapters']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--no-default-features', '--features', 'native-cli']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--no-default-features', '--target', 'wasm32-unknown-unknown']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--no-default-features', '--target', 'wasm32-unknown-unknown', '--features', 'adapters']",
+      "QUALITY_STEP ['check', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--no-default-features', '--target', 'wasm32-unknown-unknown', '--features', 'native-cli']",
+      "QUALITY_STEP ['doc', '--manifest-path', 'extensions/forge/Cargo.toml', '--locked', '--offline', '-j2', '--all-features', '--no-deps']"
+    ],
+    "summaries": [
+      "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 184.26s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 419.26s",
+      "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.76s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ]
+  },
+  "runtime": {
+    "native": {
+      "passed": true,
+      "media": {
+        "requests": 20,
+        "cli_rejections": 11,
+        "mcp_rejections": 12
+      },
+      "openapi32_requests": 10,
+      "cli_requests": 3,
+      "mcp_requests": 1,
+      "form_mcp_requests": 1,
+      "multipart_mcp_requests": 1,
+      "mcp_protocol_version": "2025-06-18",
+      "verified": [
+        "raw-string-body",
+        "empty-body",
+        "omitted-body",
+        "binary-http-error-response",
+        "duplicate-response-headers",
+        "mcp-initialize",
+        "mcp-search",
+        "mcp-inspect",
+        "mcp-call",
+        "mcp-binding-error-without-http",
+        "form-mcp-wire-encoding",
+        "form-mcp-error-without-http",
+        "multipart-independent-MIME-parser",
+        "multipart-boundary-collision",
+        "multipart-referenced-part-header",
+        "multipart-base64-transfer",
+        "multipart-error-without-http",
+        "openapi32-QUERY",
+        "custom-method-case",
+        "querystring-content",
+        "cookie-style",
+        "parameter-content",
+        "querystring-rejection-without-http"
+      ],
+      "scope": "Bounded loopback fixtures; not universal OpenAPI conformance.",
+      "execution": {
+        "id": "01a0fad9-e5a9-70b0-934c-523e11e52693",
+        "status": "completed",
+        "outcome": "passed",
+        "result": {
+          "exit_code": 0,
+          "attempts": 1,
+          "output_truncated": false,
+          "expectation_met": true
+        },
+        "budget": {
+          "wall_time_ms": 180000,
+          "memory_bytes": 1073741824,
+          "cpu_percent": null,
+          "cpu_time_ms": null,
+          "child_processes": null,
+          "artifact_bytes": null,
+          "progress_timeout_ms": null,
+          "cancel_on_stall": false
+        },
+        "created_at": 1790914979241,
+        "updated_at": 1790914983954,
+        "workspace": {
+          "cwd": "/Users/douglance/Developer/lv/incurs",
+          "repository": "/Users/douglance/Developer/lv/incurs",
+          "worktree": "/Users/douglance/Developer/lv/incurs",
+          "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+          "branch": "feat/workers-all-features",
+          "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+        }
+      }
+    },
+    "worker": {
+      "passed": true,
+      "requests": 8,
+      "media": {
+        "bindings": 10,
+        "rejections": 12
+      },
+      "concurrent_elapsed_ms": 126.35012500686571,
+      "verified": [
+        "emscripten",
+        "temporary-files",
+        "task-spawn",
+        "timers",
+        "concurrency",
+        "limits",
+        "native-worker-contract-parity",
+        "declared-server-binding",
+        "parameter-styles",
+        "text-body-presence",
+        "integer-body-preservation",
+        "false-body-schema",
+        "urlencoded-form-wire",
+        "multipart-MIME-parser",
+        "openapi32-QUERY",
+        "custom-method-case",
+        "querystring-content",
+        "cookie-style",
+        "parameter-content",
+        "shared-schema-graph",
+        "referenced-multipart-MIME-parser",
+        "false-schema-alias"
+      ],
+      "default_switch_eligible": false,
+      "note": "Runtime proof only; production parity and comparative performance gate not run.",
+      "execution": {
+        "id": "01a0fad5-c0ef-7992-b17d-dcd58a75e0f5",
+        "status": "completed",
+        "outcome": "passed",
+        "result": {
+          "exit_code": 0,
+          "attempts": 1,
+          "output_truncated": false,
+          "expectation_met": true
+        },
+        "budget": {
+          "wall_time_ms": 300000,
+          "memory_bytes": 4294967296,
+          "cpu_percent": null,
+          "cpu_time_ms": null,
+          "child_processes": null,
+          "artifact_bytes": null,
+          "progress_timeout_ms": null,
+          "cancel_on_stall": false
+        },
+        "created_at": 1790914707695,
+        "updated_at": 1790914710662,
+        "workspace": {
+          "cwd": "/Users/douglance/Developer/lv/incurs/extensions/forge-workers",
+          "repository": "/Users/douglance/Developer/lv/incurs",
+          "worktree": "/Users/douglance/Developer/lv/incurs",
+          "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+          "branch": "feat/workers-all-features",
+          "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+        }
+      },
+      "build_execution": {
+        "id": "01a0fad3-d22d-7512-9167-e955d64f0452",
+        "status": "completed",
+        "outcome": "passed",
+        "result": {
+          "exit_code": 0,
+          "attempts": 1,
+          "output_truncated": false,
+          "expectation_met": true
+        },
+        "budget": {
+          "wall_time_ms": 600000,
+          "memory_bytes": 4294967296,
+          "cpu_percent": null,
+          "cpu_time_ms": null,
+          "child_processes": null,
+          "artifact_bytes": null,
+          "progress_timeout_ms": null,
+          "cancel_on_stall": false
+        },
+        "created_at": 1790914581037,
+        "updated_at": 1790914598278,
+        "workspace": {
+          "cwd": "/Users/douglance/Developer/lv/incurs/extensions/forge-workers",
+          "repository": "/Users/douglance/Developer/lv/incurs",
+          "worktree": "/Users/douglance/Developer/lv/incurs",
+          "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+          "branch": "feat/workers-all-features",
+          "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+        }
+      }
+    },
+    "generated_sdk_worker": {
+      "passed": true,
+      "generated_media_bindings": 12,
+      "sdk_rejections": 3,
+      "base64_byte_values": 256,
+      "base64_nonempty_padding_remainders": [
+        0,
+        1,
+        2
+      ],
+      "concurrent_requests": 8,
+      "validation": {
+        "body": "4",
+        "decimal": true,
+        "exact": "18446744073709551615",
+        "impossible": true,
+        "invalid_decimal": true,
+        "invalid_low": true,
+        "invalid_multiple": true,
+        "invalid_pattern": true,
+        "overlap": "3",
+        "recursive": "{\"next\":{\"value\":2},\"value\":1}"
+      },
+      "scope": "Current SDK package archives -> Emscripten -> request binding, observed through local HTTP; no vendor request.",
+      "build_helper": "../forge-workers/build_generated_sdk.py",
+      "probe": "../forge-workers/probe_generated_sdk.py",
+      "build_execution": {
+        "id": "01a0faee-dc58-7150-a0a3-15a0d916a634",
+        "status": "completed",
+        "outcome": "passed",
+        "result": {
+          "exit_code": 0,
+          "attempts": 1,
+          "output_truncated": false,
+          "expectation_met": true
+        },
+        "budget": {
+          "wall_time_ms": 600000,
+          "memory_bytes": 4294967296,
+          "cpu_percent": null,
+          "cpu_time_ms": null,
+          "child_processes": null,
+          "artifact_bytes": null,
+          "progress_timeout_ms": null,
+          "cancel_on_stall": false
+        },
+        "created_at": 1790916353112,
+        "updated_at": 1790916580793,
+        "workspace": {
+          "cwd": "/Users/douglance/Developer/lv/incurs",
+          "repository": "/Users/douglance/Developer/lv/incurs",
+          "worktree": "/Users/douglance/Developer/lv/incurs",
+          "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+          "branch": "feat/workers-all-features",
+          "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+        }
+      },
+      "execution": {
+        "id": "01a0faf4-3941-7da0-ba4c-d0b7256703b8",
+        "status": "completed",
+        "outcome": "passed",
+        "result": {
+          "exit_code": 0,
+          "attempts": 1,
+          "output_truncated": false,
+          "expectation_met": true
+        },
+        "budget": {
+          "wall_time_ms": null,
+          "memory_bytes": null,
+          "cpu_percent": null,
+          "cpu_time_ms": null,
+          "child_processes": null,
+          "artifact_bytes": null,
+          "progress_timeout_ms": null,
+          "cancel_on_stall": false
+        },
+        "created_at": 1790916704577,
+        "updated_at": 1790916705186,
+        "workspace": {
+          "cwd": "/Users/douglance/Developer/lv/incurs",
+          "repository": "/Users/douglance/Developer/lv/incurs",
+          "worktree": "/Users/douglance/Developer/lv/incurs",
+          "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+          "branch": "feat/workers-all-features",
+          "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+        }
+      }
+    }
+  },
+  "mutation_controls": [
+    {
+      "mutation": "bytes",
+      "caught": true,
+      "operation": "op_01a0fa97397973e59cc91b8bfac9dc57",
+      "restored_sha256": "326e2c332071c8fb5ac2e7e808086198196df48c4645fc05dfe33ddfddd3e699",
+      "evidence": "[1, 255, 128, 12, 10]",
+      "execution_id": "01a0fa97-38c3-75b0-886d-070849b40666",
+      "restored": true
+    },
+    {
+      "mutation": "enum",
+      "caught": true,
+      "operation": "op_01a0fa97b30177b4b59bde1e10549dec",
+      "restored_sha256": "326e2c332071c8fb5ac2e7e808086198196df48c4645fc05dfe33ddfddd3e699",
+      "evidence": "Value1000Errors",
+      "execution_id": "01a0fa97-38c3-75b0-886d-070849b40666",
+      "restored": true
+    },
+    {
+      "mutation": "allocation",
+      "caught": true,
+      "operation": "op_01a0fac1992370e18d77c0fe2b301258",
+      "restored_sha256": "b15bd8afe5925aa3c2d82e45af6e117e09f2984853cf46575f989915a2bf0217",
+      "evidence": "duplicate public generated names",
+      "execution_id": "01a0fac1-9859-7930-90d7-ad7e796d233c",
+      "restored": true
+    },
+    {
+      "mutation": "reference",
+      "caught": true,
+      "operation": "op_01a0fac1ae3b75bcb120317a93443e48",
+      "restored_sha256": "901b9333573965e3233692b5cb913faaf6b131a71f4ab74fb9720df17acf7c20",
+      "evidence": "mismatched types",
+      "execution_id": "01a0fac1-9859-7930-90d7-ad7e796d233c",
+      "restored": true
+    },
+    {
+      "mutation": "missing-path",
+      "caught": true,
+      "operation": "op_01a0fad0143a77df86b948337bb4c4bb",
+      "restored_sha256": "dab64a1858988c108dfbdc6e25a97b5162c45fccecb8fd4259474a557a1c8978",
+      "evidence": "required path cannot be omitted",
+      "execution_id": "01a0fad0-1273-7970-a92c-236305a0b503",
+      "restored": true
+    }
+  ],
+  "cloudflare_build_resource_retry": {
+    "first_attempt": {
+      "id": "01a0fad3-d238-75d0-b4b3-8831424488c9",
+      "status": "canceled",
+      "outcome": "error",
+      "result": {
+        "error_code": "EXECUTION_MEMORY_BUDGET",
+        "limit": 4294967296,
+        "observed": 4297490432,
+        "cancel_requested": true,
+        "output_truncated": false,
+        "expectation_met": false
+      },
+      "budget": {
+        "wall_time_ms": 900000,
+        "memory_bytes": 4294967296,
+        "cpu_percent": null,
+        "cpu_time_ms": null,
+        "child_processes": null,
+        "artifact_bytes": null,
+        "progress_timeout_ms": null,
+        "cancel_on_stall": false
+      },
+      "created_at": 1790914581048,
+      "updated_at": 1790914672637,
+      "workspace": {
+        "cwd": "/Users/douglance/Developer/lv/incurs",
+        "repository": "/Users/douglance/Developer/lv/incurs",
+        "worktree": "/Users/douglance/Developer/lv/incurs",
+        "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+        "branch": "feat/workers-all-features",
+        "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+      }
+    },
+    "retry": {
+      "id": "01a0fad9-7038-7d62-9258-1bebecf4f5bb",
+      "status": "completed",
+      "outcome": "passed",
+      "result": {
+        "exit_code": 0,
+        "attempts": 1,
+        "output_truncated": false,
+        "expectation_met": true
+      },
+      "budget": {
+        "wall_time_ms": 1200000,
+        "memory_bytes": 8589934592,
+        "cpu_percent": null,
+        "cpu_time_ms": null,
+        "child_processes": null,
+        "artifact_bytes": null,
+        "progress_timeout_ms": null,
+        "cancel_on_stall": false
+      },
+      "created_at": 1790914949176,
+      "updated_at": 1790915205402,
+      "workspace": {
+        "cwd": "/Users/douglance/Developer/lv/incurs",
+        "repository": "/Users/douglance/Developer/lv/incurs",
+        "worktree": "/Users/douglance/Developer/lv/incurs",
+        "commit": "4c9eb9b26f3c802b5d5318df7e14e279c9002b7a",
+        "branch": "feat/workers-all-features",
+        "dirty_digest": "9caeb01f94df683ef11479b08c29656bea72a410a87ae6167bf9469aec91060c"
+      }
+    },
+    "generated_sdk_sha256": "3a97f7c49d07a7779023c49976689f5669cee075562525a6ff311ffe2c65be84",
+    "build_jobs": 1,
+    "note": "Generation and the 16,162-name scan passed before the first build crossed the 4 GiB process-family limit. The same generated source passed test, package verification, and HTTP consumer stages with an 8 GiB limit. Timings are shared-host observations."
+  },
+  "cleanup": {
+    "listener_ports_absent": [
+      18986,
+      18987,
+      18988,
+      18989
+    ],
+    "checked_at": "2026-10-02T05:11:47.025Z"
+  },
+  "limits": [
+    "The full SDKs build and package, but HTTP proof covers nine request cases across eight operations, not every one of the 5,502 operations.",
+    "Cloudflare's pinned source retains an invalid dns-settings_order default outside its enum; it is not a valid conformance control.",
+    "Stripe's expand array declares deepObject; explicit values are rejected instead of being silently reinterpreted.",
+    "The binder does not enforce every nested schema constraint. Generated composition validation is separate from general HTTP instance validation.",
+    "Unsupported dialects, schema resource IDs, anchors, and dynamic references fail explicitly.",
+    "Worker checks run locally and construct requests without vendor calls. Hosted production parity, comparative performance, and default-target promotion remain unproven.",
+    "CI was not run on a hosted runner, and no package was published."
+  ],
+  "independent_document_validation": {
+    "execution": {
+      "id": "01a0faf5-8d86-72d1-a1b2-6a14de5d9e10",
+      "status": "completed",
+      "outcome": "passed",
+      "result": {
+        "exit_code": 0,
+        "attempts": 1,
+        "output_truncated": false,
+        "expectation_met": true
+      },
+      "created_at": 1790916791686,
+      "updated_at": 1790916875791,
+      "budget": {
+        "wall_time_ms": 300000,
+        "memory_bytes": 4294967296,
+        "cpu_percent": null,
+        "cpu_time_ms": null,
+        "child_processes": null,
+        "artifact_bytes": null,
+        "progress_timeout_ms": null,
+        "cancel_on_stall": false
+      }
+    },
+    "data": {
+      "validator": "openapi-spec-validator 0.9.0",
+      "cases": [
+        {
+          "name": "github",
+          "sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+          "status": "passed"
+        },
+        {
+          "name": "cloudflare",
+          "sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+          "status": "failed",
+          "error": "'type' is not one of ['name', 'created_on', 'modified_on']\n\nFailed validating 'enum' in schema:\n    {'description': 'Field to order DNS views by.',\n     'type': 'string',\n     'default': 'type',\n     'enum': ['name', 'created_on', 'modified_on']}\n\nOn instance:\n    'type'"
+        },
+        {
+          "name": "stripe",
+          "sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+          "status": "passed"
+        }
+      ]
+    }
+  },
+  "compatibility": {
+    "cases": [
+      {
+        "case": "openapi-3.1.1",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "openapi-3.0.3",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "openapi-3.2.0",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "query-form-array",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "query-pipe-array",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "query-space-array",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "path-simple",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "path-label",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "path-matrix",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "body-json",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "body-text",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "body-form",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "body-multipart",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "schema-object",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "schema-string-alias",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "schema-one-of",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "schema-all-of",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "schema-boolean",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      },
+      {
+        "case": "operation-server-override",
+        "ok": true,
+        "request_check": "passed",
+        "request_error": null,
+        "resolution": "passed",
+        "sdk_error": null,
+        "sdk_generation": "passed"
+      }
+    ],
+    "failed": 0,
+    "passed": 19,
+    "scope": "resolution, SDK generation, and selected request semantics; not full conformance",
+    "total": 19,
+    "report": "compatibility-current.json",
+    "execution": {
+      "id": "01a0fafb-001b-7c81-8d20-91a3f67ff259",
+      "status": "completed",
+      "outcome": "passed",
+      "result": {
+        "exit_code": 0,
+        "attempts": 1,
+        "output_truncated": false,
+        "expectation_met": true
+      },
+      "created_at": 1790917148699,
+      "updated_at": 1790917148760,
+      "budget": {
+        "wall_time_ms": null,
+        "memory_bytes": null,
+        "cpu_percent": null,
+        "cpu_time_ms": null,
+        "child_processes": null,
+        "artifact_bytes": null,
+        "progress_timeout_ms": null,
+        "cancel_on_stall": false
+      }
+    },
+    "independent_document_validation_record": {
+      "report": "compatibility-current.json",
+      "checked_at": "2026-10-01T16:28:00.736278+00:00",
+      "validator": {
+        "package": "openapi-spec-validator",
+        "version": "0.9.0"
+      },
+      "fixture_generator_unchanged": true
+    }
+  },
+  "workflow_notes": [
+    "A delegated formatter wrote files directly once; its changes were subsequently journaled. Parent verification included confirmed implementation mutations, exact restoration, and the integrated final gate."
+  ]
+}

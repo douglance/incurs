@@ -1,0 +1,464 @@
+{
+  "checked_at": "2026-09-30T03:37:49.267319+00:00",
+  "scope": "Shared schema graph retention and bounded compiler scalability; not complete SDK generation, OpenAPI conformance, or live vendor API proof.",
+  "source_manifest": "corpus-sources.json",
+  "baseline_report": "corpus-report.json",
+  "resource_limits": {
+    "timeout_ms": 180000,
+    "process_family_memory_mib": 4096
+  },
+  "timings": "Shared-machine observations; no controlled latency or peak-memory benchmark is claimed.",
+  "measurement": "resolved_json_bytes is the compact serialized contract length counted by a Write sink. Root component comparison uses each unmodified input component schema as the independent expected value.",
+  "current_source_sha256": {
+    "extensions/forge/Cargo.lock": "2c6b187f1bd9fda4e4180533dab8072df685585e5e452c17d8b6424de228e01a",
+    "extensions/forge/Cargo.toml": "bc7b2690e70a2519a5ef5da9f467ab558fdf45c57d226e251c069fe15864dd08",
+    "extensions/forge/examples/audit.rs": "a50e7f7b6dff9fae0338b8eaddd00d4495c4eb70f3a67483f059a7f93b0267f5",
+    "extensions/forge/src/adapters.rs": "aa065aae1a3691cf7638568d8d23fc3c8d95f79cc495dce64a6380e1784d7629",
+    "extensions/forge/src/artifacts/docs.rs": "e5f8d25f567744dd7775a4d22337bfcc73174501eb20a80b5491d343bad56d25",
+    "extensions/forge/src/artifacts/publish.rs": "61f9e14955d6510b8dabdfc29a6e942f604d5e7a0d58ab2ae31a1dd51ae925d3",
+    "extensions/forge/src/artifacts/sdk.rs": "ba1d717850379eeb270b64fcc7c540732517389d174f6a2cf5093a8065fc5046",
+    "extensions/forge/src/artifacts/sdk_composition.rs": "cb79d6ea1e8531f913421cb781135f6b24959ba39626c02f5b58d9ab846eb1e4",
+    "extensions/forge/src/artifacts.rs": "68549a91620ab4a8159fdb1916756b1dc572102427aa69d8aa1e8356214f4643",
+    "extensions/forge/src/catalog.rs": "4a5331fe023886f7965c7ab0cd65a2234d9fb00410abdaffaffceb94f2eb3a0b",
+    "extensions/forge/src/form.rs": "6592a138ea68e74d498db74a76e41fda6e3015655a5d415f875d5217300b63e5",
+    "extensions/forge/src/lib.rs": "027a4297c23d83a64c45345bb651305f23864cd5304f775a783c8607055cd319",
+    "extensions/forge/src/model.rs": "0deef0c26045b1f40c2fe2b3075616be041185f65a8daccc3d73ae2bbbd63df8",
+    "extensions/forge/src/multipart.rs": "b10eaab34923cc2e791de56bb601159004c42e0d35a9ad256c8604338546168a",
+    "extensions/forge/src/parameters.rs": "9b75ec2abe9c9bcbb0759df8aac392920cd1af17245ba35b86d18c3a577c9995",
+    "extensions/forge/src/resolver.rs": "0688c846c102e2e66ea06f60dfd3d93a92020c1a9e0bba30b4274ed487cff9af",
+    "extensions/forge/src/runtime.rs": "fc3e4f80a01e4e069eff9a2cae369f70e8ac79518268310a65912977f43fba05",
+    "extensions/forge/src/schema.rs": "8e60cbc585559c4e1137ed889af2cb83933f4ab5f80e40343bae08e6a30517ba",
+    "extensions/forge/src/servers.rs": "4fbbd7f50f0267730783081037581952a5c63e19ceb259a8fb4f7327c6cf4db7"
+  },
+  "verification_source_sha256": {
+    "extensions/forge/probe_cli.py": "53224fb8cb63f351fe0fbfc21e24a5c794e1012c9568dd929af6c65fbd9bdef0",
+    "extensions/forge/tests/adapters.rs": "b07c231020d7e69351099baf2561f97ef1f6f0791e71a45de55db6ded032d1f7",
+    "extensions/forge/tests/artifacts.rs": "22b52a38ceb2ff15056b1703c7a846c6dce324f8f1b04ba536b22316287024fe",
+    "extensions/forge/tests/catalog.rs": "09632feee1d363fcae5d757a46d24d8ebbfeab6e8cffcf1cde6419e22a8f76fd",
+    "extensions/forge/tests/composition_sdk.rs": "6298870f3ae70436b728195ba760f9fcb9b3bd6f43a521bae0d9eb4511f3de44",
+    "extensions/forge/tests/consumer.rs": "ac9589a2dec7425cd0622728fcf87b45cc191d6e87cd1ddcb7b93bca40740218",
+    "extensions/forge/tests/fixtures/composition_consumer.rs": "6decba6df331a5484b1a1bf68a899f77d5bcaa3959e99b55a154f617a28571cb",
+    "extensions/forge/tests/fixtures/composition_openapi.json": "26892689250e6db7624f4fb62a2d6abf78d6173360edfc09c0eb754efa23e5db",
+    "extensions/forge/tests/fixtures/conditional_consumer.rs": "b3f9a912fe0a0b698e4a5e328cd04373786337dd380ccf59aeb6fb0fc3a23740",
+    "extensions/forge/tests/fixtures/conditional_openapi.json": "010260a0a1a5ba4bd06f6ba07ac378f3646fa6050930d729de758d295fc41f76",
+    "extensions/forge/tests/fixtures/form_consumer.rs": "d543f5af9f2fd1d3b7668b2dcef067293d6e9db8ec4d02d3c675ce2993a71d1c",
+    "extensions/forge/tests/fixtures/form_openapi.json": "c936ccdaa51b3197dbcc679c01adffeb1174e8ac512a012a51cb674c71265f3c",
+    "extensions/forge/tests/fixtures/http_consumer.rs": "745c7e66096c2a7554449f33b8896a71c92a48ea029508293c22b8e3fb7b3083",
+    "extensions/forge/tests/fixtures/multipart_consumer.rs": "98dd5287a4e74f935df45cbd0bee6d9bdae6bf7d26e8aa1971c0521940f269e6",
+    "extensions/forge/tests/fixtures/multipart_openapi.json": "86a9cfb256e0d411b8ee5bfab5540a41d39d26601c44ae85258f5f9f1a4287fd",
+    "extensions/forge/tests/fixtures/openapi32.json": "47ad8cd930bfc2f97d144974c426427739a64e5238536ee54eac2c722d48877c",
+    "extensions/forge/tests/fixtures/openapi32_consumer.rs": "39c0e68073af1e3f2bcfaf49898ede6f70353a7b9cfdc552af84c23b36b97faf",
+    "extensions/forge/tests/fixtures/schema_consumer.rs": "066ccf168f9b532a23f621762a7b6c290e1cc29a0a5cd399b8852bd3e4cbf6ef",
+    "extensions/forge/tests/fixtures/schema_openapi.json": "a4ab366a34bc19f2e33bf1c0ae253878f0260d65ef6e3fbe646068e3f2a13d44",
+    "extensions/forge/tests/fixtures/text_consumer.rs": "88de03fff8b0295bb426c69076ecb14ab56d99030552b8a7d3e365cb99fa278b",
+    "extensions/forge/tests/fixtures/text_openapi.json": "eee82f050941121e2e72cfcb1cea9483a8283334c91470ba6c7e9fc96fd267b9",
+    "extensions/forge/tests/form_body.rs": "cfb4df465815567eed15a7e31ec195d5f259d73c81c79ddfa12f7f1ea4cb29cd",
+    "extensions/forge/tests/generated_sdk.rs": "54d64dfe597a9a2adc32512f3cb8655ab136cded8dd80224318bd83752da8a81",
+    "extensions/forge/tests/http_binding.rs": "155b3d641e138b9248d5ceff37252731cc0b03ca959fde0f04c2f0649b1ce71d",
+    "extensions/forge/tests/local_catalog.rs": "4cfe10e78880ed3cde4d7524ef6834ee80e6ad1418f43a972642b0fc8b42bbaf",
+    "extensions/forge/tests/multipart_body.rs": "a217014a2e1e79a77d8818a1ed85fb452de07a79592b2c9c30d8f9c5a98d4a75",
+    "extensions/forge/tests/openapi32.rs": "89afa97bc12da7d9c2669431f935d7ebfd6d59526c0b43786c627db251b29076",
+    "extensions/forge/tests/parameter_styles.rs": "cf33ebbbc7d01f1bb24cccbc45de214a83e098864ad135ffc2395abd5ea99387",
+    "extensions/forge/tests/resolver.rs": "f25d0ac4b051def1c3d64dce6192126c4df81f83fe406a7da2fb78293f10a1d3",
+    "extensions/forge/tests/schema_body.rs": "60ac3a690e28a5265ea00894d6a255a86a0179b30d0a81cabad0008e3c7b65d2",
+    "extensions/forge/tests/schema_graph.rs": "3aea8037fe2d36a6697f8396744c07d0dde1d57ab6a9c2d061e2eb26a95415dd",
+    "extensions/forge/tests/servers.rs": "811a22154f97a5029fe6e79cb6f90f12a74f26dce889f7ebb3b30da9eaef3315",
+    "extensions/forge/tests/text_body.rs": "58a593e3ac0da53f9c932b61a7c0ccc9b3454dfb2f3e2cb9d75564d66b7ce2c8",
+    "extensions/forge/tests/tool_http.rs": "c6be573a1e6e00f692a285c0ed47a6f70ba83e1e8f49af1eff95f99bce2147eb",
+    "extensions/forge-workers/Cargo.lock": "6259c5bd339290ba68ffcaa5967ad29d53fedd7ff86e76baaf424834f96ea181",
+    "extensions/forge-workers/Cargo.toml": "dda91a743c6fef4cfb6fc996bf1cc9ea34ca3adc2d46e1418e7569868573a8ff",
+    "extensions/forge-workers/build.py": "b8b7ee0921d03980a4fdcc6929954fd78d07f435dbffec4ecbd0981ee8290dfd",
+    "extensions/forge-workers/probe.py": "b4a660728ba11dd46bc8f45c3c7f4e28b9562a8a5ce743d66948101f3c29acdf",
+    "extensions/forge-workers/src/main.rs": "17913cdeb7f7cb030c055074d2ed0e42649b51f7a0f0943985070853a8a1e18f",
+    "extensions/forge-workers/wrangler.toml": "5cb88ed1f934321e43c83396e9a2bffe57845a0d135aeafbe34e43d7b33d4e4e"
+  },
+  "worker_bundle_sha256": {
+    "extensions/forge-workers/build/.gitignore": "684888c0ebb17f374298b65ee2807526c066094c701bcc7ebbe1c1095f494fc1",
+    "extensions/forge-workers/build/index.js": "9a792321c9998771922e1376af65020828a1e619f1ef327bbdc4dcc99037a9f6",
+    "extensions/forge-workers/build/index_bg.wasm": "5d8bf071afc0063b18e2824496fed0d343d133a12cdbbced52a8467f9c484679",
+    "extensions/forge-workers/build/package.json": "19488dedfce2a81cfb01780078ebbf4627620ef6921a2c7df4c186f305546867",
+    "extensions/forge-workers/build/worker/shim.mjs": "ac99177861405a6046923cbacabbd6adfa1853a56d0c679b9f5e09097c2f4728"
+  },
+  "cases": [
+    {
+      "name": "github",
+      "source_sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+      "independent_document_validation": {
+        "name": "github",
+        "source_sha256": "017cc3837417c6ddb3fab78bbb5491e27c0edbaa6ff5053c6436265ced67ad81",
+        "validator": "0.9.0",
+        "status": "passed",
+        "elapsed_ms": 37220,
+        "package": "openapi-spec-validator",
+        "execution_id": "01a0f01a-cc6d-7e30-b58a-bbefbd9043ec",
+        "terminal": {
+          "status": "completed",
+          "exit_code": 0
+        }
+      },
+      "before_graph": {
+        "artifact_compilation": {
+          "elapsed_ms": 3420,
+          "error": "schema CodeScanningAlertLinkedPullRequestsItemsLabelsItemsArchivedBy: allOf typed generation currently requires object intersections",
+          "status": "failed"
+        },
+        "parse": {
+          "elapsed_ms": 44,
+          "openapi": "3.1.0",
+          "path_operations": 1231,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "resolution": {
+          "elapsed_ms": 351,
+          "operations": 1231,
+          "resolved_json_bytes": 21336998,
+          "schemas": 973,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof",
+        "auditor_sha256": "5560e0625a0e88c8f5a21c0fb7976b6b40df4a52d5124e48c5a3f9ca1fb4cc2a",
+        "generated_sdk_build": {
+          "status": "not_run"
+        },
+        "generated_sdk_package": {
+          "status": "not_run"
+        },
+        "http_execution": {
+          "status": "not_run"
+        },
+        "execution_id": "01a0f02a-eb7a-7742-bac3-a06a82004902",
+        "terminal": {
+          "status": "failed",
+          "exit_code": 1
+        }
+      },
+      "with_graph": {
+        "artifact_compilation": {
+          "elapsed_ms": 411,
+          "error": "schema IssueLabelsItemsVariant2ArchivedBy: allOf typed generation currently requires object intersections",
+          "status": "failed"
+        },
+        "parse": {
+          "elapsed_ms": 33,
+          "openapi": "3.1.0",
+          "path_operations": 1231,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_run"
+        },
+        "resolution": {
+          "elapsed_ms": 137,
+          "operation_json_bytes": 2201436,
+          "operations": 1231,
+          "resolved_json_bytes": 4787259,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 2585709,
+          "schemas": 973,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof",
+        "generated_sdk_build": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "generated_sdk_package": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "http_execution": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "auditor_sha256": "6f0ad12472b5344d86dba50b1e1ae83ecc2bc1a47c50fb70cc159e9ad24d8c18",
+        "execution_id": "01a0f05e-5622-7ba1-a912-30e9bf462105",
+        "terminal": {
+          "status": "failed",
+          "exit_code": 1
+        }
+      },
+      "comparison": {
+        "resolved_json_bytes_before": 21336998,
+        "resolved_json_bytes_after": 4787259,
+        "reduction_percent": 77.5636,
+        "same_operation_count": true,
+        "root_component_schemas_equal_input": true
+      }
+    },
+    {
+      "name": "cloudflare",
+      "source_sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+      "independent_document_validation": {
+        "name": "cloudflare",
+        "source_sha256": "26c0dc5f22395fca53641fba751d196fa235ba82f717fb303294c60a571aa5ee",
+        "validator": "0.9.0",
+        "status": "failed",
+        "error": "'type' is not one of ['name', 'created_on', 'modified_on']",
+        "instance_path": [],
+        "elapsed_ms": 24941,
+        "package": "openapi-spec-validator",
+        "independently_located_schema_pointer": "/components/schemas/dns-settings_order",
+        "source_unchanged": true,
+        "conformance_control": false,
+        "execution_id": "01a0f01a-cb31-7e30-8420-0e8e29e8cfac",
+        "terminal": {
+          "status": "failed",
+          "exit_code": 1
+        }
+      },
+      "before_graph": {
+        "artifact_compilation": {
+          "elapsed_ms": 24818,
+          "error": "schema AaaApiResponseCommonFailure3Errors: allOf typed generation currently requires object intersections",
+          "status": "failed"
+        },
+        "parse": {
+          "elapsed_ms": 151,
+          "openapi": "3.0.3",
+          "path_operations": 3627,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "resolution": {
+          "elapsed_ms": 1156,
+          "operations": 3627,
+          "resolved_json_bytes": 39975203,
+          "schemas": 6948,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof",
+        "auditor_sha256": "5560e0625a0e88c8f5a21c0fb7976b6b40df4a52d5124e48c5a3f9ca1fb4cc2a",
+        "generated_sdk_build": {
+          "status": "not_run"
+        },
+        "generated_sdk_package": {
+          "status": "not_run"
+        },
+        "http_execution": {
+          "status": "not_run"
+        },
+        "execution_id": "01a0f02a-eb7a-7742-bac3-a07e67fd0cde",
+        "terminal": {
+          "status": "failed",
+          "exit_code": 1
+        }
+      },
+      "with_graph": {
+        "artifact_compilation": {
+          "elapsed_ms": 2016,
+          "error": "schema AaaApiResponseCommonFailure3Errors: allOf typed generation currently requires object intersections",
+          "status": "failed"
+        },
+        "parse": {
+          "elapsed_ms": 64,
+          "openapi": "3.0.3",
+          "path_operations": 3627,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_run"
+        },
+        "resolution": {
+          "elapsed_ms": 330,
+          "operation_json_bytes": 8822242,
+          "operations": 3627,
+          "resolved_json_bytes": 12123776,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 3301410,
+          "schemas": 6948,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof",
+        "generated_sdk_build": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "generated_sdk_package": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "http_execution": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "auditor_sha256": "6f0ad12472b5344d86dba50b1e1ae83ecc2bc1a47c50fb70cc159e9ad24d8c18",
+        "execution_id": "01a0f05e-569f-7163-852d-ad63957745b0",
+        "terminal": {
+          "status": "failed",
+          "exit_code": 1
+        }
+      },
+      "comparison": {
+        "resolved_json_bytes_before": 39975203,
+        "resolved_json_bytes_after": 12123776,
+        "reduction_percent": 69.6718,
+        "same_operation_count": true,
+        "root_component_schemas_equal_input": true
+      }
+    },
+    {
+      "name": "stripe",
+      "source_sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+      "independent_document_validation": {
+        "name": "stripe",
+        "source_sha256": "9119e72c7ff8ad142e94f7efa9cf49d8e6eec69df3592e17e8fba15099726ed7",
+        "validator": "0.9.0",
+        "status": "passed",
+        "elapsed_ms": 8012,
+        "package": "openapi-spec-validator",
+        "execution_id": "01a0f01a-cb3c-7c51-ab05-0737640de36c",
+        "terminal": {
+          "status": "completed",
+          "exit_code": 0
+        }
+      },
+      "before_graph": {
+        "artifact_compilation": {
+          "status": "aborted",
+          "reason": "EXECUTION_MEMORY_BUDGET",
+          "last_observed_stage": "artifact_compilation"
+        },
+        "parse": {
+          "elapsed_ms": 24,
+          "openapi": "3.0.0",
+          "path_operations": 644,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "resolution": {
+          "elapsed_ms": 41678,
+          "operations": 644,
+          "resolved_json_bytes": 1144279197,
+          "schemas": 1701,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof",
+        "auditor_sha256": "5560e0625a0e88c8f5a21c0fb7976b6b40df4a52d5124e48c5a3f9ca1fb4cc2a",
+        "generated_sdk_build": {
+          "status": "not_run"
+        },
+        "generated_sdk_package": {
+          "status": "not_run"
+        },
+        "http_execution": {
+          "status": "not_run"
+        },
+        "execution_id": "01a0f02a-eb7a-7742-bac3-a080252d6094",
+        "terminal": {
+          "status": "canceled",
+          "error_code": "EXECUTION_MEMORY_BUDGET"
+        }
+      },
+      "with_graph": {
+        "artifact_compilation": {
+          "elapsed_ms": 437,
+          "error": "unsupported schema shape {\"anyOf\":[{\"$ref\":\"#/components/schemas/account_business_profile\"}],\"description\":\"Business information about the account.\",\"nullable\":true}",
+          "status": "failed"
+        },
+        "parse": {
+          "elapsed_ms": 18,
+          "openapi": "3.0.0",
+          "path_operations": 644,
+          "status": "passed"
+        },
+        "publication": {
+          "status": "not_run"
+        },
+        "resolution": {
+          "elapsed_ms": 104,
+          "operation_json_bytes": 2555817,
+          "operations": 644,
+          "resolved_json_bytes": 4620126,
+          "root_component_schemas_equal_input": true,
+          "schema_json_bytes": 2064202,
+          "schemas": 1701,
+          "status": "passed"
+        },
+        "scope": "published schema resolution and artifact compilation; no HTTP behavior proof",
+        "generated_sdk_build": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "generated_sdk_package": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "http_execution": {
+          "status": "not_run",
+          "reason": "artifact compilation did not complete"
+        },
+        "auditor_sha256": "6f0ad12472b5344d86dba50b1e1ae83ecc2bc1a47c50fb70cc159e9ad24d8c18",
+        "execution_id": "01a0f05e-572c-7182-8bf0-9da67756bbab",
+        "terminal": {
+          "status": "failed",
+          "exit_code": 1
+        }
+      },
+      "comparison": {
+        "resolved_json_bytes_before": 1144279197,
+        "resolved_json_bytes_after": 4620126,
+        "reduction_percent": 99.5962,
+        "same_operation_count": true,
+        "root_component_schemas_equal_input": true
+      }
+    }
+  ],
+  "verification": {
+    "integrated_tests": 83,
+    "integrated_quality_gate": "01a0f054-72db-7050-98a0-7a192c41226a",
+    "integrated_checks": [
+      "all-feature tests",
+      "Clippy all targets and features with warnings denied",
+      "format check",
+      "each native and wasm feature in isolation",
+      "rustdoc with warnings denied"
+    ],
+    "final_format_and_clippy": "01a0f05e-e02d-7292-b485-62a3336271c8",
+    "independent_fixture_and_instance_validation": "01a0f051-195f-7b83-a7de-c7abbc6929da",
+    "tool_catalog_reference_to_http": "01a0f058-be22-7341-a9e8-2007df016a42",
+    "native_cli_mcp_probe": "01a0f058-be22-7341-a9e8-201ae7ebf8a6",
+    "emscripten_build": "01a0f053-0c06-7f61-b8e4-9d9e445f613c",
+    "live_worker_probe": "01a0f055-e9db-7d00-bf80-9823b63db756",
+    "owned_worker_server": "01a0f055-18f2-7d80-ab38-e1526ddfdf4d",
+    "owned_worker_final_state": "canceled; listener absent",
+    "compatibility_refresh": "01a0f05e-e02d-7292-b485-62980cdbf556",
+    "compatibility_cases_passed": 19,
+    "mutation_and_exact_restore": "01a0f05b-3039-70c3-99f1-16070fad6abc",
+    "mutation_results": [
+      {
+        "change": "Copy referenced definitions into each use",
+        "caught_by": "shared_schemas_are_stored_once_and_operations_keep_references",
+        "observed_mutated_bytes": 548579,
+        "restored_exactly": true
+      },
+      {
+        "change": "Disable metadata reference lookup",
+        "caught_by": "referenced_multipart_metadata_and_headers_reach_exact_wire_bytes",
+        "restored_exactly": true
+      }
+    ],
+    "post_restore": "All six graph regressions and seven generated package/HTTP consumer tests passed.",
+    "source_preservation": "973 GitHub, 6948 Cloudflare, and 1701 Stripe component schemas compare equal to their respective original input definitions."
+  },
+  "remaining_gaps": [
+    "GitHub and Cloudflare non-object allOf generation",
+    "Stripe nullable anyOf generation",
+    "Full vendor generated SDK build/package and HTTP execution remain unrun",
+    "General schema instance validation and full OpenAPI conformance remain unproven"
+  ],
+  "notes": [
+    "Cloudflare input validation still fails the original default outside enum constraint; no vendor document was patched.",
+    "The HTTP fixture explicitly resets accepted sockets to blocking mode after an observed macOS WouldBlock race.",
+    "The graph changes the experimental binder API: callers now supply the owning schema table. Generated requests may use a named body type where eager expansion previously produced JsonValue."
+  ]
+}

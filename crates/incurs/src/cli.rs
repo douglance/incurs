@@ -61,7 +61,7 @@ impl Runtime {
 
     /// Creates a runtime from the current process environment.
     pub fn process(display_name: impl Into<String>, human: bool) -> Self {
-        Self::new(display_name, std::env::vars().collect(), human)
+        Self::new(display_name, crate::process_env(), human)
     }
 }
 
@@ -1501,7 +1501,7 @@ impl Cli {
             }
         };
 
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
 
         // Resolve effective format
         let format = if builtin.format_explicit {
@@ -1568,7 +1568,7 @@ impl Cli {
             .collect();
 
         // --- Step 10: Build env source ---
-        let env_source: std::collections::HashMap<String, String> = std::env::vars().collect();
+        let env_source: std::collections::HashMap<String, String> = crate::process_env();
 
         // --- Step 10b: Emit deprecation warnings (human/TTY mode only) ---
         if human {
@@ -1988,6 +1988,26 @@ impl Cli {
                 .join("\n");
             wln!(&output);
             return Ok(None);
+        }
+
+        // These built-ins read and write agent configuration on the local
+        // machine. A wasm32 host such as a Cloudflare Worker has no such
+        // machine, and some of the calls they make panic there.
+        #[cfg(target_arch = "wasm32")]
+        for name in ["plugin", "skills", "mcp"] {
+            if let Some(index) = self.builtin_command_index(&builtin.rest, name)
+                && builtin.rest.len() > index + 1
+                && !builtin.help
+            {
+                wln!(&format_human_error(
+                    "LOCAL_INSTALL_UNAVAILABLE",
+                    &format!(
+                        "`{name} {}` installs into this machine's agent configuration, which is not available on wasm32",
+                        builtin.rest[index + 1]
+                    ),
+                ));
+                return Ok(Some(1));
+            }
         }
 
         if let Some(index) = self.builtin_command_index(&builtin.rest, "plugin") {
@@ -2721,7 +2741,7 @@ impl Cli {
             }
         };
 
-        let start = std::time::Instant::now();
+        let start = web_time::Instant::now();
 
         // Resolve effective format
         let format = if builtin.format_explicit {
@@ -4852,7 +4872,7 @@ fn format_config_schema(
 /// Options for streaming output handling.
 struct StreamingOptions<'a> {
     path: &'a str,
-    start: std::time::Instant,
+    start: web_time::Instant,
     format: Format,
     format_explicit: bool,
     human: bool,

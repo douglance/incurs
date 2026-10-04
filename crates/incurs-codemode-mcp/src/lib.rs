@@ -46,6 +46,21 @@ pub enum ExecutionProjection {
     Reduced,
 }
 
+/// Host-owned shaping of an execution before it crosses to the client.
+///
+/// A host with its own notion of how much detail a caller wants installs one
+/// of these instead of choosing a fixed [`ExecutionProjection`]. It sees the
+/// tool's arguments, so a per-call option the host declares reaches it.
+pub trait ExecutionProjector: Send + Sync {
+    /// Argument properties added to every tool that returns execution state.
+    fn arguments(&self) -> Map<String, Value> {
+        Map::new()
+    }
+
+    /// Shapes one serialized execution for the client.
+    fn project(&self, tool: &str, arguments: &JsonObject, execution: Value) -> Value;
+}
+
 /// Reusable MCP server handler for the Code Mode lifecycle.
 #[derive(Clone)]
 pub struct CodeModeMcpServer {
@@ -53,6 +68,8 @@ pub struct CodeModeMcpServer {
     tools: Arc<Vec<Tool>>,
     standards: McpStandardSet,
     projection: ExecutionProjection,
+    /// Host shaping that takes precedence over `projection` when present.
+    projector: Option<Arc<dyn ExecutionProjector>>,
     /// What this server calls itself during `initialize`.
     ///
     /// A host built on this facade is a product in its own right, and an agent
@@ -123,6 +140,7 @@ impl CodeModeMcpServer {
             tools: Arc::new(definitions()),
             standards,
             projection: ExecutionProjection::default(),
+            projector: None,
             identity: Implementation::new("incurs-codemode", env!("CARGO_PKG_VERSION")),
         }
     }
@@ -134,6 +152,18 @@ impl CodeModeMcpServer {
     #[must_use]
     pub fn with_projection(mut self, projection: ExecutionProjection) -> Self {
         self.projection = projection;
+        self
+    }
+
+    /// Hands execution shaping to the host.
+    ///
+    /// Takes precedence over [`Self::with_projection`], and declares the
+    /// projector's argument properties on every tool that returns execution
+    /// state so a strict client can send them.
+    #[must_use]
+    pub fn with_projector(mut self, projector: Arc<dyn ExecutionProjector>) -> Self {
+        self.tools = Arc::new(with_arguments(definitions(), &projector.arguments()));
+        self.projector = Some(projector);
         self
     }
 
@@ -367,24 +397,22 @@ impl ServerHandler for CodeModeMcpServer {
                 .and_then(to_value),
             _ => return Err(ErrorData::method_not_found::<CallToolRequestMethod>()),
         };
-        // Reduction applies only to the lifecycle tools that carry execution
+        // Shaping applies only to the lifecycle tools that carry execution
         // state. A retrieved artifact is exactly what the program asked for and
         // a search result is already bounded, so neither is trimmed.
-        let reduce = self.projection == ExecutionProjection::Reduced
-            && matches!(
-                name,
-                "codemode_execute" | "codemode_decide" | "codemode_cancel"
-            )
-            || (self.projection == ExecutionProjection::Reduced
-                && name == "codemode_execution"
-                && optional_string(&arguments, "artifact_id")?.is_none());
+        let carries_execution = matches!(
+            name,
+            "codemode_execute" | "codemode_decide" | "codemode_cancel"
+        ) || (name == "codemode_execution"
+            && optional_string(&arguments, "artifact_id")?.is_none());
 
         Ok(match result {
-            Ok(value) => CallToolResult::structured(if reduce {
-                reduce_execution(value)
-            } else {
-                value
+            Ok(value) if carries_execution => CallToolResult::structured(match &self.projector {
+                Some(projector) => projector.project(name, &arguments, value),
+                None if self.projection == ExecutionProjection::Reduced => reduce_execution(value),
+                None => value,
             }),
+            Ok(value) => CallToolResult::structured(value),
             Err(error) => CallToolResult::structured_error(json!({ "error": error })),
         }
         .into())
@@ -463,6 +491,32 @@ fn definitions() -> Vec<Tool> {
             }),
         ),
     ]
+}
+
+/// Declares host argument properties on every tool that returns execution state.
+///
+/// A lifecycle property of the same name keeps its own definition.
+fn with_arguments(tools: Vec<Tool>, extra: &Map<String, Value>) -> Vec<Tool> {
+    if extra.is_empty() {
+        return tools;
+    }
+    tools
+        .into_iter()
+        .map(|mut tool| {
+            if tool.name != "codemode_search" {
+                let mut schema = tool.input_schema.as_ref().clone();
+                if let Some(Value::Object(properties)) = schema.get_mut("properties") {
+                    for (key, value) in extra {
+                        properties
+                            .entry(key.clone())
+                            .or_insert_with(|| value.clone());
+                    }
+                }
+                tool.input_schema = Arc::new(schema);
+            }
+            tool
+        })
+        .collect()
 }
 
 fn tool(name: &'static str, description: &'static str, schema: Value) -> Tool {
@@ -1035,6 +1089,296 @@ mod tests {
 
         client.cancel().await.unwrap();
         handle.abort();
+    }
+
+    /// Keeps only the id, and echoes the caller's `detail` argument back.
+    struct DetailProjector;
+
+    impl ExecutionProjector for DetailProjector {
+        fn arguments(&self) -> Map<String, Value> {
+            let mut properties = Map::new();
+            properties.insert("detail".to_string(), json!({"type": "string"}));
+            properties
+        }
+
+        fn project(&self, tool: &str, arguments: &JsonObject, execution: Value) -> Value {
+            json!({
+                "id": execution["id"],
+                "tool": tool,
+                "detail": arguments.get("detail").cloned().unwrap_or(Value::Null),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_host_projector_shapes_every_execution_response() {
+        let server = CodeModeMcpServer::new(local_service())
+            .with_projection(ExecutionProjection::Reduced)
+            .with_projector(Arc::new(DetailProjector));
+        for tool in server.tools() {
+            let declared = tool.input_schema["properties"].get("detail").is_some();
+            assert_eq!(
+                declared,
+                tool.name != "codemode_search",
+                "{} declares the host argument only when it returns execution state",
+                tool.name
+            );
+        }
+        let (client, handle) = connected(server).await;
+
+        let executed = client
+            .call_tool(call(
+                "codemode_execute",
+                json!({"code": "return 1", "detail": "terse"}),
+            ))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        let id = executed["id"].as_str().unwrap().to_string();
+        assert_eq!(
+            executed,
+            json!({"id": id, "tool": "codemode_execute", "detail": "terse"})
+        );
+
+        let read = client
+            .call_tool(call("codemode_execution", json!({"id": id})))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert_eq!(
+            read,
+            json!({"id": id, "tool": "codemode_execution", "detail": null})
+        );
+
+        let searched = client
+            .call_tool(call("codemode_search", json!({"query": "x"})))
+            .await
+            .unwrap()
+            .structured_content
+            .unwrap();
+        assert!(
+            searched.get("tool").is_none(),
+            "a search result is not an execution and must not be projected"
+        );
+
+        client.cancel().await.unwrap();
+        handle.abort();
+    }
+
+    struct ProjectionService;
+
+    fn projected_state(id: &str) -> ExecutionState {
+        ExecutionState {
+            id: id.to_string(),
+            code: "stored program".to_string(),
+            status: incurs_codemode::ExecutionStatus::Completed,
+            log: vec![],
+            result: Some(json!({"retained": true})),
+            error: None,
+            logs: vec![],
+            connectors: vec![],
+            capabilities: None,
+            events: vec![],
+            created_at: 1,
+            updated_at: 2,
+        }
+    }
+
+    fn lifecycle_result(id: &str, route: &str) -> Result<ExecutionState, String> {
+        if id == "missing" {
+            Err("fixture failure".to_string())
+        } else {
+            assert_eq!(id, "execution-input");
+            Ok(projected_state(route))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CodeModeService for ProjectionService {
+        async fn search(&self, query: String) -> Result<SearchOutput, String> {
+            assert_eq!(query, "fixture");
+            Ok(SearchOutput {
+                results: vec![],
+                total: 0,
+                truncated: false,
+            })
+        }
+
+        async fn execute(
+            &self,
+            code: String,
+            _options: CodeModeRunOptions,
+        ) -> Result<ExecutionState, String> {
+            lifecycle_result(&code, "execute")
+        }
+
+        async fn execution(&self, id: String) -> Result<ExecutionState, String> {
+            lifecycle_result(&id, "read")
+        }
+
+        async fn artifact(&self, id: String, artifact: String) -> Result<Value, String> {
+            assert_eq!(id, "execution-input");
+            assert_eq!(artifact, "artifact-input");
+            Ok(json!({"id": "artifact", "code": "literal", "log": [1], "events": [2]}))
+        }
+
+        async fn approve(
+            &self,
+            id: String,
+            seq: u64,
+            _options: CodeModeRunOptions,
+        ) -> Result<ExecutionState, String> {
+            assert_eq!(seq, 17);
+            lifecycle_result(&id, "approve")
+        }
+
+        async fn reject(&self, id: String, seq: u64) -> Result<ExecutionState, String> {
+            assert_eq!(seq, 17);
+            lifecycle_result(&id, "reject")
+        }
+
+        async fn cancel(&self, id: String) -> Result<ExecutionState, String> {
+            lifecycle_result(&id, "cancel")
+        }
+    }
+
+    #[tokio::test]
+    async fn host_projection_covers_lifecycle_bypasses_and_errors_in_both_builder_orders() {
+        for projector_last in [false, true] {
+            let server = CodeModeMcpServer::new(Arc::new(ProjectionService));
+            let server = if projector_last {
+                server
+                    .with_projection(ExecutionProjection::Reduced)
+                    .with_projector(Arc::new(DetailProjector))
+            } else {
+                server
+                    .with_projector(Arc::new(DetailProjector))
+                    .with_projection(ExecutionProjection::Reduced)
+            };
+            let (client, handle) = connected(server).await;
+            let cases = [
+                (
+                    "codemode_execute",
+                    json!({"code": "execution-input"}),
+                    "execute",
+                ),
+                (
+                    "codemode_execution",
+                    json!({"id": "execution-input"}),
+                    "read",
+                ),
+                (
+                    "codemode_decide",
+                    json!({"id": "execution-input", "seq": 17, "decision": "approve"}),
+                    "approve",
+                ),
+                (
+                    "codemode_decide",
+                    json!({"id": "execution-input", "seq": 17, "decision": "reject"}),
+                    "reject",
+                ),
+                (
+                    "codemode_cancel",
+                    json!({"id": "execution-input"}),
+                    "cancel",
+                ),
+            ];
+            for (tool, mut arguments, route) in cases {
+                arguments["detail"] = json!("complete");
+                let response = client
+                    .call_tool(call(tool, arguments.clone()))
+                    .await
+                    .unwrap();
+                assert_ne!(response.is_error, Some(true));
+                assert_eq!(
+                    response.structured_content.unwrap(),
+                    json!({"id": route, "tool": tool, "detail": "complete"})
+                );
+                if tool == "codemode_execute" {
+                    arguments["code"] = json!("missing");
+                } else {
+                    arguments["id"] = json!("missing");
+                }
+                let failed = client.call_tool(call(tool, arguments)).await.unwrap();
+                assert_eq!(failed.is_error, Some(true));
+                assert_eq!(
+                    failed.structured_content.unwrap(),
+                    json!({"error": "fixture failure"})
+                );
+            }
+            let artifact = client.call_tool(call("codemode_execution",
+                json!({"id": "execution-input", "artifact_id": "artifact-input", "detail": "complete"})))
+                .await.unwrap();
+            assert_eq!(
+                artifact.structured_content.unwrap(),
+                json!({"id": "artifact", "code": "literal", "log": [1], "events": [2]})
+            );
+            let search = client
+                .call_tool(call("codemode_search", json!({"query": "fixture"})))
+                .await
+                .unwrap();
+            assert_eq!(
+                search.structured_content.unwrap(),
+                json!({"results": [], "total": 0, "truncated": false})
+            );
+            client.cancel().await.unwrap();
+            handle.await.unwrap();
+        }
+    }
+
+    struct CollisionProjector;
+
+    impl ExecutionProjector for CollisionProjector {
+        fn arguments(&self) -> Map<String, Value> {
+            ["code", "id", "artifact_id", "seq", "decision", "other"]
+                .into_iter()
+                .map(|key| (key.to_string(), json!({"type": "boolean"})))
+                .collect()
+        }
+
+        fn project(&self, _tool: &str, _arguments: &JsonObject, execution: Value) -> Value {
+            execution
+        }
+    }
+
+    #[test]
+    fn projector_properties_preserve_lifecycle_contracts_and_replacement_clears_old_properties() {
+        let server = CodeModeMcpServer::new(Arc::new(ProjectionService))
+            .with_projector(Arc::new(DetailProjector))
+            .with_projector(Arc::new(CollisionProjector));
+        let expected = [
+            (json!({"query": {"type": "string"}}), json!(["query"])),
+            (json!({"code": {"type": "string"}}), json!(["code"])),
+            (
+                json!({"id": {"type": "string"}, "artifact_id": {"type": "string"}}),
+                json!(["id"]),
+            ),
+            (
+                json!({
+                    "id": {"type": "string"},
+                    "seq": {"type": "integer", "minimum": 0},
+                    "decision": {"type": "string", "enum": ["approve", "reject"]}
+                }),
+                json!(["id", "seq", "decision"]),
+            ),
+            (json!({"id": {"type": "string"}}), json!(["id"])),
+        ];
+        for (tool, (expected_properties, required)) in server.tools().iter().zip(expected) {
+            assert_eq!(tool.input_schema["required"], required);
+            assert_eq!(tool.input_schema["additionalProperties"], json!(false));
+            let properties = tool.input_schema["properties"].as_object().unwrap();
+            assert!(!properties.contains_key("detail"));
+            for (name, schema) in expected_properties.as_object().unwrap() {
+                assert_eq!(properties.get(name), Some(schema), "{}: {name}", tool.name);
+            }
+            if tool.name == "codemode_search" {
+                assert_eq!(tool.input_schema["properties"], expected_properties);
+            } else {
+                assert_eq!(properties.get("other"), Some(&json!({"type": "boolean"})));
+            }
+        }
     }
 
     #[tokio::test]

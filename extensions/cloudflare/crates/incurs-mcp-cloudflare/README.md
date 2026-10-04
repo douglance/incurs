@@ -8,6 +8,38 @@ The Worker converts its request into `McpHttpRequest`, applies its own auth,
 calls `handle_mcp_request`, and converts the returned `McpHttpResponse` back
 into a Worker response.
 
+## Outbound HTTP
+
+incurs sends outbound HTTP through `incurs::outbound::HttpClient`. Native
+builds default to a `reqwest` client; wasm32 builds have no default, and a
+call made without a client fails with the coded `HTTP_CLIENT_REQUIRED` error.
+
+`WorkersHttpClient` (wasm32 only) implements that contract with
+`worker::Fetch` and streams each response body, so Streamable HTTP and legacy
+SSE responses are read incrementally. Pass it wherever incurs calls out:
+
+```rust,ignore
+use std::sync::Arc;
+
+use incurs::agent_plugin_runtime::AgentPluginRuntimeOptions;
+use incurs::mcp::McpRemoteOptions;
+use incurs::openapi::OpenApiSource;
+use incurs_mcp_cloudflare::WorkersHttpClient;
+
+let client: incurs::outbound::SharedHttpClient = Arc::new(WorkersHttpClient::new());
+let remote = McpRemoteOptions { http_client: Some(client.clone()), ..Default::default() };
+let plugins = AgentPluginRuntimeOptions { http_client: Some(client.clone()), ..Default::default() };
+let spec = OpenApiSource::Url { url: "https://example.com/openapi.json".into(), client };
+```
+
+`WorkersHttpClient::new()` follows redirects, the `fetch` default.
+`WorkersHttpClient::manual_redirects()` returns redirect responses unchanged,
+so configured credentials are never replayed to a redirect target.
+
+Using this client keeps `reqwest` out of the Worker, which matters: `reqwest`
+and `worker` link different `wasm-streams` versions that export the same
+symbols, and the Worker fails to link when both are present.
+
 ## Protocol coverage
 
 This adapter implements the **legacy MCP lifecycle only**: `initialize`, `ping`,

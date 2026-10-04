@@ -1,0 +1,207 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Advanced compositions",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/compose": {
+      "post": {
+        "operationId": "submit",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Bounded"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Bounded": {
+        "allOf": [
+          {
+            "type": "integer",
+            "minimum": 1
+          },
+          {
+            "maximum": 5
+          }
+        ]
+      },
+      "PatternIntersection": {
+        "allOf": [
+          {
+            "type": "string",
+            "pattern": "^[A-Z]+$"
+          },
+          {
+            "maxLength": 3
+          }
+        ]
+      },
+      "Conflict": {
+        "allOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
+            ]
+          }
+        ]
+      },
+      "Impossible": {
+        "type": [
+          "null"
+        ],
+        "allOf": [
+          {
+            "type": "object"
+          }
+        ]
+      },
+      "AnyNumeric": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          }
+        ]
+      },
+      "PatternChoice": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^[A-Z]+$"
+          },
+          {
+            "type": "integer",
+            "multipleOf": 3
+          }
+        ]
+      },
+      "RecursiveAll": {
+        "allOf": [
+          {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "integer"
+              },
+              "next": {
+                "$ref": "#/components/schemas/RecursiveAll"
+              }
+            },
+            "required": [
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "Conditional": {
+        "allOf": [
+          {
+            "type": "object"
+          }
+        ],
+        "if": {
+          "required": [
+            "enabled"
+          ]
+        },
+        "then": {
+          "required": [
+            "value"
+          ],
+          "properties": {
+            "value": {
+              "minimum": 3
+            }
+          }
+        },
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": "integer"
+          }
+        }
+      },
+      "TupleIntersection": {
+        "allOf": [
+          {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "items": false,
+            "minItems": 2
+          }
+        ]
+      },
+      "ExactUnsigned": {
+        "allOf": [
+          {
+            "type": "integer",
+            "minimum": 18446744073709551615
+          }
+        ]
+      },
+      "Decimal": {
+        "allOf": [
+          {
+            "type": "number",
+            "multipleOf": 0.1
+          }
+        ]
+      },
+      "OpenMap": {
+        "anyOf": [
+          {
+            "required": [
+              "id"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    }
+  }
+}

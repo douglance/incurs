@@ -1,0 +1,93 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Schemas without an explicit type",
+    "version": "1"
+  },
+  "paths": {
+    "/untyped": {
+      "post": {
+        "operationId": "sendUntyped",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Loose"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "accepted"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Loose": {
+        "description": "Properties constrain objects without implying the object type.",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "Choice": {
+        "enum": [
+          "ok",
+          7
+        ]
+      },
+      "Minimum": {
+        "minimum": 2
+      },
+      "Pattern": {
+        "pattern": "^ok$"
+      },
+      "Envelope": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/Choice"
+          }
+        }
+      },
+      "Nested": {
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "properties": {
+              "n": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "n"
+            ]
+          }
+        }
+      },
+      "Annotation": {
+        "description": "No assertion keywords",
+        "examples": [
+          {
+            "type": "object",
+            "required": [
+              "annotation-data"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

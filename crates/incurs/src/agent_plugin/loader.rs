@@ -28,13 +28,37 @@ pub struct AgentPluginLoadOptions {
     pub supported_mcp_transports: BTreeSet<AgentPluginMcpTransport>,
 }
 
+/// Plugin data root that [`AgentPluginLoadOptions::default`] uses on `wasm32` targets.
+///
+/// `wasm32` targets such as Cloudflare Workers have no temporary directory, so
+/// the default data root there is this fixed absolute path. The loader never
+/// creates or reads it; it only expands `${PLUGIN_DATA}` to it. A host that
+/// persists plugin data maps this path to its own storage.
+pub const AGENT_PLUGIN_VIRTUAL_DATA_ROOT: &str = "/incurs-agent-plugin-data";
+
+/// Virtual root that [`AgentPluginFiles::new`] gives an in-memory plugin package.
+pub const AGENT_PLUGIN_VIRTUAL_ROOT: &str = "/agent-plugin";
+
 impl Default for AgentPluginLoadOptions {
+    /// Returns options that accept every MCP transport and place plugin data in
+    /// `incurs-agent-plugin-data` under the process temporary directory, or at
+    /// [`AGENT_PLUGIN_VIRTUAL_DATA_ROOT`] on `wasm32` targets.
     fn default() -> Self {
         Self {
-            plugin_data_root: std::env::temp_dir().join("incurs-agent-plugin-data"),
+            plugin_data_root: default_plugin_data_root(),
             supported_mcp_transports: AgentPluginMcpTransport::all().into_iter().collect(),
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn default_plugin_data_root() -> PathBuf {
+    std::env::temp_dir().join("incurs-agent-plugin-data")
+}
+
+#[cfg(target_arch = "wasm32")]
+fn default_plugin_data_root() -> PathBuf {
+    PathBuf::from(AGENT_PLUGIN_VIRTUAL_DATA_ROOT)
 }
 
 /// Result of attempting to load one Agent Plugin directory.
@@ -49,9 +73,15 @@ pub struct AgentPluginLoadReport {
 /// Loaded portable Agent Plugin package.
 #[derive(Debug, Clone)]
 pub struct LoadedAgentPlugin {
-    /// Filesystem-resolved plugin root.
+    /// Resolved plugin root that every other resolved path sits under.
+    ///
+    /// For [`load_agent_plugin`] this is the canonical directory on disk. For
+    /// [`load_agent_plugin_from_files`] it is the package's virtual root
+    /// ([`AgentPluginFiles::virtual_root`]), which names no real directory.
+    /// `${PLUGIN_ROOT}` expands to this path in both cases.
     pub root: PathBuf,
-    /// Filesystem-normalized client-managed writable data root.
+    /// Lexically normalized client-managed writable data root from
+    /// [`AgentPluginLoadOptions::plugin_data_root`].
     pub data_root: PathBuf,
     /// Parsed root plugin manifest.
     pub manifest: AgentPluginManifest,
@@ -114,9 +144,11 @@ pub struct LoadedAgentPluginSkill {
     pub metadata: BTreeMap<String, String>,
     /// Markdown body after frontmatter.
     pub body: String,
-    /// Filesystem-resolved `SKILL.md` path.
+    /// Resolved `SKILL.md` path under [`LoadedAgentPlugin::root`]; virtual for
+    /// an in-memory package.
     pub path: PathBuf,
-    /// Filesystem-resolved skill root directory.
+    /// Resolved skill root directory under [`LoadedAgentPlugin::root`]; virtual
+    /// for an in-memory package.
     pub root: PathBuf,
 }
 
@@ -154,7 +186,12 @@ pub enum AgentPluginMcpServer {
 pub struct AgentPluginStdioMcpServer {
     /// Configured command token before placeholder expansion.
     pub command: String,
-    /// Filesystem-resolved command path when `command` is plugin-relative.
+    /// Resolved command path under [`LoadedAgentPlugin::root`] when `command` is
+    /// plugin-relative.
+    ///
+    /// For an in-memory package this is a virtual path naming a package file. It
+    /// is reported so the binding is not lost, but it cannot be executed until a
+    /// host writes the package to a filesystem at that root.
     pub resolved_command: Option<PathBuf>,
     /// Configured argument strings before placeholder expansion.
     pub args: Vec<String>,
@@ -166,7 +203,9 @@ pub struct AgentPluginStdioMcpServer {
     pub resolved_env: BTreeMap<String, String>,
     /// Configured working directory string, or `None` when omitted.
     pub cwd: Option<String>,
-    /// Filesystem-normalized working directory after placeholder expansion.
+    /// Working directory after placeholder expansion, under
+    /// [`LoadedAgentPlugin::root`] or [`LoadedAgentPlugin::data_root`]; virtual
+    /// for a plugin-root directory of an in-memory package.
     pub resolved_cwd: PathBuf,
 }
 
@@ -203,6 +242,113 @@ pub struct AgentPluginDiagnostic {
     pub message: String,
 }
 
+/// Portable Agent Plugin package whose files are held in memory.
+///
+/// Keys are plugin-relative paths with `/` separators, such as `plugin.json`
+/// or `skills/deploy/SKILL.md`; empty and `.` segments are ignored.
+/// Directories are implicit: a directory exists when a file lies beneath it,
+/// so an empty directory cannot be represented.
+///
+/// A path that is absolute, contains a `..` segment, or contains a backslash
+/// never resolves to contents. When the loader reaches such a path, through a
+/// reference in `mcp.json` or an entry under `skills/`, it reports the same
+/// diagnostic that [`load_agent_plugin`] reports for a path escaping the root.
+///
+/// Loaded paths sit under a virtual root, [`AGENT_PLUGIN_VIRTUAL_ROOT`] unless
+/// [`AgentPluginFiles::with_virtual_root`] names another. The virtual root is
+/// never touched on disk.
+#[derive(Debug, Clone)]
+pub struct AgentPluginFiles {
+    root: PathBuf,
+    files: BTreeMap<String, Vec<u8>>,
+    unresolvable: BTreeSet<String>,
+}
+
+impl AgentPluginFiles {
+    /// Creates an empty package rooted at [`AGENT_PLUGIN_VIRTUAL_ROOT`].
+    pub fn new() -> Self {
+        Self::with_virtual_root(AGENT_PLUGIN_VIRTUAL_ROOT)
+    }
+
+    /// Creates an empty package whose loaded paths sit under `root`.
+    ///
+    /// `root` is normalized lexically and never read. It should be absolute,
+    /// because `${PLUGIN_ROOT}` expands to it in stdio server arguments and
+    /// environment values.
+    pub fn with_virtual_root(root: impl AsRef<Path>) -> Self {
+        Self {
+            root: normalize_absolute(root.as_ref()),
+            files: BTreeMap::new(),
+            unresolvable: BTreeSet::new(),
+        }
+    }
+
+    /// Returns the virtual root that loaded paths are resolved under.
+    pub fn virtual_root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Adds or replaces the file at plugin-relative `path`, returning the
+    /// previous contents of that file.
+    ///
+    /// A path that escapes the package, or that names the root itself, is
+    /// recorded without contents and returns `None`.
+    pub fn insert(
+        &mut self,
+        path: impl AsRef<str>,
+        contents: impl Into<Vec<u8>>,
+    ) -> Option<Vec<u8>> {
+        let path = path.as_ref();
+        match normalize_package_path(path) {
+            Some(key) if !key.is_empty() => self.files.insert(key, contents.into()),
+            _ => {
+                self.unresolvable.insert(path.to_string());
+                None
+            }
+        }
+    }
+
+    fn key_for<'a>(&self, resolved: &'a Path) -> Result<&'a str, String> {
+        resolved
+            .strip_prefix(&self.root)
+            .ok()
+            .and_then(Path::to_str)
+            .ok_or_else(|| {
+                format!(
+                    "path is outside the in-memory plugin package: {}",
+                    resolved.display()
+                )
+            })
+    }
+
+    fn is_dir_key(&self, key: &str) -> bool {
+        if key.is_empty() {
+            return true;
+        }
+        let prefix = format!("{key}/");
+        self.files
+            .range(prefix.clone()..)
+            .next()
+            .is_some_and(|(path, _)| path.starts_with(&prefix))
+    }
+}
+
+impl Default for AgentPluginFiles {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<K: AsRef<str>, V: Into<Vec<u8>>> FromIterator<(K, V)> for AgentPluginFiles {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut files = Self::new();
+        for (path, contents) in iter {
+            files.insert(path, contents);
+        }
+        files
+    }
+}
+
 /// Loads a portable Agent Plugins 1.0 directory from disk without fetching schemas.
 pub fn load_agent_plugin(
     root: impl AsRef<Path>,
@@ -230,8 +376,32 @@ pub fn load_agent_plugin(
             };
         }
     };
-    let plugin_json = root.join("plugin.json");
-    let plugin_json = match canonical_file(&root, &plugin_json) {
+    load_from_source(&DiskSource { root }, options)
+}
+
+/// Loads a portable Agent Plugins 1.0 package held in memory, without touching
+/// the filesystem or fetching schemas.
+///
+/// This works on targets without a filesystem, such as
+/// `wasm32-unknown-unknown`. Diagnostics use the same codes as
+/// [`load_agent_plugin`], and escaping paths are rejected as described on
+/// [`AgentPluginFiles`]. Resolved paths sit under
+/// [`AgentPluginFiles::virtual_root`]; stdio MCP servers are loaded and
+/// reported exactly as on disk even though their virtual command paths cannot
+/// be launched in place.
+pub fn load_agent_plugin_from_files(
+    files: &AgentPluginFiles,
+    options: &AgentPluginLoadOptions,
+) -> AgentPluginLoadReport {
+    load_from_source(files, options)
+}
+
+fn load_from_source(
+    source: &impl PluginSource,
+    options: &AgentPluginLoadOptions,
+) -> AgentPluginLoadReport {
+    let mut diagnostics = Vec::new();
+    let plugin_json = match contained_file(source, Path::new("plugin.json")) {
         Ok(path) => path,
         Err(message) => {
             diagnostics.push(error("manifest_path_invalid", "plugin.json", message));
@@ -241,14 +411,10 @@ pub fn load_agent_plugin(
             };
         }
     };
-    let manifest_text = match fs::read_to_string(&plugin_json) {
+    let manifest_text = match source.read_to_string(&plugin_json) {
         Ok(text) => text,
-        Err(source) => {
-            diagnostics.push(error(
-                "manifest_read_failed",
-                "plugin.json",
-                source.to_string(),
-            ));
+        Err(message) => {
+            diagnostics.push(error("manifest_read_failed", "plugin.json", message));
             return AgentPluginLoadReport {
                 plugin: None,
                 diagnostics,
@@ -278,11 +444,11 @@ pub fn load_agent_plugin(
             };
         }
     };
-    let skills = load_skills(&root, &mut diagnostics);
+    let skills = load_skills(source, &mut diagnostics);
     let data_root = normalize_absolute(&options.plugin_data_root);
-    let mcp_servers = load_mcp_servers(&root, options, &manifest.schema, &mut diagnostics);
+    let mcp_servers = load_mcp_servers(source, options, &manifest.schema, &mut diagnostics);
     let plugin = LoadedAgentPlugin {
-        root,
+        root: source.root().to_path_buf(),
         data_root,
         manifest,
         skills,
@@ -465,15 +631,18 @@ fn parse_extensions(
 }
 
 fn load_skills(
-    root: &Path,
+    source: &impl PluginSource,
     diagnostics: &mut Vec<AgentPluginDiagnostic>,
 ) -> Vec<LoadedAgentPluginSkill> {
-    let skills_path = root.join("skills");
-    if !skills_path.exists() {
+    let skills_path = Path::new("skills");
+    if !source.exists(skills_path) {
         return Vec::new();
     }
-    let skills_root = match fs::canonicalize(&skills_path) {
-        Ok(path) if path.starts_with(root) && path.is_dir() => path,
+    let skills_root = match source.resolve(skills_path) {
+        Ok(Resolved::Contained {
+            path,
+            kind: EntryKind::Dir,
+        }) => path,
         Ok(_) => {
             diagnostics.push(error(
                 "skills_location_invalid",
@@ -482,33 +651,27 @@ fn load_skills(
             ));
             return Vec::new();
         }
-        Err(source) => {
-            diagnostics.push(error(
-                "skills_location_invalid",
-                "skills",
-                source.to_string(),
-            ));
+        Err(message) => {
+            diagnostics.push(error("skills_location_invalid", "skills", message));
             return Vec::new();
         }
     };
-    let entries = match fs::read_dir(&skills_root) {
+    let entries = match source.children(&skills_root) {
         Ok(entries) => entries,
-        Err(source) => {
-            diagnostics.push(error("skills_read_failed", "skills", source.to_string()));
+        Err(message) => {
+            diagnostics.push(error("skills_read_failed", "skills", message));
             return Vec::new();
         }
     };
     let mut skills = Vec::new();
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if !file_type.is_dir() && !file_type.is_symlink() {
-            continue;
-        }
-        let dir_name = entry.file_name().to_string_lossy().into_owned();
-        let skill_root = match fs::canonicalize(entry.path()) {
-            Ok(path) if path.starts_with(root) && path.is_dir() => path,
+    for file_name in entries {
+        let dir_name = file_name.to_string_lossy().into_owned();
+        let relative = skills_path.join(&file_name);
+        let skill_root = match source.resolve(&relative) {
+            Ok(Resolved::Contained {
+                path,
+                kind: EntryKind::Dir,
+            }) => path,
             _ => {
                 diagnostics.push(warning(
                     "skill_directory_invalid",
@@ -518,12 +681,11 @@ fn load_skills(
                 continue;
             }
         };
-        let skill_path = skill_root.join("SKILL.md");
-        let skill_path = match canonical_file(root, &skill_path) {
+        let skill_path = match contained_file(source, &relative.join("SKILL.md")) {
             Ok(path) => path,
             Err(_) => continue,
         };
-        match parse_skill(&dir_name, &skill_root, &skill_path) {
+        match parse_skill(source, &dir_name, &skill_root, &skill_path) {
             Ok(skill) => skills.push(skill),
             Err(diagnostic) => diagnostics.push(diagnostic),
         }
@@ -533,15 +695,16 @@ fn load_skills(
 }
 
 fn parse_skill(
+    source: &impl PluginSource,
     dir_name: &str,
     skill_root: &Path,
     skill_path: &Path,
 ) -> Result<LoadedAgentPluginSkill, AgentPluginDiagnostic> {
-    let text = fs::read_to_string(skill_path).map_err(|source| {
+    let text = source.read_to_string(skill_path).map_err(|message| {
         warning(
             "skill_read_failed",
             format!("skills/{dir_name}/SKILL.md"),
-            source.to_string(),
+            message,
         )
     })?;
     let (frontmatter, body) = split_skill_frontmatter(&text).ok_or_else(|| {
@@ -633,26 +796,26 @@ fn parse_skill(
 }
 
 fn load_mcp_servers(
-    root: &Path,
+    source: &impl PluginSource,
     options: &AgentPluginLoadOptions,
     plugin_schema: &str,
     diagnostics: &mut Vec<AgentPluginDiagnostic>,
 ) -> BTreeMap<String, AgentPluginMcpServer> {
-    let mcp_path = root.join("mcp.json");
-    if !mcp_path.exists() {
+    let mcp_path = Path::new("mcp.json");
+    if !source.exists(mcp_path) {
         return BTreeMap::new();
     }
-    let mcp_path = match canonical_file(root, &mcp_path) {
+    let mcp_path = match contained_file(source, mcp_path) {
         Ok(path) => path,
         Err(message) => {
             diagnostics.push(error("mcp_location_invalid", "mcp.json", message));
             return BTreeMap::new();
         }
     };
-    let text = match fs::read_to_string(&mcp_path) {
+    let text = match source.read_to_string(&mcp_path) {
         Ok(text) => text,
-        Err(source) => {
-            diagnostics.push(error("mcp_read_failed", "mcp.json", source.to_string()));
+        Err(message) => {
+            diagnostics.push(error("mcp_read_failed", "mcp.json", message));
             return BTreeMap::new();
         }
     };
@@ -698,7 +861,7 @@ fn load_mcp_servers(
     };
     let mut result = BTreeMap::new();
     for (name, server) in servers {
-        match parse_mcp_server(name, server, root, options) {
+        match parse_mcp_server(name, server, source, options) {
             Ok((transport, server)) if options.supported_mcp_transports.contains(&transport) => {
                 result.insert(name.clone(), server);
             }
@@ -716,7 +879,7 @@ fn load_mcp_servers(
 fn parse_mcp_server(
     name: &str,
     value: &Value,
-    root: &Path,
+    source: &impl PluginSource,
     options: &AgentPluginLoadOptions,
 ) -> Result<(AgentPluginMcpTransport, AgentPluginMcpServer), AgentPluginDiagnostic> {
     let Some(object) = value.as_object() else {
@@ -734,7 +897,7 @@ fn parse_mcp_server(
         ));
     };
     match kind {
-        "stdio" => parse_stdio_server(name, object, root, options).map(|server| {
+        "stdio" => parse_stdio_server(name, object, source, options).map(|server| {
             (
                 AgentPluginMcpTransport::Stdio,
                 AgentPluginMcpServer::Stdio(server),
@@ -763,7 +926,7 @@ fn parse_mcp_server(
 fn parse_stdio_server(
     name: &str,
     object: &serde_json::Map<String, Value>,
-    root: &Path,
+    source: &impl PluginSource,
     options: &AgentPluginLoadOptions,
 ) -> Result<AgentPluginStdioMcpServer, AgentPluginDiagnostic> {
     for key in object.keys() {
@@ -776,7 +939,7 @@ fn parse_stdio_server(
         }
     }
     let command = json_required_string(object, "command", name)?;
-    let resolved_command = validate_command(root, name, &command)?;
+    let resolved_command = validate_command(source, name, &command)?;
     let args = json_string_array(object.get("args"), name, "args")?;
     let env = json_string_map(object.get("env"), name, "env")?;
     for key in env.keys() {
@@ -800,8 +963,9 @@ fn parse_stdio_server(
         None => None,
     };
     let data_root = normalize_absolute(&options.plugin_data_root);
+    let root = source.root();
     let resolved_cwd = match &cwd {
-        Some(cwd) => resolve_cwd(root, &data_root, name, cwd)?,
+        Some(cwd) => resolve_cwd(source, &data_root, name, cwd)?,
         None => root.to_path_buf(),
     };
     Ok(AgentPluginStdioMcpServer {
@@ -866,7 +1030,7 @@ fn parse_http_server(
 }
 
 fn validate_command(
-    root: &Path,
+    source: &impl PluginSource,
     server: &str,
     command: &str,
 ) -> Result<Option<PathBuf>, AgentPluginDiagnostic> {
@@ -885,14 +1049,15 @@ fn validate_command(
                 "plugin-relative command must name a file",
             ));
         }
-        let path = root.join(rest);
-        return canonical_file(root, &path).map(Some).map_err(|message| {
-            warning(
-                "mcp_command_invalid",
-                format!("mcp.json/mcpServers/{server}/command"),
-                message,
-            )
-        });
+        return contained_file(source, Path::new(rest))
+            .map(Some)
+            .map_err(|message| {
+                warning(
+                    "mcp_command_invalid",
+                    format!("mcp.json/mcpServers/{server}/command"),
+                    message,
+                )
+            });
     }
     if command.contains('/') || command.contains('\\') || command == "." || command == ".." {
         return Err(warning(
@@ -905,37 +1070,34 @@ fn validate_command(
 }
 
 fn resolve_cwd(
-    root: &Path,
+    source: &impl PluginSource,
     data_root: &Path,
     server: &str,
     cwd: &str,
 ) -> Result<PathBuf, AgentPluginDiagnostic> {
-    if let Some(rest) = cwd.strip_prefix("./") {
-        let path = fs::canonicalize(root.join(rest)).map_err(|source| {
-            warning(
-                "mcp_cwd_invalid",
-                format!("mcp.json/mcpServers/{server}/cwd"),
-                source.to_string(),
-            )
-        })?;
-        if path.starts_with(root) && path.is_dir() {
-            return Ok(path);
-        }
+    let plugin_relative = if let Some(rest) = cwd.strip_prefix("./") {
+        Some(rest)
     } else if cwd == "${PLUGIN_ROOT}" || cwd.starts_with("${PLUGIN_ROOT}/") {
-        let path = fs::canonicalize(
-            root.join(
-                cwd.trim_start_matches("${PLUGIN_ROOT}")
-                    .trim_start_matches('/'),
-            ),
+        Some(
+            cwd.trim_start_matches("${PLUGIN_ROOT}")
+                .trim_start_matches('/'),
         )
-        .map_err(|source| {
+    } else {
+        None
+    };
+    if let Some(relative) = plugin_relative {
+        let resolved = source.resolve(Path::new(relative)).map_err(|message| {
             warning(
                 "mcp_cwd_invalid",
                 format!("mcp.json/mcpServers/{server}/cwd"),
-                source.to_string(),
+                message,
             )
         })?;
-        if path.starts_with(root) && path.is_dir() {
+        if let Resolved::Contained {
+            path,
+            kind: EntryKind::Dir,
+        } = resolved
+        {
             return Ok(path);
         }
     } else if cwd == "${PLUGIN_DATA}" || cwd.starts_with("${PLUGIN_DATA}/") {
@@ -993,12 +1155,181 @@ fn is_loopback_url(url: &url::Url) -> bool {
     host == "localhost" || host.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
-fn canonical_file(root: &Path, path: &Path) -> Result<PathBuf, String> {
-    let path = fs::canonicalize(path).map_err(|source| source.to_string())?;
-    if path.starts_with(root) && path.is_file() {
-        Ok(path)
-    } else {
-        Err("path is not a contained regular file".to_string())
+/// Kind of a contained entry that a [`PluginSource`] resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryKind {
+    File,
+    Dir,
+    Other,
+}
+
+/// Outcome of resolving a plugin-relative path that exists.
+enum Resolved {
+    /// The path stays inside the plugin root.
+    Contained { path: PathBuf, kind: EntryKind },
+    /// The path leaves the plugin root.
+    Escaped,
+}
+
+/// File source the loader reads a plugin package through.
+///
+/// Relative paths are plugin-relative. Resolved paths are the ones reported in
+/// loaded results and are the only paths passed back to `children` and
+/// `read_to_string`.
+trait PluginSource {
+    /// Resolved plugin root.
+    fn root(&self) -> &Path;
+    /// Whether anything exists at `relative`, even if it escapes the root.
+    fn exists(&self, relative: &Path) -> bool;
+    /// Resolves `relative`, or returns why nothing exists there.
+    fn resolve(&self, relative: &Path) -> Result<Resolved, String>;
+    /// Names of the directory-like children of a resolved directory.
+    fn children(&self, dir: &Path) -> Result<Vec<PathBuf>, String>;
+    /// Reads a resolved file as UTF-8 text.
+    fn read_to_string(&self, file: &Path) -> Result<String, String>;
+}
+
+/// Plugin directory on disk, with a canonical root.
+struct DiskSource {
+    root: PathBuf,
+}
+
+impl PluginSource for DiskSource {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn exists(&self, relative: &Path) -> bool {
+        self.root.join(relative).exists()
+    }
+
+    fn resolve(&self, relative: &Path) -> Result<Resolved, String> {
+        let path =
+            fs::canonicalize(self.root.join(relative)).map_err(|source| source.to_string())?;
+        if !path.starts_with(&self.root) {
+            return Ok(Resolved::Escaped);
+        }
+        let kind = if path.is_file() {
+            EntryKind::File
+        } else if path.is_dir() {
+            EntryKind::Dir
+        } else {
+            EntryKind::Other
+        };
+        Ok(Resolved::Contained { path, kind })
+    }
+
+    fn children(&self, dir: &Path) -> Result<Vec<PathBuf>, String> {
+        let entries = fs::read_dir(dir).map_err(|source| source.to_string())?;
+        Ok(entries
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_type()
+                    .is_ok_and(|file_type| file_type.is_dir() || file_type.is_symlink())
+            })
+            .map(|entry| PathBuf::from(entry.file_name()))
+            .collect())
+    }
+
+    fn read_to_string(&self, file: &Path) -> Result<String, String> {
+        fs::read_to_string(file).map_err(|source| source.to_string())
+    }
+}
+
+impl PluginSource for AgentPluginFiles {
+    fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn exists(&self, relative: &Path) -> bool {
+        self.resolve(relative).is_ok()
+    }
+
+    fn resolve(&self, relative: &Path) -> Result<Resolved, String> {
+        let Some(relative) = relative.to_str() else {
+            return Err("path is not valid UTF-8".to_string());
+        };
+        let Some(key) = normalize_package_path(relative) else {
+            return Ok(Resolved::Escaped);
+        };
+        let kind = if self.files.contains_key(&key) {
+            EntryKind::File
+        } else if self.is_dir_key(&key) {
+            EntryKind::Dir
+        } else {
+            return Err(format!(
+                "no such file or directory in the in-memory plugin package: {relative}"
+            ));
+        };
+        let path = if key.is_empty() {
+            self.root.clone()
+        } else {
+            self.root.join(&key)
+        };
+        Ok(Resolved::Contained { path, kind })
+    }
+
+    fn children(&self, dir: &Path) -> Result<Vec<PathBuf>, String> {
+        let key = self.key_for(dir)?;
+        let prefix = if key.is_empty() {
+            String::new()
+        } else {
+            format!("{key}/")
+        };
+        let mut children = BTreeSet::new();
+        for path in self.files.keys().chain(&self.unresolvable) {
+            let Some((child, _)) = path
+                .strip_prefix(prefix.as_str())
+                .and_then(|rest| rest.split_once('/'))
+            else {
+                continue;
+            };
+            if !child.is_empty() && child != "." {
+                children.insert(child.to_string());
+            }
+        }
+        Ok(children.into_iter().map(PathBuf::from).collect())
+    }
+
+    fn read_to_string(&self, file: &Path) -> Result<String, String> {
+        let key = self.key_for(file)?;
+        let bytes = self
+            .files
+            .get(key)
+            .ok_or_else(|| format!("no such file in the in-memory plugin package: {key}"))?;
+        std::str::from_utf8(bytes)
+            .map(str::to_owned)
+            .map_err(|source| source.to_string())
+    }
+}
+
+/// Returns `true` when an in-memory package path leaves the package root.
+fn escapes_package(path: &str) -> bool {
+    path.starts_with('/') || path.contains('\\') || path.split('/').any(|segment| segment == "..")
+}
+
+/// Normalizes an in-memory package path by dropping empty and `.` segments, or
+/// returns `None` when it escapes the package root.
+fn normalize_package_path(path: &str) -> Option<String> {
+    if escapes_package(path) {
+        return None;
+    }
+    Some(
+        path.split('/')
+            .filter(|segment| !segment.is_empty() && *segment != ".")
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
+}
+
+fn contained_file(source: &impl PluginSource, relative: &Path) -> Result<PathBuf, String> {
+    match source.resolve(relative)? {
+        Resolved::Contained {
+            path,
+            kind: EntryKind::File,
+        } => Ok(path),
+        _ => Err("path is not a contained regular file".to_string()),
     }
 }
 
@@ -1517,5 +1848,278 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// Reads every file under `root` into an in-memory package keyed by its
+    /// forward-slash plugin-relative path.
+    fn files_under(root: &Path) -> AgentPluginFiles {
+        fn walk(root: &Path, dir: &Path, files: &mut AgentPluginFiles) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    walk(root, &path, files);
+                } else {
+                    let key = path
+                        .strip_prefix(root)
+                        .unwrap()
+                        .components()
+                        .map(|component| component.as_os_str().to_str().unwrap())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    files.insert(key, fs::read(&path).unwrap());
+                }
+            }
+        }
+        let mut files = AgentPluginFiles::new();
+        walk(root, root, &mut files);
+        files
+    }
+
+    fn diagnostic_keys(
+        diagnostics: &[AgentPluginDiagnostic],
+    ) -> Vec<(String, &'static str, String)> {
+        let mut keys = diagnostics
+            .iter()
+            .map(|d| (format!("{:?}", d.severity), d.code, d.path.clone()))
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys
+    }
+
+    fn codes(diagnostics: &[AgentPluginDiagnostic]) -> Vec<&'static str> {
+        let mut codes = diagnostics.iter().map(|d| d.code).collect::<Vec<_>>();
+        codes.sort_unstable();
+        codes
+    }
+
+    #[test]
+    fn in_memory_package_loads_the_same_plugin_as_its_disk_directory() {
+        let root = root("equivalence");
+        write(
+            root.join("plugin.json").as_path(),
+            r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"demo.plugin","version":"1.2.3","description":"Demo.","author":{"name":"Ada"},"keywords":["demo"],"unknown":1,"extensions":{"com.example.client":{"enabled":true}}}"#,
+        );
+        write(
+            root.join("skills/deploy/SKILL.md").as_path(),
+            "---\nname: deploy\ndescription: Deploy the project.\nmetadata:\n  incurs.command: demo deploy\n---\n\n# Deploy\n",
+        );
+        write(
+            root.join("skills/review/SKILL.md").as_path(),
+            "---\nname: review\ndescription: Review changes.\nlicense: MIT\ncompatibility: Any client.\nallowed-tools: Read\n---\nReview body.\n",
+        );
+        write(
+            root.join("skills/bad/SKILL.md").as_path(),
+            "---\nname: other\ndescription: Mismatched name.\n---\n",
+        );
+        write(root.join("skills/notes/README.md").as_path(), "not a skill");
+        write(root.join("bin/server").as_path(), "#!/bin/sh\n");
+        write(
+            root.join("mcp.json").as_path(),
+            r#"{
+          "$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+          "mcpServers":{
+            "local":{"type":"stdio","command":"./bin/server","args":["--root","${PLUGIN_ROOT}"],"env":{"CACHE":"${PLUGIN_DATA}/cache"},"cwd":"./bin"},
+            "rooted":{"type":"stdio","command":"node","cwd":"${PLUGIN_ROOT}"},
+            "bare":{"type":"stdio","command":"node"},
+            "remote":{"type":"streamable-http","url":"https://example.com/mcp","headers":{"X-Tenant":"public"}},
+            "legacy":{"type":"sse","url":"http://localhost:3000/sse"},
+            "missing":{"type":"stdio","command":"./missing"},
+            "escape":{"type":"stdio","command":"node","cwd":"./../"},
+            "insecure":{"type":"streamable-http","url":"http://example.com/mcp"}
+          }
+        }"#,
+        );
+        let options = AgentPluginLoadOptions::default();
+
+        let disk = load_agent_plugin(&root, &options);
+        let memory = load_agent_plugin_from_files(&files_under(&root), &options);
+        let disk_plugin = disk.plugin.as_ref().unwrap();
+        let memory_plugin = memory.plugin.as_ref().unwrap();
+
+        // Roots are replaced only where a debug string starts with them, so
+        // text that merely contains the root name stays compared verbatim.
+        let disk_root = format!("\"{}", disk_plugin.root.to_string_lossy());
+        let memory_root = format!("\"{AGENT_PLUGIN_VIRTUAL_ROOT}");
+        assert_eq!(
+            format!("{disk_plugin:#?}").replace(&disk_root, "\"<ROOT>"),
+            format!("{memory_plugin:#?}").replace(&memory_root, "\"<ROOT>"),
+        );
+        assert_eq!(
+            diagnostic_keys(&disk.diagnostics),
+            diagnostic_keys(&memory.diagnostics)
+        );
+
+        assert_eq!(
+            codes(&memory.diagnostics),
+            vec![
+                "manifest_unknown_field",
+                "mcp_command_invalid",
+                "mcp_cwd_invalid",
+                "mcp_url_insecure",
+                "skill_name_invalid",
+            ]
+        );
+        assert_eq!(memory_plugin.root, Path::new("/agent-plugin"));
+        assert_eq!(memory_plugin.manifest.name, "demo.plugin");
+        assert_eq!(memory_plugin.manifest.keywords, vec!["demo"]);
+        let skills = memory_plugin
+            .skills
+            .iter()
+            .map(|skill| {
+                (
+                    skill.name.as_str(),
+                    skill.description.as_str(),
+                    skill.body.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            skills,
+            vec![
+                ("deploy", "Deploy the project.", "# Deploy\n"),
+                ("review", "Review changes.", "Review body.\n"),
+            ]
+        );
+        assert_eq!(
+            memory_plugin.skills[0].path,
+            Path::new("/agent-plugin/skills/deploy/SKILL.md")
+        );
+        assert_eq!(
+            memory_plugin
+                .mcp_servers
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["bare", "legacy", "local", "remote", "rooted"]
+        );
+        let AgentPluginMcpServer::Stdio(local) = &memory_plugin.mcp_servers["local"] else {
+            panic!("local server must stay a stdio binding");
+        };
+        assert_eq!(
+            local.resolved_command.as_deref(),
+            Some(Path::new("/agent-plugin/bin/server"))
+        );
+        assert_eq!(local.resolved_cwd, Path::new("/agent-plugin/bin"));
+        assert_eq!(local.resolved_args, vec!["--root", "/agent-plugin"]);
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn in_memory_package_rejects_escaping_paths_with_disk_escape_codes() {
+        // Every escaping target is present in the package, so only the escape
+        // rule stands between each reference and a successful load.
+        let files = AgentPluginFiles::from_iter([
+            (
+                "plugin.json",
+                r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"demo"}"#,
+            ),
+            ("../x", ""),
+            ("/etc/passwd", ""),
+            ("a\\b", ""),
+            ("../dir/file", ""),
+            (
+                "skills/../evil/SKILL.md",
+                "---\nname: evil\ndescription: Escapes.\n---\n",
+            ),
+            (
+                "skills/a\\b/SKILL.md",
+                "---\nname: ab\ndescription: Escapes.\n---\n",
+            ),
+            (
+                "skills/good/SKILL.md",
+                "---\nname: good\ndescription: Good skill.\n---\n",
+            ),
+            (
+                "mcp.json",
+                r#"{
+          "$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+          "mcpServers":{
+            "parent":{"type":"stdio","command":"./../x"},
+            "absolute":{"type":"stdio","command":".//etc/passwd"},
+            "backslash":{"type":"stdio","command":"./a\\b"},
+            "parent_cwd":{"type":"stdio","command":"node","cwd":"./../dir"},
+            "root_cwd":{"type":"stdio","command":"node","cwd":"${PLUGIN_ROOT}/../dir"}
+          }
+        }"#,
+            ),
+        ]);
+
+        let report = load_agent_plugin_from_files(&files, &AgentPluginLoadOptions::default());
+        let plugin = report.plugin.unwrap();
+
+        assert_eq!(
+            plugin
+                .skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good"]
+        );
+        assert!(plugin.mcp_servers.is_empty(), "{:?}", plugin.mcp_servers);
+        let mut found = report
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.path.as_str()))
+            .collect::<Vec<_>>();
+        found.sort_unstable();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    "mcp_command_invalid",
+                    "mcp.json/mcpServers/absolute/command"
+                ),
+                (
+                    "mcp_command_invalid",
+                    "mcp.json/mcpServers/backslash/command"
+                ),
+                ("mcp_command_invalid", "mcp.json/mcpServers/parent/command"),
+                ("mcp_cwd_invalid", "mcp.json/mcpServers/parent_cwd/cwd"),
+                ("mcp_cwd_invalid", "mcp.json/mcpServers/root_cwd/cwd"),
+                ("skill_directory_invalid", "skills/.."),
+                ("skill_directory_invalid", "skills/a\\b"),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_manifest_is_the_same_fatal_diagnostic_in_memory_and_on_disk() {
+        let root = root("missing-manifest");
+        write(
+            root.join("skills/good/SKILL.md").as_path(),
+            "---\nname: good\ndescription: Good skill.\n---\n",
+        );
+
+        let disk = load_agent_plugin(&root, &AgentPluginLoadOptions::default());
+        let memory =
+            load_agent_plugin_from_files(&files_under(&root), &AgentPluginLoadOptions::default());
+
+        for report in [&disk, &memory] {
+            assert!(report.plugin.is_none());
+            assert_eq!(codes(&report.diagnostics), vec!["manifest_path_invalid"]);
+        }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn in_memory_paths_ignore_empty_and_current_segments() {
+        let mut files = AgentPluginFiles::with_virtual_root("/pkg/./demo");
+        files.insert(
+            "./plugin.json",
+            r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"demo"}"#,
+        );
+        files.insert(
+            "skills//good/./SKILL.md",
+            "---\nname: good\ndescription: Good skill.\n---\n",
+        );
+
+        let report = load_agent_plugin_from_files(&files, &AgentPluginLoadOptions::default());
+        let plugin = report.plugin.unwrap();
+
+        assert!(report.diagnostics.is_empty(), "{:?}", report.diagnostics);
+        assert_eq!(plugin.root, Path::new("/pkg/demo"));
+        assert_eq!(plugin.skills[0].root, Path::new("/pkg/demo/skills/good"));
     }
 }

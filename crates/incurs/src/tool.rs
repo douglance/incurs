@@ -106,6 +106,10 @@ pub enum ToolEvent {
 
 /// Consumer for ordered tool invocation events.
 #[async_trait]
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait annotates generated futures"
+)]
 pub trait ToolEventSink: Send + Sync {
     /// Receives one event before the next event is emitted.
     async fn emit(&self, event: ToolEvent);
@@ -471,6 +475,7 @@ impl ToolCatalog {
         .map(Option::flatten)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn resolved(&self) -> impl Iterator<Item = &ResolvedTool> {
         self.tools.values()
     }
@@ -593,7 +598,7 @@ fn declared_environment(
     command_fields: &[FieldMeta],
 ) -> HashMap<String, String> {
     filter_environment(
-        std::env::vars().collect(),
+        crate::process_env(),
         cli_fields.iter().chain(command_fields),
     )
 }
