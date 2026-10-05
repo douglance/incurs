@@ -122,6 +122,8 @@
 - **Builtin CLI behavior uses one active runtime path** — `serve()` and `serve_with()` are process adapters over `run_to()`. Implement and test built-in behavior through `run_to()`/`serve_to()` so process execution and integration tests cannot drift.
 - **MCP HTTP tests need a valid Host** — current `rmcp` validates hosts before request dispatch. Direct requests to the Rust MCP HTTP service must include a loopback `Host` header (for example, `localhost`) unless the test is specifically exercising DNS-rebinding rejection.
 
+- **Extension CI resolves locked dependencies** — run extension tests, Clippy, and target checks with --locked. An unlocked GPUI source build silently refreshed a stale dependency graph while its release archive refused the tracked lockfile. Verify fresh package archives after their new core dependencies are published.
+
 ## Git Conventions
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
