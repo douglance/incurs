@@ -78,6 +78,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Owned Worker process cleanup
+        run: python3 extensions/cloudflare/examples/feature-worker/test_owned_process.py
       - run: cargo install worker-build --locked
       - run: extensions/cloudflare/examples/feature-worker/smoke.sh
 
@@ -166,15 +168,15 @@ jobs:
         run: cargo fmt --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --all --check
       - name: Test
         if: matrix.workspace != 'forge'
-        run: cargo test --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-features
+        run: cargo test --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-features --locked
       - name: Forge test
         if: matrix.workspace == 'forge'
         run: cargo test --manifest-path extensions/forge/Cargo.toml --workspace --all-features --locked -j 2 -- --test-threads=1
       - name: Clippy
-        run: cargo clippy --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
       - name: Wasm target
         if: matrix.wasm
-        run: cargo check --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --target wasm32-unknown-unknown
+        run: cargo check --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --target wasm32-unknown-unknown --locked
 
       - name: Forge documentation
         if: matrix.workspace == 'forge'

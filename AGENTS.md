@@ -46,6 +46,8 @@
 
 ## Testing Conventions
 
+- **Signal handlers request cleanup; the main loop performs it** — set a stop flag in the handler and reap the child after its active wait returns. Calling wait recursively from a signal handler can hold the child wait lock and end in an exception. Require the expected signal exit code, empty stderr, and a closed grandchild listener in the cleanup control.
+
 - **Parsing fixtures select their host directories explicitly** — inject an isolated VS Code user directory when testing JSONC parsing. Platform-default path discovery is a separate contract; a macOS-only directory made a parsing fixture invisible on Linux.
 
 - **Worker fixture cleanup owns a process group** — launch Wrangler in a dedicated session and terminate that group with bounded waits before reusing its port. Use available fixture ports and forward their URLs into the Worker; a parent-only kill left workerd listening during the authenticated restart.
@@ -121,6 +123,8 @@
 - **Extension workspaces are gated per workspace** — `.github/workflows/rust.yml` runs each `extensions/*` workspace on its own runner with its own targets. A workspace that cannot build for `wasm32-unknown-unknown`, or that needs a platform runner, declares that in the matrix rather than being excluded from CI.
 - **Builtin CLI behavior uses one active runtime path** — `serve()` and `serve_with()` are process adapters over `run_to()`. Implement and test built-in behavior through `run_to()`/`serve_to()` so process execution and integration tests cannot drift.
 - **MCP HTTP tests need a valid Host** — current `rmcp` validates hosts before request dispatch. Direct requests to the Rust MCP HTTP service must include a loopback `Host` header (for example, `localhost`) unless the test is specifically exercising DNS-rebinding rejection.
+
+- **Extension CI resolves locked dependencies** — run extension tests, Clippy, and target checks with --locked. An unlocked GPUI source build silently refreshed a stale dependency graph while its release archive refused the tracked lockfile. Verify fresh package archives after their new core dependencies are published.
 
 ## Git Conventions
 
