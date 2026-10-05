@@ -42,24 +42,23 @@ def main() -> int:
             sys.argv[3:], stdout=log, stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        stopping = False
+        stop_requested: int | None = None
 
         def stop(signum: int, _frame: object) -> None:
-            nonlocal stopping
-            if stopping:
-                return
-            stopping = True
-            _terminate_group(child)
-            raise SystemExit(128 + signum)
+            nonlocal stop_requested
+            stop_requested = signum
 
         signal.signal(signal.SIGTERM, stop)
         signal.signal(signal.SIGINT, stop)
         try:
-            return child.wait()
+            while stop_requested is None:
+                try:
+                    return child.wait(timeout=0.2)
+                except subprocess.TimeoutExpired:
+                    pass
+            return 128 + stop_requested
         finally:
-            if not stopping:
-                stopping = True
-                _terminate_group(child)
+            _terminate_group(child)
 
 
 if __name__ == "__main__":

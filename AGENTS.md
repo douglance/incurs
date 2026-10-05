@@ -46,6 +46,8 @@
 
 ## Testing Conventions
 
+- **Signal handlers request cleanup; the main loop performs it** — set a stop flag in the handler and reap the child after its active wait returns. Calling wait recursively from a signal handler can hold the child wait lock and end in an exception. Require the expected signal exit code, empty stderr, and a closed grandchild listener in the cleanup control.
+
 - **Parsing fixtures select their host directories explicitly** — inject an isolated VS Code user directory when testing JSONC parsing. Platform-default path discovery is a separate contract; a macOS-only directory made a parsing fixture invisible on Linux.
 
 - **Worker fixture cleanup owns a process group** — launch Wrangler in a dedicated session and terminate that group with bounded waits before reusing its port. Use available fixture ports and forward their URLs into the Worker; a parent-only kill left workerd listening during the authenticated restart.

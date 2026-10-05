@@ -78,6 +78,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Owned Worker process cleanup
+        run: python3 extensions/cloudflare/examples/feature-worker/test_owned_process.py
       - run: cargo install worker-build --locked
       - run: extensions/cloudflare/examples/feature-worker/smoke.sh
 
