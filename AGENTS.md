@@ -9,6 +9,8 @@
 
 ## Architecture Conventions
 
+- **Use literal component names** - name the OpenAPI compiler and its Worker proof for their function; keep package, module, workspace, error, and CI names aligned.
+
 - **Required and nullable are independent** — generated nullable path arguments retain value, null, and default states but reject missing. Convert presence before storing a required path value, and give required nullable fields a value in generated smoke tests. Ordinary path serialization rejects null; JSON-content parameters retain their explicit null encoding.
 
 - **Generated Rust names share a symbol table** — schema types, operation argument/response/body types, and support types occupy one Rust type namespace. Allocate their identifiers once and resolve references through that map; preserve canonical schema keys and original wire names. Reserve unqualified prelude constructors such as `Some`, `None`, `Ok`, `Err` as well as helper types. Client and default-accessor methods use their own scopes. Full-corpus compilation exposed collisions that isolated operations could not.
@@ -39,12 +41,14 @@
 
 - **MCP errors preserve machine-readable details** — retain the stable code, retryability, exit code, and field errors at the MCP boundary, with isError true. Keep the first text block valid JSON even when follow-up guidance is present; test both structured and text-only replies.
 
-- **Emscripten tooling stays scoped to its proof workspace** — use `extensions/forge-workers/build.py` to select the pinned Rustup binaries and Cargo build layout. PATH wrappers intercepted build-script compiler probes, and the newer Cargo layout placed wasm-bindgen snippets where the pinned worker-build could not bundle them. Keep these accommodations out of the core and verify the resulting bundle through the HTTP probe.
+- **Emscripten tooling stays scoped to its proof workspace** — use `extensions/openapi-workers/build.py` to select the pinned Rustup binaries and Cargo build layout. PATH wrappers intercepted build-script compiler probes, and the newer Cargo layout placed wasm-bindgen snippets where the pinned worker-build could not bundle them. Keep these accommodations out of the core and verify the resulting bundle through the HTTP probe.
 
 - **Remote catalogs have independent bounds** — cap empty advancing pages and total tools, start deadlines before transport locks, bound complete discovery, and limit accumulated SSE data. Keep independent controls for empty pages, a held legacy stream lock, and a slow multi-page catalog; per-request deadlines alone do not bound discovery.
 - **MCP rich content follows the negotiated standard** — audio starts in 2025-03-26 and resource links in 2025-06-18. Preserve the JSON text fallback and prove native/portable direct and progressive calls across every served era.
 
 ## Testing Conventions
+
+- **Noninteractive searches name their roots** - pass explicit files or directories to `rg` under apoc. Its retained stdin can otherwise make a source search wait for input.
 
 - **Signal handlers request cleanup; the main loop performs it** — set a stop flag in the handler and reap the child after its active wait returns. Calling wait recursively from a signal handler can hold the child wait lock and end in an exception. Require the expected signal exit code, empty stderr, and a closed grandchild listener in the cleanup control.
 
@@ -56,7 +60,7 @@
 
 - **MCP schema relocation preserves dialect meaning** - wrapping non-object output changes reference scope. Wrap only supported declared dialects, reject unsupported relocation with a coded error before constructing either MCP server, and retain object roots unchanged. Keep declared 2019 recursive-schema rejection and 2020 positive controls, plus a confirmed guard-bypass mutation.
 
-- **Cold caches are part of Worker proof** - the first locked native Forge build must fetch its complete feature graph before later offline archive packaging. The base Worker disables native adapters and does not populate those dependencies; run both HTTP probes on CI without assuming a developer cache.
+- **Cold caches are part of Worker proof** - the first locked native OpenAPI build must fetch its complete feature graph before later offline archive packaging. The base Worker disables native adapters and does not populate those dependencies; run both HTTP probes on CI without assuming a developer cache.
 
 - **Generated future lints stay at their boundary** - async_trait annotates generated futures with must_use. Scope the double_must_use compatibility allowance to the affected trait declarations and retain warnings-denied Clippy across the workspace.
 
@@ -83,7 +87,7 @@
 
 - **Generated field names are allocated once** — reserve natural names and request-body fields before choosing collision suffixes. Reuse the same allocation in declarations, defaults, serialization, and generated smoke tests; keep original wire names and parameter locations. Prove punctuation, keyword, Unicode, cross-location, and body-name collisions through a packaged consumer and a confirmed wrong-field wire mutation.
 
-- **Bound nested Cargo test builds** — generated-consumer tests launch their own Cargo builds. Run the Forge suite with --test-threads=1 under a process-family memory limit; parallel consumer builds exceeded 4 GiB even though each child used -j2. Preserve all consumer assertions when bounding concurrency.
+- **Bound nested Cargo test builds** — generated-consumer tests launch their own Cargo builds. Run the OpenAPI suite with --test-threads=1 under a process-family memory limit; parallel consumer builds exceeded 4 GiB even though each child used -j2. Preserve all consumer assertions when bounding concurrency.
 
 - **Accepted test sockets must set their intended mode** — a nonblocking listener can produce nonblocking accepted sockets on macOS. Set the accepted stream to blocking before applying read/write timeouts; otherwise a scheduling gap can turn a valid HTTP exchange into WouldBlock.
 

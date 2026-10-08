@@ -151,7 +151,7 @@ jobs:
           - workspace: cloudflare
             os: ubuntu-latest
             wasm: true
-          - workspace: forge
+          - workspace: openapi
             os: ubuntu-latest
             wasm: true
           - workspace: gpui
@@ -167,41 +167,41 @@ jobs:
       - name: Format
         run: cargo fmt --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --all --check
       - name: Test
-        if: matrix.workspace != 'forge'
+        if: matrix.workspace != 'openapi'
         run: cargo test --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-features --locked
-      - name: Forge test
-        if: matrix.workspace == 'forge'
-        run: cargo test --manifest-path extensions/forge/Cargo.toml --workspace --all-features --locked -j 2 -- --test-threads=1
+      - name: OpenAPI test
+        if: matrix.workspace == 'openapi'
+        run: cargo test --manifest-path extensions/openapi/Cargo.toml --workspace --all-features --locked -j 2 -- --test-threads=1
       - name: Clippy
         run: cargo clippy --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --all-targets --all-features --locked -- -D warnings
       - name: Wasm target
         if: matrix.wasm
         run: cargo check --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --target wasm32-unknown-unknown --locked
 
-      - name: Forge documentation
-        if: matrix.workspace == 'forge'
+      - name: OpenAPI documentation
+        if: matrix.workspace == 'openapi'
         env:
           RUSTDOCFLAGS: -D warnings
-        run: cargo doc --manifest-path extensions/forge/Cargo.toml --all-features --no-deps --locked
-      - name: Forge portable adapters
-        if: matrix.workspace == 'forge'
-        run: cargo check --manifest-path extensions/forge/Cargo.toml --all-features --target wasm32-unknown-unknown --locked
-      - name: Forge independent features
-        if: matrix.workspace == 'forge'
+        run: cargo doc --manifest-path extensions/openapi/Cargo.toml --all-features --no-deps --locked
+      - name: OpenAPI portable adapters
+        if: matrix.workspace == 'openapi'
+        run: cargo check --manifest-path extensions/openapi/Cargo.toml --all-features --target wasm32-unknown-unknown --locked
+      - name: OpenAPI independent features
+        if: matrix.workspace == 'openapi'
         run: |
           for feature in adapters native-cli; do
-            cargo check --manifest-path extensions/forge/Cargo.toml --no-default-features --features "$feature" --all-targets --locked
-            cargo check --manifest-path extensions/forge/Cargo.toml --no-default-features --features "$feature" --target wasm32-unknown-unknown --locked
+            cargo check --manifest-path extensions/openapi/Cargo.toml --no-default-features --features "$feature" --all-targets --locked
+            cargo check --manifest-path extensions/openapi/Cargo.toml --no-default-features --features "$feature" --target wasm32-unknown-unknown --locked
           done
-      - name: Forge imported CLI and MCP
-        if: matrix.workspace == 'forge'
+      - name: OpenAPI imported CLI and MCP
+        if: matrix.workspace == 'openapi'
         run: |
-          cargo build --manifest-path extensions/forge/Cargo.toml --features native-cli --example openapi --locked
-          python3 extensions/forge/probe_cli.py
+          cargo build --manifest-path extensions/openapi/Cargo.toml --features native-cli --example openapi --locked
+          python3 extensions/openapi/probe_cli.py
 
-  forge-emscripten:
+  openapi-emscripten:
     # Experimental proof only; the existing Cloudflare target stays unchanged.
-    name: Forge Worker proof build (Emscripten)
+    name: OpenAPI Worker proof build (Emscripten)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -211,6 +211,6 @@ jobs:
           node-version: 22
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: extensions/forge-workers
+          workspaces: extensions/openapi-workers
       - name: Run pinned Emscripten HTTP proof
-        run: python3 extensions/forge-workers/smoke.py
+        run: python3 extensions/openapi-workers/smoke.py

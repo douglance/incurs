@@ -49,7 +49,7 @@ Worker build failed.
   Older standards retain the JSON text fallback.
 - Code Mode MCP hosts can supply an ExecutionProjector and its argument
   schemas. Search results, artifacts, and service errors bypass projection.
-- The unpublished Forge extension compiles OpenAPI contracts into packaged
+- The unpublished OpenAPI extension compiles OpenAPI contracts into packaged
   Rust SDKs and validates request and response boundaries. Its separate
   Emscripten proof runs HTTP probes in CI; it does not replace the default
   Cloudflare target.
