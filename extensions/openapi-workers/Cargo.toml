@@ -1,0 +1,27 @@
+[package]
+name = "incurs-openapi-worker-proof"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Keep experimental dependencies out of every existing workspace.
+[workspace]
+
+[dependencies]
+worker = { git = "https://github.com/cloudflare/workers-rs", rev = "b57ba6ef8198c65499c2f92b1845cc2412dd6e8c", features = ["experimental_tokio"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+incurs-openapi = { path = "../openapi", default-features = false }
+
+[patch."https://github.com/guybedford/libc"]
+libc = { git = "https://github.com/rust-lang/libc", rev = "ab79e74db7f0f063de9d479a8593d88dfdf7f2eb" }
+
+[patch.crates-io]
+libc = { git = "https://github.com/rust-lang/libc", rev = "ab79e74db7f0f063de9d479a8593d88dfdf7f2eb" }
+tokio = { git = "https://github.com/guybedford/tokio", rev = "7227f2d72739c3bc9821074cc704e7582be92907" }
+tokio-macros = { git = "https://github.com/guybedford/tokio", rev = "7227f2d72739c3bc9821074cc704e7582be92907" }
+mio = { git = "https://github.com/guybedford/mio", rev = "0788dbb67883cb6191503af999471def54e3fb77" }
+
+[profile.release]
+opt-level = "s"

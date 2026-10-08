@@ -1,5 +1,0 @@
-name = "incurs-forge-worker-proof"
-main = "build/index.js"
-compatibility_date = "2026-09-29"
-compatibility_flags = ["new_module_registry"]
-# Intentionally no build hook: the pinned builder is run explicitly.
