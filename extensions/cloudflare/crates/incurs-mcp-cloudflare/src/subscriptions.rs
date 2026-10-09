@@ -408,10 +408,13 @@ impl SubscriberState {
 
     fn matches(&self, frame: &DeliveryFrame) -> bool {
         match frame {
-            DeliveryFrame::Change { event, .. } => event
-                .resource_uris
-                .iter()
-                .any(|uri| self.filters.contains(uri)),
+            DeliveryFrame::Change { event, .. } => {
+                self.filters.is_empty()
+                    || event
+                        .resource_uris
+                        .iter()
+                        .any(|uri| self.filters.contains(uri))
+            }
             DeliveryFrame::Reset { .. } | DeliveryFrame::Heartbeat { .. } => true,
         }
     }
@@ -877,6 +880,27 @@ mod tests {
             "slow subscriber must be dropped once bounded queue overflows"
         );
         assert_eq!(store.subscriber_count(&scope), 0);
+    }
+
+    #[test]
+    fn subscriber_with_empty_filter_receives_live_events() {
+        let mut store = SubscriptionStore::default();
+        let scope = SubscriptionScope::new("tenant-a", "repo-a");
+        let subscriber = store.subscribe(&scope, Vec::new(), None);
+        store
+            .append(
+                &scope,
+                event("src-1", "gitfoundry://tenant/repo/head", "r1", 1000),
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.take_pending(&subscriber),
+            Some(vec![DeliveryFrame::Change {
+                cursor: 1,
+                event: event("src-1", "gitfoundry://tenant/repo/head", "r1", 1000),
+            }])
+        );
     }
 
     #[test]

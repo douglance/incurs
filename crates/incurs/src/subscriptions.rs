@@ -12,6 +12,7 @@ use std::task::{Context, Poll};
 
 use futures::channel::mpsc;
 use futures::future::{BoxFuture, FutureExt};
+use futures::lock::Mutex as AsyncMutex;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -256,6 +257,7 @@ pub trait SubscriptionStore: Send + Sync {
 pub struct SubscriptionHub<S> {
     store: Arc<S>,
     inner: Arc<Mutex<HubInner>>,
+    ingest_order: Arc<AsyncMutex<()>>,
     next_subscriber_id: AtomicU64,
 }
 
@@ -270,6 +272,7 @@ impl<S: SubscriptionStore> SubscriptionHub<S> {
         Self {
             store,
             inner: Arc::new(Mutex::new(HubInner::default())),
+            ingest_order: Arc::new(AsyncMutex::new(())),
             next_subscriber_id: AtomicU64::new(1),
         }
     }
@@ -280,6 +283,7 @@ impl<S: SubscriptionStore> SubscriptionHub<S> {
         envelope: ChangeEnvelope,
     ) -> Result<DeliveredChange, SubscriptionError> {
         envelope.validate()?;
+        let _ingest_order = self.ingest_order.lock().await;
         let stored = self.store.append(envelope).await?;
         if stored.inserted {
             self.publish(&stored.delivered);
@@ -344,7 +348,7 @@ impl<S: SubscriptionStore> SubscriptionHub<S> {
                 inner.send_to(id, SubscriptionEvent::Reset { reset });
             }
             for event in replay.events {
-                inner.send_to(id, event.into());
+                inner.send_replay_to(id, event.into());
             }
             inner.finish_replay(id);
         }
@@ -383,7 +387,19 @@ impl HubInner {
         if !subscriber.accepts(&event) {
             return;
         }
-        if !subscriber.try_send(event) {
+        if !subscriber.try_send(event, true) {
+            self.subscribers.remove(&id);
+        }
+    }
+
+    fn send_replay_to(&mut self, id: u64, event: SubscriptionEvent) {
+        let Some(subscriber) = self.subscribers.get_mut(&id) else {
+            return;
+        };
+        if !subscriber.accepts(&event) {
+            return;
+        }
+        if !subscriber.try_send(event, false) {
             self.subscribers.remove(&id);
         }
     }
@@ -436,7 +452,7 @@ impl Subscriber {
         }
     }
 
-    fn try_send(&mut self, event: SubscriptionEvent) -> bool {
+    fn try_send(&mut self, event: SubscriptionEvent, buffer_while_replaying: bool) -> bool {
         let source_id = match &event {
             SubscriptionEvent::Change { envelope, .. } => Some(envelope.source_id.clone()),
             SubscriptionEvent::Reset { .. } => None,
@@ -464,7 +480,7 @@ impl Subscriber {
             event,
             bytes: byte_len,
         };
-        if self.replaying {
+        if buffer_while_replaying && self.replaying {
             self.remember_queued(queued.bytes, source_id);
             self.buffered.push_back(queued);
             return true;
@@ -805,6 +821,92 @@ mod tests {
         }
     }
 
+    struct AppendBarrierStore {
+        events: Mutex<Vec<DeliveredChange>>,
+        blocked_source_id: &'static str,
+        append_started: Mutex<Option<oneshot::Sender<()>>>,
+        append_continue: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl AppendBarrierStore {
+        fn new(
+            blocked_source_id: &'static str,
+            append_started: oneshot::Sender<()>,
+            append_continue: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                blocked_source_id,
+                append_started: Mutex::new(Some(append_started)),
+                append_continue: Mutex::new(Some(append_continue)),
+            }
+        }
+    }
+
+    impl SubscriptionStore for AppendBarrierStore {
+        fn append<'a>(
+            &'a self,
+            envelope: ChangeEnvelope,
+        ) -> BoxFuture<'a, Result<StoreAppendResult, SubscriptionError>> {
+            async move {
+                let delivered = {
+                    let mut events = self
+                        .events
+                        .lock()
+                        .map_err(|_| SubscriptionError::StateUnavailable)?;
+                    let cursor = DeliveryCursor::new(format!("append:{}", events.len() + 1))?;
+                    let delivered = DeliveredChange { cursor, envelope };
+                    events.push(delivered.clone());
+                    delivered
+                };
+                if delivered.envelope.source_id == self.blocked_source_id {
+                    if let Some(started) = self
+                        .append_started
+                        .lock()
+                        .map_err(|_| SubscriptionError::StateUnavailable)?
+                        .take()
+                    {
+                        let _ = started.send(());
+                    }
+                    let continue_append = self
+                        .append_continue
+                        .lock()
+                        .map_err(|_| SubscriptionError::StateUnavailable)?
+                        .take();
+                    if let Some(continue_append) = continue_append {
+                        let _ = continue_append.await;
+                    }
+                }
+                Ok(StoreAppendResult {
+                    delivered,
+                    inserted: true,
+                })
+            }
+            .boxed()
+        }
+
+        fn replay<'a>(
+            &'a self,
+            request: &'a SubscriptionRequest,
+        ) -> BoxFuture<'a, Result<SubscriptionReplay, SubscriptionError>> {
+            async move {
+                let events = self
+                    .events
+                    .lock()
+                    .map_err(|_| SubscriptionError::StateUnavailable)?
+                    .iter()
+                    .filter(|event| request.matches(&event.envelope))
+                    .cloned()
+                    .collect();
+                Ok(SubscriptionReplay {
+                    reset: None,
+                    events,
+                })
+            }
+            .boxed()
+        }
+    }
+
     fn event_bytes(event: &SubscriptionEvent) -> usize {
         serde_json::to_vec(event).unwrap().len()
     }
@@ -848,13 +950,14 @@ mod tests {
     }
 
     #[test]
-    fn subscribe_does_not_drop_change_committed_while_replay_is_running() {
+    fn subscribe_delivers_replay_before_live_buffered_while_replay_is_running() {
         futures::executor::block_on(async {
             let (started_tx, started_rx) = oneshot::channel();
             let (continue_tx, continue_rx) = oneshot::channel();
             let store = Arc::new(ReplayBarrierStore::new(started_tx, continue_rx));
             let hub = SubscriptionHub::from_shared(store);
             let first = hub.ingest(envelope("s1", "memory://one")).await.unwrap();
+            let second = hub.ingest(envelope("s2", "memory://one")).await.unwrap();
 
             let subscribe = hub
                 .subscribe(
@@ -874,16 +977,52 @@ mod tests {
                 _ = subscribe => panic!("subscription completed before replay barrier"),
             }
 
-            let second = hub.ingest(envelope("s2", "memory://one")).await.unwrap();
+            let third = hub.ingest(envelope("s3", "memory://one")).await.unwrap();
             continue_tx.send(()).unwrap();
             let mut stream = subscribe.await.unwrap();
-            let third = hub.ingest(envelope("s3", "memory://one")).await.unwrap();
 
             assert_eq!(
                 stream.next().await,
                 Some(SubscriptionEvent::from(second.clone()))
             );
             assert_eq!(stream.next().await, Some(SubscriptionEvent::from(third)));
+            assert!(stream.next().now_or_never().is_none());
+        });
+    }
+
+    #[test]
+    fn concurrent_ingest_publishes_in_append_order() {
+        futures::executor::block_on(async {
+            let (started_tx, started_rx) = oneshot::channel();
+            let (continue_tx, continue_rx) = oneshot::channel();
+            let store = Arc::new(AppendBarrierStore::new("s1", started_tx, continue_rx));
+            let hub = SubscriptionHub::from_shared(store);
+            let mut stream = hub
+                .subscribe((), SubscriptionRequest::default())
+                .await
+                .unwrap();
+
+            let first_ingest = hub.ingest(envelope("s1", "memory://one")).fuse();
+            futures::pin_mut!(first_ingest);
+            let started_rx = started_rx.fuse();
+            futures::pin_mut!(started_rx);
+            futures::select! {
+                started = started_rx => started.unwrap(),
+                _ = first_ingest => panic!("first ingest completed before append barrier"),
+            }
+
+            let second_ingest = hub.ingest(envelope("s2", "memory://one")).fuse();
+            futures::pin_mut!(second_ingest);
+            futures::select! {
+                _ = second_ingest => panic!("second ingest completed before first append was released"),
+                default => {}
+            }
+            continue_tx.send(()).unwrap();
+            let first = first_ingest.await.unwrap();
+            let second = second_ingest.await.unwrap();
+
+            assert_eq!(stream.next().await, Some(SubscriptionEvent::from(first)));
+            assert_eq!(stream.next().await, Some(SubscriptionEvent::from(second)));
             assert!(stream.next().now_or_never().is_none());
         });
     }
