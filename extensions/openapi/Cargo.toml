@@ -2,7 +2,13 @@
 name = "incurs-openapi"
 version = "0.1.0"
 edition = "2024"
-publish = false
+description = "Compile OpenAPI contracts into Rust SDKs, documentation, and incurs tools"
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/douglance/incurs"
+keywords = ["openapi", "codegen", "sdk", "mcp"]
+categories = ["development-tools", "api-bindings"]
+publish = true
 
 [workspace]
 
@@ -19,9 +25,9 @@ sha2 = "0.10"
 thiserror = "2"
 url = "2"
 async-trait = { version = "0.1", optional = true }
-incurs = { path = "../../crates/incurs", default-features = false, optional = true }
-incurs-codemode = { path = "../../crates/incurs-codemode", default-features = false, optional = true }
-incurs-remote = { path = "../../crates/incurs-remote", default-features = false, optional = true }
+incurs = { path = "../../crates/incurs", version = "0.11.0", default-features = false, optional = true }
+incurs-codemode = { path = "../../crates/incurs-codemode", version = "0.9.0", default-features = false, optional = true }
+incurs-remote = { path = "../../crates/incurs-remote", version = "0.7.0", default-features = false, optional = true }
 tokio-util = { version = "0.7", optional = true }
 
 [dev-dependencies]
