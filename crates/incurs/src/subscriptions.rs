@@ -4,7 +4,7 @@
 //! projection. This module defines the shared event envelope, opaque delivery
 //! cursor, replay contract, and bounded in-process fanout used by transports.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -122,6 +122,15 @@ pub struct DeliveredChange {
     pub envelope: ChangeEnvelope,
 }
 
+/// Store result for one source append.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreAppendResult {
+    /// Delivered change assigned by the store.
+    pub delivered: DeliveredChange,
+    /// Whether this call inserted a new source event.
+    pub inserted: bool,
+}
+
 /// Reset marker emitted when replay cannot bridge a retention gap.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriptionReset {
@@ -234,7 +243,7 @@ pub trait SubscriptionStore: Send + Sync {
     fn append<'a>(
         &'a self,
         envelope: ChangeEnvelope,
-    ) -> BoxFuture<'a, Result<DeliveredChange, SubscriptionError>>;
+    ) -> BoxFuture<'a, Result<StoreAppendResult, SubscriptionError>>;
 
     /// Replays retained changes after the request cursor.
     fn replay<'a>(
@@ -271,9 +280,11 @@ impl<S: SubscriptionStore> SubscriptionHub<S> {
         envelope: ChangeEnvelope,
     ) -> Result<DeliveredChange, SubscriptionError> {
         envelope.validate()?;
-        let delivered = self.store.append(envelope).await?;
-        self.publish(&delivered);
-        Ok(delivered)
+        let stored = self.store.append(envelope).await?;
+        if stored.inserted {
+            self.publish(&stored.delivered);
+        }
+        Ok(stored.delivered)
     }
 
     /// Creates a replaying live stream for one trusted subscriber scope.
@@ -295,13 +306,17 @@ impl<S: SubscriptionStore> SubscriptionHub<S> {
                 return Err(SubscriptionError::UnauthorizedResource { uri: uri.clone() });
             }
         }
-        let replay = self.store.replay(&request).await?;
         let id = self.next_subscriber_id.fetch_add(1, Ordering::SeqCst);
         let (sender, receiver) = mpsc::channel(request.limits.max_events);
         let subscriber = Subscriber {
             scope: Arc::new(scope),
             filters: request.resource_uris.clone(),
             limits: request.limits,
+            replaying: true,
+            queued_bytes: 0,
+            queued_events: 0,
+            seen_source_ids: BTreeSet::new(),
+            buffered: VecDeque::new(),
             sender,
         };
         {
@@ -310,12 +325,28 @@ impl<S: SubscriptionStore> SubscriptionHub<S> {
                 .lock()
                 .map_err(|_| SubscriptionError::StateUnavailable)?;
             inner.subscribers.insert(id, subscriber);
+        }
+        let replay = match self.store.replay(&request).await {
+            Ok(replay) => replay,
+            Err(error) => {
+                if let Ok(mut inner) = self.inner.lock() {
+                    inner.subscribers.remove(&id);
+                }
+                return Err(error);
+            }
+        };
+        {
+            let mut inner = self
+                .inner
+                .lock()
+                .map_err(|_| SubscriptionError::StateUnavailable)?;
             if let Some(reset) = replay.reset {
                 inner.send_to(id, SubscriptionEvent::Reset { reset });
             }
             for event in replay.events {
                 inner.send_to(id, event.into());
             }
+            inner.finish_replay(id);
         }
         Ok(SubscriptionStream {
             id,
@@ -356,13 +387,35 @@ impl HubInner {
             self.subscribers.remove(&id);
         }
     }
+
+    fn finish_replay(&mut self, id: u64) {
+        let Some(subscriber) = self.subscribers.get_mut(&id) else {
+            return;
+        };
+        subscriber.replaying = false;
+        if !subscriber.flush_buffered() {
+            self.subscribers.remove(&id);
+        }
+    }
+
+    fn mark_consumed(&mut self, id: u64, bytes: usize) {
+        if let Some(subscriber) = self.subscribers.get_mut(&id) {
+            subscriber.queued_bytes = subscriber.queued_bytes.saturating_sub(bytes);
+            subscriber.queued_events = subscriber.queued_events.saturating_sub(1);
+        }
+    }
 }
 
 struct Subscriber {
     scope: Arc<dyn SubscriptionScope>,
     filters: Vec<String>,
     limits: SubscriptionLimits,
-    sender: mpsc::Sender<SubscriptionEvent>,
+    replaying: bool,
+    queued_bytes: usize,
+    queued_events: usize,
+    seen_source_ids: BTreeSet<String>,
+    buffered: VecDeque<QueuedEvent>,
+    sender: mpsc::Sender<QueuedEvent>,
 }
 
 impl Subscriber {
@@ -384,28 +437,91 @@ impl Subscriber {
     }
 
     fn try_send(&mut self, event: SubscriptionEvent) -> bool {
+        let source_id = match &event {
+            SubscriptionEvent::Change { envelope, .. } => Some(envelope.source_id.clone()),
+            SubscriptionEvent::Reset { .. } => None,
+        };
+        if source_id
+            .as_ref()
+            .is_some_and(|source_id| self.seen_source_ids.contains(source_id))
+        {
+            return true;
+        }
         let Ok(bytes) = serde_json::to_vec(&event) else {
             return false;
         };
-        if bytes.len() > self.limits.max_bytes {
+        let byte_len = bytes.len();
+        if byte_len > self.limits.max_bytes
+            || self
+                .queued_bytes
+                .checked_add(byte_len)
+                .is_none_or(|bytes| bytes > self.limits.max_bytes)
+            || self.queued_events >= self.limits.max_events
+        {
             return false;
         }
-        self.sender.try_send(event).is_ok()
+        let queued = QueuedEvent {
+            event,
+            bytes: byte_len,
+        };
+        if self.replaying {
+            self.remember_queued(queued.bytes, source_id);
+            self.buffered.push_back(queued);
+            return true;
+        }
+        if self.sender.try_send(queued).is_err() {
+            return false;
+        }
+        self.remember_queued(byte_len, source_id);
+        true
     }
+
+    fn flush_buffered(&mut self) -> bool {
+        while let Some(queued) = self.buffered.pop_front() {
+            if self.sender.try_send(queued).is_err() {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn remember_queued(&mut self, bytes: usize, source_id: Option<String>) {
+        self.queued_bytes += bytes;
+        self.queued_events += 1;
+        if let Some(source_id) = source_id {
+            self.seen_source_ids.insert(source_id);
+        }
+    }
+}
+
+struct QueuedEvent {
+    event: SubscriptionEvent,
+    bytes: usize,
 }
 
 /// A live subscription stream. Dropping it unsubscribes from hub fanout.
 pub struct SubscriptionStream {
     id: u64,
     hub: Weak<Mutex<HubInner>>,
-    receiver: mpsc::Receiver<SubscriptionEvent>,
+    receiver: mpsc::Receiver<QueuedEvent>,
 }
 
 impl Stream for SubscriptionStream {
     type Item = SubscriptionEvent;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.receiver).poll_next(cx)
+        match Pin::new(&mut self.receiver).poll_next(cx) {
+            Poll::Ready(Some(queued)) => {
+                if let Some(hub) = self.hub.upgrade()
+                    && let Ok(mut inner) = hub.lock()
+                {
+                    inner.mark_consumed(self.id, queued.bytes);
+                }
+                Poll::Ready(Some(queued.event))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -445,14 +561,17 @@ impl SubscriptionStore for InMemorySubscriptionStore {
     fn append<'a>(
         &'a self,
         envelope: ChangeEnvelope,
-    ) -> BoxFuture<'a, Result<DeliveredChange, SubscriptionError>> {
+    ) -> BoxFuture<'a, Result<StoreAppendResult, SubscriptionError>> {
         async move {
             let mut inner = self
                 .inner
                 .lock()
                 .map_err(|_| SubscriptionError::StateUnavailable)?;
             if let Some(existing) = inner.by_source_id.get(&envelope.source_id) {
-                return Ok(existing.clone());
+                return Ok(StoreAppendResult {
+                    delivered: existing.clone(),
+                    inserted: false,
+                });
             }
             inner.next_cursor += 1;
             let delivered = DeliveredChange {
@@ -468,7 +587,10 @@ impl SubscriptionStore for InMemorySubscriptionStore {
                     inner.by_source_id.remove(&removed.envelope.source_id);
                 }
             }
-            Ok(delivered)
+            Ok(StoreAppendResult {
+                delivered,
+                inserted: true,
+            })
         }
         .boxed()
     }
@@ -482,7 +604,10 @@ impl SubscriptionStore for InMemorySubscriptionStore {
                 .inner
                 .lock()
                 .map_err(|_| SubscriptionError::StateUnavailable)?;
-            let first = inner.events.front().and_then(|event| parse_mem_cursor(&event.cursor));
+            let first = inner
+                .events
+                .front()
+                .and_then(|event| parse_mem_cursor(&event.cursor));
             let after = match &request.after {
                 Some(cursor) => match parse_mem_cursor(cursor) {
                     Some(value) => Some(value),
@@ -500,9 +625,11 @@ impl SubscriptionStore for InMemorySubscriptionStore {
             let events = inner
                 .events
                 .iter()
-                .filter(|event| after.is_none_or(|after| {
-                    parse_mem_cursor(&event.cursor).is_some_and(|cursor| cursor > after)
-                }))
+                .filter(|event| {
+                    after.is_none_or(|after| {
+                        parse_mem_cursor(&event.cursor).is_some_and(|cursor| cursor > after)
+                    })
+                })
                 .filter(|event| request.matches(&event.envelope))
                 .cloned()
                 .collect();
@@ -565,6 +692,7 @@ pub enum SubscriptionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::channel::oneshot;
     use futures::{FutureExt, StreamExt};
 
     fn envelope(source_id: &str, uri: &str) -> ChangeEnvelope {
@@ -584,6 +712,101 @@ mod tests {
         fn permits_resource(&self, resource_uri: &str) -> bool {
             resource_uri.starts_with(self.0)
         }
+    }
+
+    struct ReplayBarrierStore {
+        events: Mutex<Vec<DeliveredChange>>,
+        replay_started: Mutex<Option<oneshot::Sender<()>>>,
+        replay_continue: Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl ReplayBarrierStore {
+        fn new(
+            replay_started: oneshot::Sender<()>,
+            replay_continue: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+                replay_started: Mutex::new(Some(replay_started)),
+                replay_continue: Mutex::new(Some(replay_continue)),
+            }
+        }
+    }
+
+    impl SubscriptionStore for ReplayBarrierStore {
+        fn append<'a>(
+            &'a self,
+            envelope: ChangeEnvelope,
+        ) -> BoxFuture<'a, Result<StoreAppendResult, SubscriptionError>> {
+            async move {
+                let mut events = self
+                    .events
+                    .lock()
+                    .map_err(|_| SubscriptionError::StateUnavailable)?;
+                if let Some(existing) = events
+                    .iter()
+                    .find(|event| event.envelope.source_id == envelope.source_id)
+                {
+                    return Ok(StoreAppendResult {
+                        delivered: existing.clone(),
+                        inserted: false,
+                    });
+                }
+                let cursor = DeliveryCursor::new(format!("barrier:{}", events.len() + 1))?;
+                let delivered = DeliveredChange { cursor, envelope };
+                events.push(delivered.clone());
+                Ok(StoreAppendResult {
+                    delivered,
+                    inserted: true,
+                })
+            }
+            .boxed()
+        }
+
+        fn replay<'a>(
+            &'a self,
+            request: &'a SubscriptionRequest,
+        ) -> BoxFuture<'a, Result<SubscriptionReplay, SubscriptionError>> {
+            async move {
+                let snapshot = {
+                    let events = self
+                        .events
+                        .lock()
+                        .map_err(|_| SubscriptionError::StateUnavailable)?;
+                    events
+                        .iter()
+                        .filter(|event| request.matches(&event.envelope))
+                        .filter(|event| request.after.as_ref() != Some(&event.cursor))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                if let Some(started) = self
+                    .replay_started
+                    .lock()
+                    .map_err(|_| SubscriptionError::StateUnavailable)?
+                    .take()
+                {
+                    let _ = started.send(());
+                }
+                let continue_replay = self
+                    .replay_continue
+                    .lock()
+                    .map_err(|_| SubscriptionError::StateUnavailable)?
+                    .take();
+                if let Some(continue_replay) = continue_replay {
+                    let _ = continue_replay.await;
+                }
+                Ok(SubscriptionReplay {
+                    reset: None,
+                    events: snapshot,
+                })
+            }
+            .boxed()
+        }
+    }
+
+    fn event_bytes(event: &SubscriptionEvent) -> usize {
+        serde_json::to_vec(event).unwrap().len()
     }
 
     #[test]
@@ -625,11 +848,108 @@ mod tests {
     }
 
     #[test]
+    fn subscribe_does_not_drop_change_committed_while_replay_is_running() {
+        futures::executor::block_on(async {
+            let (started_tx, started_rx) = oneshot::channel();
+            let (continue_tx, continue_rx) = oneshot::channel();
+            let store = Arc::new(ReplayBarrierStore::new(started_tx, continue_rx));
+            let hub = SubscriptionHub::from_shared(store);
+            let first = hub.ingest(envelope("s1", "memory://one")).await.unwrap();
+
+            let subscribe = hub
+                .subscribe(
+                    (),
+                    SubscriptionRequest {
+                        resource_uris: vec!["memory://one".to_string()],
+                        after: Some(first.cursor.clone()),
+                        limits: SubscriptionLimits::default(),
+                    },
+                )
+                .fuse();
+            futures::pin_mut!(subscribe);
+            let started_rx = started_rx.fuse();
+            futures::pin_mut!(started_rx);
+            futures::select! {
+                started = started_rx => started.unwrap(),
+                _ = subscribe => panic!("subscription completed before replay barrier"),
+            }
+
+            let second = hub.ingest(envelope("s2", "memory://one")).await.unwrap();
+            continue_tx.send(()).unwrap();
+            let mut stream = subscribe.await.unwrap();
+            let third = hub.ingest(envelope("s3", "memory://one")).await.unwrap();
+
+            assert_eq!(
+                stream.next().await,
+                Some(SubscriptionEvent::from(second.clone()))
+            );
+            assert_eq!(stream.next().await, Some(SubscriptionEvent::from(third)));
+            assert!(stream.next().now_or_never().is_none());
+        });
+    }
+
+    #[test]
+    fn duplicate_ingest_does_not_fan_out_duplicate_source_change() {
+        futures::executor::block_on(async {
+            let hub = SubscriptionHub::new(InMemorySubscriptionStore::default());
+            let mut stream = hub
+                .subscribe((), SubscriptionRequest::default())
+                .await
+                .unwrap();
+
+            let first = hub.ingest(envelope("s1", "memory://one")).await.unwrap();
+            let duplicate = hub.ingest(envelope("s1", "memory://one")).await.unwrap();
+
+            assert_eq!(duplicate.cursor, first.cursor);
+            assert_eq!(stream.next().await, Some(SubscriptionEvent::from(first)));
+            assert!(stream.next().now_or_never().is_none());
+        });
+    }
+
+    #[test]
+    fn subscriber_disconnects_when_aggregate_queued_bytes_exceed_limit() {
+        futures::executor::block_on(async {
+            let hub = SubscriptionHub::new(InMemorySubscriptionStore::default());
+            let first = DeliveredChange {
+                cursor: DeliveryCursor::new("mem:1").unwrap(),
+                envelope: envelope("s1", "memory://one"),
+            };
+            let limit = event_bytes(&SubscriptionEvent::from(first.clone()));
+            let mut stream = hub
+                .subscribe(
+                    (),
+                    SubscriptionRequest {
+                        resource_uris: Vec::new(),
+                        after: None,
+                        limits: SubscriptionLimits {
+                            max_events: 8,
+                            max_bytes: limit,
+                        },
+                    },
+                )
+                .await
+                .unwrap();
+
+            let delivered = hub.ingest(envelope("s1", "memory://one")).await.unwrap();
+            hub.ingest(envelope("s2", "memory://one")).await.unwrap();
+
+            assert_eq!(
+                stream.next().await,
+                Some(SubscriptionEvent::from(delivered))
+            );
+            assert_eq!(stream.next().await, None);
+        });
+    }
+
+    #[test]
     fn authorizes_each_event_before_delivery() {
         futures::executor::block_on(async {
             let hub = SubscriptionHub::new(InMemorySubscriptionStore::default());
             let mut stream = hub
-                .subscribe(PrefixScope("memory://allowed"), SubscriptionRequest::default())
+                .subscribe(
+                    PrefixScope("memory://allowed"),
+                    SubscriptionRequest::default(),
+                )
                 .await
                 .unwrap();
             let delivered = hub
@@ -639,7 +959,10 @@ mod tests {
             hub.ingest(envelope("s2", "memory://denied/two"))
                 .await
                 .unwrap();
-            assert_eq!(stream.next().await, Some(SubscriptionEvent::from(delivered)));
+            assert_eq!(
+                stream.next().await,
+                Some(SubscriptionEvent::from(delivered))
+            );
             assert!(stream.next().now_or_never().is_none());
         });
     }
