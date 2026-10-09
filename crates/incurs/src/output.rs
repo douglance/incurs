@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::pin::Pin;
 
 use crate::errors::FieldError;
@@ -37,6 +38,15 @@ pub enum CommandResult {
         /// Process exit code to report for an otherwise successful command,
         /// such as the status of a subprocess the command wrapped.
         exit_code: Option<i32>,
+    },
+    /// MCP multi-round tool result that asks the client to fulfill peer input.
+    InputRequired {
+        /// Server-assigned input request objects keyed by request identifier.
+        input_requests: BTreeMap<String, Value>,
+        /// Opaque state the client echoes on the retry.
+        request_state: Option<String>,
+        /// Namespaced protocol metadata attached to the intermediate result.
+        meta: BTreeMap<String, Value>,
     },
     /// Failed execution with error details.
     Error {

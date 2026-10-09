@@ -11,6 +11,7 @@ members = [
   "crates/incurs-mcp-discovery",
   "crates/incurs-mcp-client",
   "crates/incurs-mcp-registry",
+  "crates/incurs-mcp-apps",
   "crates/incurs-macros",
   "crates/incurs-cli",
   "crates/incurs-extras",

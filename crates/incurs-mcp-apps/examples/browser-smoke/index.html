@@ -1,0 +1,14 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>MCP Apps browser smoke</title>
+<script type="module">
+  import init, { run_smoke } from "./pkg/browser_smoke.js";
+
+  try {
+    await init();
+    const result = JSON.parse(await run_smoke());
+    window.__mcpAppsSmoke = { ok: true, result };
+  } catch (error) {
+    window.__mcpAppsSmoke = { ok: false, error: String(error) };
+  }
+</script>

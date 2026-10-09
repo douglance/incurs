@@ -137,6 +137,7 @@ pub(crate) async fn run_command(def: &crate::command::CommandDef, options: Value
         display_name: def.name.clone(),
         globals: Value::Object(Map::new()),
         options,
+        mcp: None,
         request: None,
         format: crate::output::Format::Json,
         format_explicit: false,

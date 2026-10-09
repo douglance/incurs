@@ -387,6 +387,12 @@ impl Cli {
         self
     }
 
+    /// Returns whether this CLI has a top-level command or group with `name`.
+    #[must_use]
+    pub fn has_command(&self, name: &str) -> bool {
+        self.commands.contains_key(name)
+    }
+
     /// Mounts a sub-CLI as a command group.
     ///
     /// If the sub-CLI has a root command and no subcommands, it is mounted
@@ -1596,6 +1602,7 @@ impl Cli {
                 parse_mode: ParseMode::Argv,
                 path: command_path.clone(),
                 request: None,
+                mcp: None,
                 vars_fields: self.vars_fields.clone(),
                 version: self.version.clone(),
             },
@@ -1693,6 +1700,17 @@ impl Cli {
                 if let Some(exit_code) = exit_code {
                     std::process::exit(exit_code);
                 }
+            }
+            InternalResult::InputRequired { .. } => {
+                let code = "MCP_INPUT_REQUIRED";
+                let message = "This command requires an MCP client input round";
+                if human && !builtin.format_explicit {
+                    writeln_stdout(&format_human_error(code, message));
+                } else {
+                    let error = serde_json::json!({ "code": code, "message": message });
+                    writeln_stdout(&format_value(&error, format));
+                }
+                std::process::exit(1);
             }
             InternalResult::Error {
                 code,
@@ -2832,6 +2850,7 @@ impl Cli {
                 parse_mode: ParseMode::Argv,
                 path: command_path.clone(),
                 request: None,
+                mcp: None,
                 vars_fields: self.vars_fields.clone(),
                 version: self.version.clone(),
             },
@@ -2932,6 +2951,17 @@ impl Cli {
                 // A successful command may still report a wrapped process's
                 // exit status.
                 Ok(exit_code)
+            }
+            InternalResult::InputRequired { .. } => {
+                let code = "MCP_INPUT_REQUIRED";
+                let message = "This command requires an MCP client input round";
+                if human {
+                    wln!(&format_human_error(code, message));
+                } else {
+                    let error = serde_json::json!({ "code": code, "message": message });
+                    wln!(&format_value(&error, format));
+                }
+                Ok(Some(1))
             }
             InternalResult::Error {
                 code,
@@ -3273,6 +3303,7 @@ impl Cli {
                 parse_mode: ParseMode::Argv,
                 path,
                 request: None,
+                mcp: None,
                 vars_fields: self.vars_fields.clone(),
                 version: self.version.clone(),
             },
@@ -3289,6 +3320,17 @@ impl Cli {
             } => {
                 writeln!(writer, "{}", format_value(&data, format)).ok();
                 exit_code
+            }
+            InternalResult::InputRequired { .. } => {
+                let code = "MCP_INPUT_REQUIRED";
+                let message = "This command requires an MCP client input round";
+                if human {
+                    writeln!(writer, "{}", format_human_error(code, message)).ok();
+                } else {
+                    let error = serde_json::json!({ "code": code, "message": message });
+                    writeln!(writer, "{}", format_value(&error, format)).ok();
+                }
+                Some(1)
             }
             InternalResult::Error {
                 code,

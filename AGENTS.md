@@ -30,6 +30,8 @@
 - **Every feature builds alone** — CI checks each Cargo feature by itself on native and wasm32. `--all-features` hid an `http` feature that only compiled alongside `agent-plugins-mcp`.
 - **Code Mode is platform-neutral** — `incurs-codemode` owns the lifecycle, dispatch, replay, approval, rollback, and shared JavaScript program contract. Executors supply isolation and host bridging. Keep provider names, dependencies, configuration, documentation, tests, and runtime assumptions inside standalone workspaces under `extensions/`.
 - **`ToolCatalog` is the non-CLI invocation boundary** — MCP, Code Mode, and future transports resolve command metadata and execute through `ToolCatalog`. Preserve canonical command paths for config lookup and middleware context. `ParseMode::Flat` does not apply config defaults, so merge resolved command defaults into structured arguments before `command::execute`.
+- **Facade registration preserves existing commands** — check both advertised tool names and canonical command paths before staging a registration. A unique facade-local name can still replace a base CLI command during materialization. Keep a regression that rejects the collision and invokes the original command, plus a confirmed mutation of the collision check.
+
 - **Tool cancellation covers active commands** — race the shared `command::execute` future against `ToolCallControl::cancellation`; a pre-invocation check and stream-only cancellation do not stop an ordinary asynchronous command.
 - **CLI option boundaries are absolute** — built-in and custom global extraction must stop at the first literal `--`, preserve that separator for the command parser, and never inspect later tokens.
 - **Local Code Mode uses an actor boundary** — QuickJS execution is non-`Send`. Construct and drive it on a dedicated current-thread runtime, return the durable running state before the pass begins, and keep lifecycle requests responsive so cancellation can interrupt active code.
@@ -47,6 +49,12 @@
 - **MCP rich content follows the negotiated standard** — audio starts in 2025-03-26 and resource links in 2025-06-18. Preserve the JSON text fallback and prove native/portable direct and progressive calls across every served era.
 
 ## Testing Conventions
+
+- **Capture one formatter output at a time** — when migrating rustfmt output through griz, pass source on stdin with skip_children=true. Formatting a file path may print several child-module files with filename headers; never treat that concatenation as the replacement for one file. Verify the resulting diff before compilation.
+
+- **Schema oracles distinguish schemas from factories** — an exported name ending in Schema may be a function that builds a schema. Give every compared schema a positive control, and test form-content factories with a declared form and an independent answer corpus. Include nested array elements and Unicode scalar length controls; an object-only mutator misses invalid content blocks and UTF-16 length differences.
+
+- **Verification never rewrites source lockfiles** — use --locked in real workspaces and examples. Resolve changed manifests in a disposable mirror, then migrate the resulting lockfile through griz. A dependency change requires new package archives and a consumer built from those extractions.
 
 - **Noninteractive searches name their roots** - pass explicit files or directories to `rg` under apoc. Its retained stdin can otherwise make a source search wait for input.
 

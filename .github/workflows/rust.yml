@@ -154,6 +154,9 @@ jobs:
           - workspace: openapi
             os: ubuntu-latest
             wasm: true
+          - workspace: openai-mcp
+            os: ubuntu-latest
+            wasm: true
           - workspace: gpui
             os: macos-latest
             wasm: false
@@ -164,6 +167,14 @@ jobs:
           targets: ${{ matrix.wasm && 'wasm32-unknown-unknown' || '' }}
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: OpenAI oracle Node
+        if: matrix.workspace == 'openai-mcp'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: OpenAI Python oracle
+        if: matrix.workspace == 'openai-mcp'
+        uses: astral-sh/setup-uv@v6
       - name: Format
         run: cargo fmt --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --all --check
       - name: Test
@@ -177,6 +188,46 @@ jobs:
       - name: Wasm target
         if: matrix.wasm
         run: cargo check --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --target wasm32-unknown-unknown --locked
+
+      - name: OpenAI documentation
+        if: matrix.workspace == 'openai-mcp'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --manifest-path extensions/openai-mcp/Cargo.toml --workspace --all-features --no-deps --locked
+      - name: OpenAI pinned SDK parity
+        if: matrix.workspace == 'openai-mcp'
+        run: |
+          npm ci --ignore-scripts --prefix extensions/openai-mcp/parity
+          python3 extensions/openai-mcp/parity/check.py
+          python3 extensions/openai-mcp/parity/differential.py
+          python3 extensions/openai-mcp/parity/form-differential.py
+          python3 extensions/openai-mcp/parity/helper-differential.py
+          python3 extensions/openai-mcp/crates/incurs-openai-mcp/tests/native_stdio_probe.py
+      - name: OpenAI server reference controls
+        if: matrix.workspace == 'openai-mcp'
+        working-directory: extensions/openai-mcp/parity
+        run: node --import tsx server-oracle.mjs
+
+      - name: OpenAI browser tooling
+        if: matrix.workspace == 'openai-mcp'
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.126 --locked
+          npx --yes --package=@playwright/test@1.56.1 playwright install-deps chromium
+      - name: OpenAI browser runtime
+        if: matrix.workspace == 'openai-mcp'
+        run: node extensions/openai-mcp/crates/incurs-openai-mcp-app/examples/browser-smoke-gate.mjs
+      - name: OpenAI server wasm tooling
+        if: matrix.workspace == 'openai-mcp'
+        run: |
+          SDK_BINDGEN_VERSION=$(python3 -c 'import tomllib; data=tomllib.load(open("extensions/openai-mcp/Cargo.lock","rb")); versions={p["version"] for p in data["package"] if p["name"]=="wasm-bindgen"}; assert len(versions)==1, versions; print(versions.pop())')
+          cargo install wasm-bindgen-cli --version "$SDK_BINDGEN_VERSION" --locked --root "${RUNNER_TEMP}/server-wasm-bindgen"
+      - name: OpenAI server wasm runtime
+        if: matrix.workspace == 'openai-mcp'
+        env:
+          WASM_BINDGEN: ${{ runner.temp }}/server-wasm-bindgen/bin/wasm-bindgen
+        run: |
+          cargo build --manifest-path extensions/openai-mcp/Cargo.toml -p incurs-openai-mcp --example openai_mcp_wasm_runtime --target wasm32-unknown-unknown --no-default-features --locked
+          node extensions/openai-mcp/crates/incurs-openai-mcp/tests/wasm_runtime_probe.mjs
 
       - name: OpenAPI documentation
         if: matrix.workspace == 'openapi'

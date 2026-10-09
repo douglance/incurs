@@ -103,6 +103,16 @@ pub struct McpCommandOptions {
     pub name: Option<String>,
     /// Override for the exposed MCP tool description.
     pub description: Option<String>,
+    /// Human-readable title exposed on MCP tool listings when supported.
+    pub title: Option<String>,
+    /// Icon descriptors exposed on MCP tool listings.
+    pub icons: Vec<Value>,
+    /// Namespaced protocol metadata copied to the advertised MCP tool `_meta`.
+    pub meta: BTreeMap<String, Value>,
+    /// Namespaced protocol metadata copied to successful MCP tool results `_meta`.
+    pub result_meta: BTreeMap<String, Value>,
+    /// Whether this command is listed directly even when progressive discovery is enabled.
+    pub direct: bool,
     /// Tool-specific instructions exposed through MCP metadata.
     pub instructions: Option<String>,
     /// Behavioral annotations exposed to MCP clients.
@@ -131,6 +141,11 @@ impl Default for McpCommandOptions {
             enabled: true,
             name: None,
             description: None,
+            title: None,
+            icons: Vec::new(),
+            meta: BTreeMap::new(),
+            result_meta: BTreeMap::new(),
+            direct: false,
             instructions: None,
             annotations: None,
             result_content: Vec::new(),
@@ -138,6 +153,123 @@ impl Default for McpCommandOptions {
             input_schema: None,
         }
     }
+}
+
+/// Transport-neutral MCP peer request available during command execution.
+#[derive(Debug, Clone)]
+pub struct McpPeerRequest {
+    /// JSON-RPC method to send to the connected MCP peer.
+    pub method: String,
+    /// JSON-RPC params for the request.
+    pub params: Option<Value>,
+    /// Optional protocol metadata for the request.
+    pub meta: Option<Value>,
+}
+
+/// Transport-neutral MCP peer notification available during request handling.
+#[derive(Debug, Clone)]
+pub struct McpPeerNotification {
+    /// JSON-RPC method to notify on the connected MCP peer.
+    pub method: String,
+    /// JSON-RPC params for the notification.
+    pub params: Option<Value>,
+    /// Optional protocol metadata for the notification.
+    pub meta: Option<Value>,
+}
+
+/// Failure returned by an MCP peer request hook.
+#[derive(Debug, Clone)]
+pub struct McpPeerError {
+    /// Stable machine-readable failure code.
+    pub code: String,
+    /// Human-readable failure message.
+    pub message: String,
+    /// Optional structured details supplied by the peer or transport.
+    pub data: Option<Value>,
+}
+
+/// Future returned by an MCP peer request hook.
+pub type McpPeerFuture =
+    Pin<Box<dyn Future<Output = Result<Value, McpPeerError>> + Send + 'static>>;
+
+/// Future returned by an MCP peer notification hook.
+pub type McpPeerNotifyFuture =
+    Pin<Box<dyn Future<Output = Result<(), McpPeerError>> + Send + 'static>>;
+
+/// Shared handle for sending provider-neutral MCP requests to the connected peer.
+#[derive(Clone)]
+pub struct McpPeer {
+    request: Arc<dyn Fn(McpPeerRequest) -> McpPeerFuture + Send + Sync>,
+    notify: Option<Arc<dyn Fn(McpPeerNotification) -> McpPeerNotifyFuture + Send + Sync>>,
+}
+
+impl std::fmt::Debug for McpPeer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("McpPeer").finish_non_exhaustive()
+    }
+}
+
+impl McpPeer {
+    /// Creates a peer handle from a transport-provided async request function.
+    pub fn new<F, Fut>(request: F) -> Self
+    where
+        F: Fn(McpPeerRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, McpPeerError>> + Send + 'static,
+    {
+        Self {
+            request: Arc::new(move |peer_request| Box::pin(request(peer_request))),
+            notify: None,
+        }
+    }
+
+    /// Creates a peer handle from async request and notification functions.
+    pub fn with_notify<F, Fut, N, NotifyFut>(request: F, notify: N) -> Self
+    where
+        F: Fn(McpPeerRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Value, McpPeerError>> + Send + 'static,
+        N: Fn(McpPeerNotification) -> NotifyFut + Send + Sync + 'static,
+        NotifyFut: Future<Output = Result<(), McpPeerError>> + Send + 'static,
+    {
+        Self {
+            request: Arc::new(move |peer_request| Box::pin(request(peer_request))),
+            notify: Some(Arc::new(move |notification| Box::pin(notify(notification)))),
+        }
+    }
+
+    /// Sends one request to the connected MCP peer.
+    pub async fn request(&self, request: McpPeerRequest) -> Result<Value, McpPeerError> {
+        (self.request)(request).await
+    }
+
+    /// Sends one notification to the connected MCP peer.
+    pub async fn notify(&self, notification: McpPeerNotification) -> Result<(), McpPeerError> {
+        let Some(notify) = &self.notify else {
+            return Err(McpPeerError {
+                code: "MCP_PEER_NOTIFICATION_UNSUPPORTED".to_string(),
+                message: "The connected MCP transport does not support peer notifications"
+                    .to_string(),
+                data: None,
+            });
+        };
+        notify(notification).await
+    }
+}
+
+/// MCP-specific metadata for one command invocation.
+#[derive(Debug, Clone, Default)]
+pub struct McpCallContext {
+    /// Selected protocol version for this invocation.
+    pub protocol_version: Option<String>,
+    /// Complete request `_meta` object, when the client supplied one.
+    pub request_meta: Option<Value>,
+    /// Client capabilities copied from request metadata or initialization.
+    pub client_capabilities: Option<Value>,
+    /// Client responses for a retry after an input-required result.
+    pub input_responses: Option<Value>,
+    /// Opaque request state echoed by the client for a retry.
+    pub request_state: Option<String>,
+    /// Optional provider-neutral request hook for server-initiated peer requests.
+    pub peer: Option<McpPeer>,
 }
 
 /// A registered command definition (leaf node in the command tree).
@@ -690,6 +822,8 @@ pub struct CommandContext {
     pub options: Value,
     /// Transport request metadata for HTTP and MCP invocations.
     pub request: Option<RequestContext>,
+    /// MCP-specific request metadata for MCP invocations.
+    pub mcp: Option<McpCallContext>,
     /// The resolved output format.
     pub format: Format,
     /// Whether the format was explicitly requested by the user.
@@ -737,6 +871,8 @@ pub struct ExecuteOptions {
     pub path: String,
     /// Transport request metadata for HTTP and MCP invocations.
     pub request: Option<RequestContext>,
+    /// MCP-specific request metadata for MCP invocations.
+    pub mcp: Option<McpCallContext>,
     /// Vars field metadata for middleware variables.
     pub vars_fields: Vec<FieldMeta>,
     /// The CLI version string.
@@ -755,6 +891,15 @@ pub enum InternalResult {
         cta: Option<CtaBlock>,
         /// Process exit code to report for an otherwise successful command.
         exit_code: Option<i32>,
+    },
+    /// MCP multi-round result that asks the client for additional input.
+    InputRequired {
+        /// Server-assigned input request objects keyed by request identifier.
+        input_requests: BTreeMap<String, Value>,
+        /// Opaque state the client echoes on the retry.
+        request_state: Option<String>,
+        /// Namespaced protocol metadata attached to the intermediate result.
+        meta: BTreeMap<String, Value>,
     },
     /// Failed execution with error details.
     Error {
@@ -816,6 +961,7 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
         parse_mode,
         path,
         request,
+        mcp,
         vars_fields: _,
         version,
     } = options;
@@ -925,6 +1071,7 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
                 globals,
                 options: parsed_options,
                 request,
+                mcp,
                 format,
                 format_explicit,
                 name: name.clone(),
@@ -947,6 +1094,18 @@ pub async fn execute(command: Arc<CommandDef>, options: ExecuteOptions) -> Inter
                         data,
                         cta,
                         exit_code,
+                    });
+                }
+                CommandResult::InputRequired {
+                    input_requests,
+                    request_state,
+                    meta,
+                } => {
+                    let mut result_guard = result_inner.lock().await;
+                    *result_guard = Some(InternalResult::InputRequired {
+                        input_requests,
+                        request_state,
+                        meta,
                     });
                 }
                 CommandResult::Error {

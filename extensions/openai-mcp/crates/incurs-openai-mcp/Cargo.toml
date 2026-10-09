@@ -1,0 +1,19 @@
+[package]
+name = "incurs-openai-mcp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Server-side OpenAI MCP extension helpers for incurs"
+
+[dependencies]
+async-trait = "0.1"
+incurs = { path = "../../../../crates/incurs", version = "0.11.0", default-features = false }
+incurs-openai-mcp-protocol = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }

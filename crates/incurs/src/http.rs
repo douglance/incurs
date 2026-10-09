@@ -648,6 +648,7 @@ async fn execute_http_command(
                         .join("/")
                 ),
             }),
+            mcp: None,
             vars_fields: state.vars_fields.as_ref().clone(),
             version: state.version.clone(),
         },
@@ -735,6 +736,17 @@ async fn execute_http_command(
                 );
             }
             json_response(status, &response)
+        }
+        InternalResult::InputRequired { .. } => {
+            let response = serde_json::json!({
+                "ok": false,
+                "error": {
+                    "code": "MCP_INPUT_REQUIRED",
+                    "message": "This command requires an MCP client input round"
+                },
+                "meta": { "command": path, "duration": duration }
+            });
+            json_response(StatusCode::CONFLICT, &response)
         }
         InternalResult::Stream(stream) => ndjson_stream_response(stream, &path, start),
         InternalResult::RecordStream(stream) => record_stream_response(stream, &path, start),

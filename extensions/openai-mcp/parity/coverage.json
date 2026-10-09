@@ -1,0 +1,1401 @@
+{
+  "typescript": [
+    {
+      "module": "server",
+      "upstream": "createElicitInput",
+      "rust": "OpenAiElicitInput",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "createMentions",
+      "rust": "OpenAiMentions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "createOpenAIFormContentSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "createSettings",
+      "rust": "OpenAiSettings",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "getResourcePath",
+      "rust": "get_resource_path",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OPENAI_RESOURCE_METADATA_KEY",
+      "rust": "OPENAI_RESOURCE_METADATA_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OPENAI_SETTINGS_CAPABILITY_KEY",
+      "rust": "OPENAI_SETTINGS_CAPABILITY_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIElicitInput",
+      "rust": "OpenAiElicitInput",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIExtensions",
+      "rust": "OpenAiExtensions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFileEntrypointInput",
+      "rust": "OpenAIFileEntrypointInput",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFileEntrypointInputSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFileFormField",
+      "rust": "OpenAIFileFormField",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFileFormFieldSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIForm",
+      "rust": "OpenAIForm",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormField",
+      "rust": "OpenAIFormField",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormFieldSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormOption",
+      "rust": "OpenAIFormOption",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormRequestParams",
+      "rust": "OpenAIFormRequestParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormResult",
+      "rust": "OpenAIFormResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormResultSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIFormSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionItem",
+      "rust": "OpenAIMentionItem",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionItemSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionResource",
+      "rust": "OpenAIMentionResource",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionResourceSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentions",
+      "rust": "OpenAiMentions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionSearchHandler",
+      "rust": "MentionSearchHandler",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionSearchParams",
+      "rust": "OpenAIMentionSearchParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionSearchParamsSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionSearchResult",
+      "rust": "OpenAIMentionSearchResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIMentionSearchResultSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIResourceToolCallMetadata",
+      "rust": "OpenAIResourceToolCallMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIResourceToolCallMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettings",
+      "rust": "OpenAiSettings",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsCapability",
+      "rust": "OpenAISettingsCapability",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsCapabilitySchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsField",
+      "rust": "OpenAiSettingsField",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsFieldPresentation",
+      "rust": "OpenAISettingsFieldPresentation",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsFieldPresentationSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsGroup",
+      "rust": "OpenAISettingsGroup",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsGroupSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsLayoutItem",
+      "rust": "OpenAISettingsLayoutItem",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsLayoutItemSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsPropertySchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsReadResult",
+      "rust": "OpenAISettingsReadResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsReadResultSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsRegistration",
+      "rust": "OpenAiSettingsRegistration",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsTool",
+      "rust": "OpenAISettingsTool",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsToolSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsUpdateArguments",
+      "rust": "OpenAISettingsUpdateArguments",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsUpdateArgumentsSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsUpdateResult",
+      "rust": "OpenAISettingsUpdateResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAISettingsUpdateResultSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiEntrypoint",
+      "rust": "OpenAIUiEntrypoint",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiEntrypointSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiQuickAction",
+      "rust": "OpenAIUiQuickAction",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiQuickActionSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiResourceMetadata",
+      "rust": "OpenAIUiResourceMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiResourceMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiToolMetadata",
+      "rust": "OpenAIUiToolMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "server",
+      "upstream": "OpenAIUiToolMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OPENAI_DEEP_LINK_KEY",
+      "rust": "OPENAI_DEEP_LINK_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OPENAI_FILE_OPEN_METHOD",
+      "rust": "OPENAI_FILE_OPEN_METHOD",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OPENAI_MCP_APP_RESOURCE_WRITE_METHOD",
+      "rust": "OPENAI_MCP_APP_RESOURCE_WRITE_METHOD",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OPENAI_MESSAGE_KEY",
+      "rust": "OPENAI_MESSAGE_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OPENAI_MODEL_CONTEXT_KEY",
+      "rust": "OPENAI_MODEL_CONTEXT_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OPENAI_RESOURCE_METADATA_KEY",
+      "rust": "OPENAI_RESOURCE_METADATA_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIDeepLink",
+      "rust": "OpenAiDeepLink",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIDeepLinkHostState",
+      "rust": "OpenAIDeepLinkHostState",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIDeepLinkHostStateSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIExtensions",
+      "rust": "OpenAiAppExtensions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIFileEntrypointInput",
+      "rust": "OpenAIFileEntrypointInput",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIFileEntrypointInputSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIFileOpenParams",
+      "rust": "OpenAIFileOpenParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIFileOpenParamsSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIFiles",
+      "rust": "OpenAiFiles",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIMessage",
+      "rust": "OpenAiMessage",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIMessageOptions",
+      "rust": "OpenAIMessageOptions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIMessageOptionsSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIMessageParams",
+      "rust": "OpenAIMessageParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIMessageParamsSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIModelContext",
+      "rust": "OpenAiModelContext",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIModelContextHostState",
+      "rust": "OpenAIModelContextHostState",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIModelContextHostStateSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIModelContextMetadata",
+      "rust": "OpenAIModelContextMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIModelContextMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIModelContextUpdateResult",
+      "rust": "OpenAIModelContextUpdateResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceContent",
+      "rust": "OpenAiResourceContent",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceContentMetadata",
+      "rust": "OpenAIResourceContentMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceContentMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceMetadata",
+      "rust": "OpenAIResourceMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceRead",
+      "rust": "OpenAiResourceReadParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceReadMetadata",
+      "rust": "OpenAIResourceReadMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceReadMetadataSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceReadResult",
+      "rust": "OpenAiResourceReadResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceRepresentation",
+      "rust": "OpenAIResourceRepresentation",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceRepresentationSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResources",
+      "rust": "OpenAiResources",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceUpdatedHandler",
+      "rust": "add_update_handler",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceWriteOptions",
+      "rust": "OpenAiResourceWriteOptions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-app/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceWriteParams",
+      "rust": "OpenAIResourceWriteParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceWriteParamsSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceWriteResult",
+      "rust": "OpenAIResourceWriteResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-app/tests/openai_app.rs"
+      ]
+    },
+    {
+      "module": "app",
+      "upstream": "OpenAIResourceWriteResultSchema",
+      "rust": "validate_schema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/parity/differential.py"
+      ]
+    }
+  ],
+  "python": [
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OPENAI_ELICITATION_METHOD",
+      "rust": "OPENAI_ELICITATION_METHOD",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OPENAI_RESOURCE_METADATA_KEY",
+      "rust": "OPENAI_RESOURCE_METADATA_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OPENAI_SETTINGS_CAPABILITY_KEY",
+      "rust": "OPENAI_SETTINGS_CAPABILITY_KEY",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIExtensions",
+      "rust": "OpenAiExtensions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIFileEntrypoint",
+      "rust": "OpenAIUiEntrypoint",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIFileEntrypointFile",
+      "rust": "OpenAIFileEntrypointFile",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIFileEntrypointInput",
+      "rust": "OpenAIFileEntrypointInput",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIGlobalEntrypoint",
+      "rust": "OpenAIUiEntrypoint",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIMentionItem",
+      "rust": "OpenAIMentionItem",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIMentionResource",
+      "rust": "OpenAIMentionResource",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIMentionSearchHandler",
+      "rust": "MentionSearchHandler",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIMentionSearchParams",
+      "rust": "OpenAIMentionSearchParams",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIMentionSearchResult",
+      "rust": "OpenAIMentionSearchResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIMentions",
+      "rust": "OpenAiMentions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIResourceMetadata",
+      "rust": "OpenAIResourceMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIResourceToolCallMetadata",
+      "rust": "OpenAIResourceToolCallMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettings",
+      "rust": "OpenAiSettings",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsCapability",
+      "rust": "OpenAISettingsCapability",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsEntrypoint",
+      "rust": "OpenAIUiEntrypoint",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsFieldPresentation",
+      "rust": "OpenAISettingsFieldPresentation",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsGroup",
+      "rust": "OpenAISettingsGroup",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsLayoutItem",
+      "rust": "OpenAISettingsLayoutItem",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsProperty",
+      "rust": "OpenAISettingsProperty",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsReadResult",
+      "rust": "OpenAISettingsReadResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsTool",
+      "rust": "OpenAISettingsTool",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsUpdateArguments",
+      "rust": "OpenAISettingsUpdateArguments",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAISettingsUpdateResult",
+      "rust": "OpenAISettingsUpdateResult",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIThreadEntrypoint",
+      "rust": "OpenAIUiEntrypoint",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIUiEntrypoint",
+      "rust": "OpenAIUiEntrypoint",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIUiQuickAction",
+      "rust": "OpenAIUiQuickAction",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIUiQuickActionToolTarget",
+      "rust": "OpenAIUiQuickActionToolTarget",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIUiResourceMetadata",
+      "rust": "OpenAIUiResourceMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "OpenAIUiToolMetadata",
+      "rust": "OpenAIUiToolMetadata",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/__init__.py",
+      "upstream": "get_resource_path",
+      "rust": "get_resource_path",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/form/__init__.py",
+      "upstream": "FileUserOptions",
+      "rust": "FileUserOptions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/form/__init__.py",
+      "upstream": "OPENAI_ELICITATION_METHOD",
+      "rust": "OPENAI_ELICITATION_METHOD",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/form/__init__.py",
+      "upstream": "UserResourceOptions",
+      "rust": "UserResourceOptions",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/form/__init__.py",
+      "upstream": "elicit_form",
+      "rust": "request_from_context",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp/tests/server_facade.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/form/__init__.py",
+      "upstream": "file_input",
+      "rust": "file_input",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_extensions/form/__init__.py",
+      "upstream": "resource_input",
+      "rust": "resource_input",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "FormField",
+      "rust": "FormField",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "FormModel",
+      "rust": "FormModel",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "FormSchema",
+      "rust": "FormSchema",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "McpAppToolTarget",
+      "rust": "McpAppToolTarget",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "PreviewTarget",
+      "rust": "PreviewTarget",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "complete_field_submission",
+      "rust": "complete_field_submission",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "is_valid_value",
+      "rust": "is_valid_value",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "prepare_field_submission",
+      "rust": "prepare_field_submission",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "validate_file_selections",
+      "rust": "validate_file_selections",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    },
+    {
+      "module": "python/src/openai_mcp_form_protocol/__init__.py",
+      "upstream": "validate_form_selections",
+      "rust": "validate_form_selections",
+      "source": "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/src/lib.rs",
+      "evidence": [
+        "extensions/openai-mcp/crates/incurs-openai-mcp-protocol/tests/parity_fixtures.rs"
+      ]
+    }
+  ]
+}

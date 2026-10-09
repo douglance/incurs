@@ -1,0 +1,17 @@
+{
+  "name": "incurs-openai-parity-oracle",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
+    "@cfworker/json-schema": "4.1.1",
+    "zod": "4.4.3",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "test": "node --import tsx oracle.mjs --fixtures"
+  }
+}

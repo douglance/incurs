@@ -1212,6 +1212,54 @@ async fn portable_server_matches_native_rmcp_service() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn modern_protocol_is_discovered_not_initialized() {
+    let cli = fixture_cli(McpDiscovery::Direct);
+    let portable = McpHttpServer::from_cli(&cli, portable_config()).unwrap();
+
+    let initialize_modern = case(
+        "initialize-modern",
+        with(base_headers(), &[("mcp-protocol-version", MODERN)]),
+        initialize(MODERN),
+    );
+    let native_initialize = observe_native(&cli, &initialize_modern).await;
+    let portable_initialize = observe_portable(&portable, &initialize_modern).await;
+    for observed in [&native_initialize, &portable_initialize] {
+        let supported = observed.messages[0]["error"]["data"]["supported"]
+            .as_array()
+            .expect("unsupported protocol response lists initialize versions");
+        assert!(
+            supported.iter().all(|version| version != MODERN),
+            "initialize advertised modern version: {observed:#?}"
+        );
+        assert!(
+            supported.iter().any(|version| version == "2025-11-25"),
+            "initialize did not advertise a legacy version: {observed:#?}"
+        );
+    }
+
+    let discover_modern = case(
+        "discover-modern",
+        modern_headers("server/discover", None),
+        rpc(
+            json!(54),
+            "server/discover",
+            Some(json!({ "_meta": modern_meta() })),
+        ),
+    );
+    let native_discover = observe_native(&cli, &discover_modern).await;
+    let portable_discover = observe_portable(&portable, &discover_modern).await;
+    for observed in [&native_discover, &portable_discover] {
+        let supported = observed.messages[0]["result"]["supportedVersions"]
+            .as_array()
+            .expect("discover response lists supported versions");
+        assert!(
+            supported.iter().any(|version| version == MODERN),
+            "discover did not advertise modern version: {observed:#?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Portable-only behaviour
 // ---------------------------------------------------------------------------

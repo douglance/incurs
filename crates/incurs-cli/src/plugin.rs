@@ -227,6 +227,10 @@ pub async fn call(ctx: TypedContext<CallArgs, CallOptions, ()>) -> TypedResult<V
         .await;
     match outcome {
         ToolCallOutcome::Ok { data, .. } => TypedResult::ok(data),
+        ToolCallOutcome::InputRequired { .. } => TypedResult::error(
+            "MCP_INPUT_REQUIRED",
+            "MCP input is required; plugin calls cannot replay MCP input responses",
+        ),
         ToolCallOutcome::Error { code, message, .. } => TypedResult::error(code, message),
     }
 }

@@ -11,12 +11,13 @@
 //! `parity_tests` pins every difference, of which there is one: this server
 //! validates `Origin` (see [`McpHttpConfig::allowed_origins`]).
 
+use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
@@ -24,7 +25,8 @@ use serde_json::{Map, Value, json};
 use tokio_util::sync::{CancellationToken, DropGuard};
 
 use super::McpServeOptions;
-use super::shared::{CallContext, ServerSource, ToolServer, progress_message};
+use super::shared::{CallContext, ResourceContext, ServerSource, ToolServer, progress_message};
+use crate::command::{McpPeer, McpPeerError, McpPeerNotification, McpPeerRequest};
 use crate::tool::{EnvironmentSource, ToolCallControl, ToolEvent, ToolEventSink};
 
 /// Default maximum request body size: 4 MiB.
@@ -189,6 +191,34 @@ impl McpHttpResponse {
     }
 }
 
+type PendingPeerRequests =
+    Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, McpPeerError>>>>>;
+
+struct PendingPeerRequestGuard {
+    pending: PendingPeerRequests,
+    id: Option<String>,
+}
+
+impl PendingPeerRequestGuard {
+    fn new(pending: PendingPeerRequests, id: String) -> Self {
+        Self {
+            pending,
+            id: Some(id),
+        }
+    }
+}
+
+impl Drop for PendingPeerRequestGuard {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(&id);
+        }
+    }
+}
+
 /// A transport-neutral MCP Streamable HTTP server for one CLI.
 ///
 /// Cloning is cheap; clones share the resolved tool catalog.
@@ -196,6 +226,8 @@ impl McpHttpResponse {
 pub struct McpHttpServer {
     tools: ToolServer,
     config: Arc<McpHttpConfig>,
+    peer_ids: Arc<AtomicU64>,
+    pending_peer: PendingPeerRequests,
 }
 
 impl McpHttpServer {
@@ -216,6 +248,8 @@ impl McpHttpServer {
         Ok(Self {
             tools: ToolServer::new(&ServerSource::from_cli(cli), options)?,
             config: Arc::new(config),
+            peer_ids: Arc::new(AtomicU64::new(1)),
+            pending_peer: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -357,6 +391,9 @@ impl McpHttpServer {
         }
 
         let Message::Request(client_request) = message else {
+            if let Message::Response { id, outcome } = message {
+                self.complete_peer_response(id, outcome);
+            }
             return Ok(McpHttpResponse::accepted());
         };
         let negotiates = per_request_version || matches!(client_request.kind, Kind::Discover);
@@ -399,6 +436,82 @@ impl McpHttpServer {
         ))
     }
 
+    fn connected_peer(&self, sender: mpsc::UnboundedSender<Value>) -> McpPeer {
+        let request_pending = Arc::clone(&self.pending_peer);
+        let request_ids = Arc::clone(&self.peer_ids);
+        let request_sender = sender.clone();
+        let notify_sender = sender;
+        McpPeer::with_notify(
+            move |request: McpPeerRequest| {
+                let pending = Arc::clone(&request_pending);
+                let sender = request_sender.clone();
+                let id = format!("incurs-peer-{}", request_ids.fetch_add(1, Ordering::SeqCst));
+                async move {
+                    let (tx, rx) = oneshot::channel();
+                    if let Ok(mut pending) = pending.lock() {
+                        pending.insert(id.clone(), tx);
+                    } else {
+                        return Err(McpPeerError {
+                            code: "MCP_PEER_STATE_UNAVAILABLE".to_string(),
+                            message: "MCP peer response state is unavailable".to_string(),
+                            data: None,
+                        });
+                    }
+                    let _pending_guard =
+                        PendingPeerRequestGuard::new(Arc::clone(&pending), id.clone());
+                    let message = json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "method": request.method,
+                        "params": params_with_meta(request.params, request.meta),
+                    });
+                    if sender.unbounded_send(message).is_err() {
+                        if let Ok(mut pending) = pending.lock() {
+                            pending.remove(&id);
+                        }
+                        return Err(McpPeerError {
+                            code: "MCP_PEER_STREAM_CLOSED".to_string(),
+                            message: "MCP peer event stream closed before the request was sent"
+                                .to_string(),
+                            data: None,
+                        });
+                    }
+                    rx.await.map_err(|_| McpPeerError {
+                        code: "MCP_PEER_RESPONSE_DROPPED".to_string(),
+                        message: "MCP peer response was dropped before completion".to_string(),
+                        data: None,
+                    })?
+                }
+            },
+            move |notification: McpPeerNotification| {
+                let sender = notify_sender.clone();
+                async move {
+                    sender
+                        .unbounded_send(json!({
+                            "jsonrpc": "2.0",
+                            "method": notification.method,
+                            "params": params_with_meta(notification.params, notification.meta),
+                        }))
+                        .map_err(|_| McpPeerError {
+                            code: "MCP_PEER_STREAM_CLOSED".to_string(),
+                            message:
+                                "MCP peer event stream closed before the notification was sent"
+                                    .to_string(),
+                            data: None,
+                        })
+                }
+            },
+        )
+    }
+
+    fn complete_peer_response(&self, id: String, outcome: Result<Value, McpPeerError>) {
+        if let Ok(mut pending) = self.pending_peer.lock()
+            && let Some(sender) = pending.remove(&id)
+        {
+            let _ = sender.send(outcome);
+        }
+    }
+
     /// Runs one request through MCP dispatch and returns its final message.
     async fn dispatch(
         &self,
@@ -427,8 +540,11 @@ impl McpHttpServer {
             .collect()
     }
 
-    fn capabilities() -> Value {
-        json!({ "prompts": {}, "resources": {}, "tools": {} })
+    fn initialize_versions(&self) -> Vec<String> {
+        self.supported_versions()
+            .into_iter()
+            .filter(|version| version.as_str() != MODERN)
+            .collect()
     }
 
     fn server_info(&self) -> Value {
@@ -438,7 +554,7 @@ impl McpHttpServer {
     fn initialize_result(&self, protocol_version: &str) -> Value {
         let mut result = json!({
             "protocolVersion": protocol_version,
-            "capabilities": Self::capabilities(),
+            "capabilities": self.tools.capabilities(),
             "serverInfo": self.server_info(),
         });
         if let Some(instructions) = &self.tools.instructions {
@@ -458,6 +574,7 @@ impl McpHttpServer {
         let requested = request.meta_protocol_version();
         let protocol_version = requested.clone().unwrap_or(peer_version);
         let modern_result = protocol_version.as_str() >= MODERN;
+        let connected_peer = self.connected_peer(events.sender.clone());
         let inline = !matches!(request.kind, Kind::Initialize { .. });
         let supported = self.supported_versions();
         if inline
@@ -505,22 +622,24 @@ impl McpHttpServer {
 
         let mut result = match request.kind {
             Kind::Initialize { protocol_version } => {
-                let selected = supported
+                let initialize_supported = self.initialize_versions();
+                let selected = initialize_supported
                     .iter()
-                    .find(|version| **version == protocol_version && *version != MODERN)
+                    .find(|version| **version == protocol_version)
                     .cloned();
-                let selected = if selected.is_none()
-                    && KNOWN_VERSIONS.contains(&protocol_version.as_str())
-                {
-                    None
-                } else {
-                    selected
-                        .or_else(|| supported.iter().find(|version| *version != MODERN).cloned())
-                };
+                let selected =
+                    if selected.is_none() && KNOWN_VERSIONS.contains(&protocol_version.as_str()) {
+                        None
+                    } else {
+                        selected.or_else(|| initialize_supported.first().cloned())
+                    };
                 match selected {
                     Some(selected) => self.initialize_result(&selected),
                     None => {
-                        return Err(unsupported_protocol_version(&protocol_version, &supported));
+                        return Err(unsupported_protocol_version(
+                            &protocol_version,
+                            &initialize_supported,
+                        ));
                     }
                 }
             }
@@ -528,7 +647,7 @@ impl McpHttpServer {
                 let mut result = json!({
                     "resultType": "complete",
                     "supportedVersions": supported,
-                    "capabilities": Self::capabilities(),
+                    "capabilities": self.tools.capabilities(),
                     "ttlMs": 0,
                     "cacheScope": "private",
                     "_meta": { "io.modelcontextprotocol/serverInfo": self.server_info() },
@@ -545,10 +664,37 @@ impl McpHttpServer {
                 "tools": *self.tools.tool_list,
             })),
             Kind::ListPrompts => cached(json!({ "resultType": "complete", "prompts": [] })),
-            Kind::ListResources => cached(json!({ "resultType": "complete", "resources": [] })),
-            Kind::ListResourceTemplates => {
-                cached(json!({ "resultType": "complete", "resourceTemplates": [] }))
-            }
+            Kind::ListResources => cached(self.tools.list_resources()),
+            Kind::ListResourceTemplates => cached(self.tools.list_resource_templates()),
+            Kind::ReadResource { ref uri } => cached(
+                self.tools
+                    .read_resource(
+                        uri.clone(),
+                        resource_context(&request, &protocol_version, Some(connected_peer.clone())),
+                    )
+                    .await
+                    .map_err(resource_error)?,
+            ),
+            Kind::Subscribe { ref uri } => cached(
+                self.tools
+                    .set_resource_subscription(
+                        uri.clone(),
+                        true,
+                        resource_context(&request, &protocol_version, Some(connected_peer.clone())),
+                    )
+                    .await
+                    .map_err(resource_error)?,
+            ),
+            Kind::Unsubscribe { ref uri } => cached(
+                self.tools
+                    .set_resource_subscription(
+                        uri.clone(),
+                        false,
+                        resource_context(&request, &protocol_version, Some(connected_peer.clone())),
+                    )
+                    .await
+                    .map_err(resource_error)?,
+            ),
             Kind::CallTool { name, arguments } => {
                 let progress = request
                     .meta
@@ -562,6 +708,14 @@ impl McpHttpServer {
                         CallContext {
                             protocol_version: protocol_version.clone(),
                             request: transport,
+                            request_meta: Some(Value::Object(request.meta.clone())),
+                            client_capabilities: request
+                                .meta
+                                .get(META_CLIENT_CAPABILITIES)
+                                .cloned(),
+                            input_responses: request.input_responses.clone(),
+                            request_state: request.request_state.clone(),
+                            peer: Some(connected_peer),
                             control: ToolCallControl {
                                 cancellation,
                                 events: Some(events),
@@ -575,10 +729,7 @@ impl McpHttpServer {
             Kind::Ping
             | Kind::SetLevel
             | Kind::GetPrompt
-            | Kind::ReadResource
             | Kind::SubscriptionsListen
-            | Kind::Subscribe
-            | Kind::Unsubscribe
             | Kind::Task
             | Kind::Custom => return Err(error(METHOD_NOT_FOUND, request.method)),
         };
@@ -595,6 +746,43 @@ impl McpHttpServer {
 
 fn error(code: i64, message: impl Into<String>) -> Value {
     json!({ "code": code, "message": message.into() })
+}
+
+fn resource_error(resource_error: super::McpResourceError) -> Value {
+    let mut value = error(resource_error.code, resource_error.message);
+    if let Some(data) = resource_error.data {
+        value["data"] = data;
+    }
+    value
+}
+
+fn resource_context(
+    request: &ClientRequest,
+    protocol_version: &str,
+    peer: Option<McpPeer>,
+) -> ResourceContext {
+    ResourceContext {
+        protocol_version: Some(protocol_version.to_string()),
+        request_meta: Some(Value::Object(request.meta.clone())),
+        client_capabilities: request.meta.get(META_CLIENT_CAPABILITIES).cloned(),
+        input_responses: request.input_responses.clone(),
+        request_state: request.request_state.clone(),
+        peer,
+    }
+}
+
+fn params_with_meta(params: Option<Value>, meta: Option<Value>) -> Option<Value> {
+    let Some(meta) = meta else {
+        return params;
+    };
+    match params {
+        Some(Value::Object(mut object)) => {
+            object.insert("_meta".to_string(), meta);
+            Some(Value::Object(object))
+        }
+        Some(value) => Some(json!({ "value": value, "_meta": meta })),
+        None => Some(json!({ "_meta": meta })),
+    }
 }
 
 fn unsupported_protocol_version(requested: &str, supported: &[String]) -> Value {
@@ -1046,7 +1234,7 @@ fn validate_standard_headers(
             (Some(&request.id), &request.method, request.params.as_ref())
         }
         Message::Notification { method, params } => (None, method, params.as_ref()),
-        Message::Response => return Ok(()),
+        Message::Response { .. } => return Ok(()),
     };
     let mismatch = |reason: String| jsonrpc_error(400, id, HEADER_MISMATCH, reason);
     match headers.text("mcp-method") {
@@ -1153,10 +1341,16 @@ enum Kind {
     ListPrompts,
     ListResources,
     ListResourceTemplates,
-    ReadResource,
+    ReadResource {
+        uri: String,
+    },
     SubscriptionsListen,
-    Subscribe,
-    Unsubscribe,
+    Subscribe {
+        uri: String,
+    },
+    Unsubscribe {
+        uri: String,
+    },
     CallTool {
         name: String,
         arguments: Option<Map<String, Value>>,
@@ -1171,6 +1365,8 @@ struct ClientRequest {
     method: String,
     params: Option<Value>,
     meta: Map<String, Value>,
+    input_responses: Option<Value>,
+    request_state: Option<String>,
     kind: Kind,
 }
 
@@ -1190,12 +1386,25 @@ enum Message {
         params: Option<Value>,
     },
     /// A client response or error; neither is answered.
-    Response,
+    Response {
+        id: String,
+        outcome: Result<Value, McpPeerError>,
+    },
 }
 
 /// Whether a value is a JSON-RPC request id: a string or an `i64` integer.
 fn is_request_id(value: &Value) -> bool {
     value.is_string() || value.is_i64() || value.as_u64().is_some_and(|n| n <= i64::MAX as u64)
+}
+
+fn request_id_key(value: &Value) -> Option<String> {
+    if let Some(id) = value.as_str() {
+        return Some(id.to_string());
+    }
+    if value.is_i64() || value.as_u64().is_some_and(|n| n <= i64::MAX as u64) {
+        return Some(value.to_string());
+    }
+    None
 }
 
 /// Splits `params` into its `_meta` map, rejecting shapes no message accepts.
@@ -1208,7 +1417,9 @@ fn params_and_meta(params: Option<&Value>) -> Option<(Option<Value>, Map<String,
                 Some(Value::Object(meta)) => meta.clone(),
                 Some(_) => return None,
             };
-            Some((Some(Value::Object(object.clone())), meta))
+            let mut params = object.clone();
+            params.remove("_meta");
+            Some((Some(Value::Object(params)), meta))
         }
         Some(_) => None,
     }
@@ -1228,16 +1439,33 @@ fn parse_message(body: &[u8]) -> Result<Message, String> {
     let id = object.get("id").filter(|id| is_request_id(id));
     if let (Some(id), Some(method), Some((params, meta))) = (id, method, params.clone()) {
         let kind = classify(method, params.as_ref());
+        let input_responses = params
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|params| params.get("inputResponses").cloned());
+        let request_state = params
+            .as_ref()
+            .and_then(Value::as_object)
+            .and_then(|params| params.get("requestState"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
         return Ok(Message::Request(Box::new(ClientRequest {
             id: id.clone(),
             method: method.to_string(),
             params,
             meta,
+            input_responses,
+            request_state,
             kind,
         })));
     }
-    if id.is_some() && object.contains_key("result") {
-        return Ok(Message::Response);
+    if let Some(id) = id.and_then(request_id_key)
+        && object.contains_key("result")
+    {
+        return Ok(Message::Response {
+            id,
+            outcome: Ok(object.get("result").cloned().unwrap_or(Value::Null)),
+        });
     }
     if let (Some(method), Some((params, _))) = (method, params) {
         return Ok(Message::Notification {
@@ -1256,7 +1484,36 @@ fn parse_message(body: &[u8]) -> Result<Message, String> {
             && error.get("message").is_some_and(Value::is_string)
     });
     if error_id_ok && error_ok {
-        return Ok(Message::Response);
+        if let Some(id) = object.get("id").and_then(request_id_key) {
+            let error = object.get("error").cloned().unwrap_or(Value::Null);
+            let code = error
+                .get("code")
+                .and_then(Value::as_i64)
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "MCP_PEER_ERROR".to_string());
+            let message = error
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("MCP peer returned an error")
+                .to_string();
+            let data = error.get("data").cloned();
+            return Ok(Message::Response {
+                id: id.to_string(),
+                outcome: Err(McpPeerError {
+                    code,
+                    message,
+                    data,
+                }),
+            });
+        }
+        return Ok(Message::Response {
+            id: String::new(),
+            outcome: Err(McpPeerError {
+                code: "MCP_PEER_ERROR".to_string(),
+                message: "MCP peer returned an error without a string id".to_string(),
+                data: object.get("error").cloned(),
+            }),
+        });
     }
     Err(untagged())
 }
@@ -1358,16 +1615,28 @@ fn classify(method: &str, params: Option<&Value>) -> Kind {
         "resources/list" => Kind::ListResources,
         "resources/templates/list" => Kind::ListResourceTemplates,
         "tools/list" => Kind::ListTools,
-        "resources/read" => with(
-            &|params| is_str(params, "uri") && input_state(params),
-            Kind::ReadResource,
-        ),
+        "resources/read" => match object {
+            Some(params) if is_str(params, "uri") && input_state(params) => Kind::ReadResource {
+                uri: params["uri"].as_str().unwrap_or_default().to_string(),
+            },
+            _ => Kind::Custom,
+        },
         "subscriptions/listen" => with(
             &|params| params.get("notifications").is_some_and(Value::is_object),
             Kind::SubscriptionsListen,
         ),
-        "resources/subscribe" => with(&|params| is_str(params, "uri"), Kind::Subscribe),
-        "resources/unsubscribe" => with(&|params| is_str(params, "uri"), Kind::Unsubscribe),
+        "resources/subscribe" => match object {
+            Some(params) if is_str(params, "uri") => Kind::Subscribe {
+                uri: params["uri"].as_str().unwrap_or_default().to_string(),
+            },
+            _ => Kind::Custom,
+        },
+        "resources/unsubscribe" => match object {
+            Some(params) if is_str(params, "uri") => Kind::Unsubscribe {
+                uri: params["uri"].as_str().unwrap_or_default().to_string(),
+            },
+            _ => Kind::Custom,
+        },
         "tasks/get" | "tasks/cancel" => with(&|params| is_str(params, "taskId"), Kind::Task),
         "tasks/update" => with(
             &|params| {
@@ -1396,6 +1665,16 @@ fn classify(method: &str, params: Option<&Value>) -> Kind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::Cli;
+    use crate::command::{
+        CommandContext, CommandDef, CommandHandler, McpCommandOptions, McpPeerRequest,
+    };
+    use crate::mcp::{
+        McpDiscovery, McpResultMapper, McpResultMapping, McpServeOptions, McpToolFilter,
+    };
+    use crate::output::CommandResult;
+    use serde_json::json;
+    use std::collections::BTreeMap;
 
     #[test]
     fn base64_is_strict() {
@@ -1472,5 +1751,378 @@ mod tests {
             &McpHttpConfig::default().allowed_hosts
         ));
         assert!(parse_origin("not an origin").is_none());
+    }
+
+    struct NeedsInput;
+
+    #[async_trait::async_trait]
+    impl CommandHandler for NeedsInput {
+        async fn run(&self, ctx: CommandContext) -> CommandResult {
+            let mcp = ctx.mcp.expect("MCP context");
+            if let Some(responses) = mcp.input_responses {
+                CommandResult::Ok {
+                    data: json!({ "responses": responses, "state": mcp.request_state }),
+                    cta: None,
+                    exit_code: None,
+                }
+            } else {
+                CommandResult::InputRequired {
+                    input_requests: std::collections::BTreeMap::from([(
+                        "roots".to_string(),
+                        json!({ "method": "roots/list", "params": {} }),
+                    )]),
+                    request_state: Some("state-1".to_string()),
+                    meta: std::collections::BTreeMap::new(),
+                }
+            }
+        }
+    }
+
+    struct UsesPeer;
+
+    #[async_trait::async_trait]
+    impl CommandHandler for UsesPeer {
+        async fn run(&self, ctx: CommandContext) -> CommandResult {
+            let peer = ctx.mcp.expect("MCP context").peer.expect("connected peer");
+            let response = peer
+                .request(McpPeerRequest {
+                    method: "sampling/createMessage".to_string(),
+                    params: Some(json!({ "messages": [] })),
+                    meta: None,
+                })
+                .await
+                .expect("peer response");
+            CommandResult::Ok {
+                data: response,
+                cta: None,
+                exit_code: None,
+            }
+        }
+    }
+
+    struct EchoOptions;
+
+    #[async_trait::async_trait]
+    impl CommandHandler for EchoOptions {
+        async fn run(&self, ctx: CommandContext) -> CommandResult {
+            CommandResult::Ok {
+                data: json!({ "options": ctx.options }),
+                cta: None,
+                exit_code: None,
+            }
+        }
+    }
+
+    fn tool_server(mut command: CommandDef) -> McpHttpServer {
+        command.output_schema = Some(json!({ "type": "object" }));
+        let name = command.name.clone();
+        let cli = Cli::create("portable-peer").command(name, command);
+        McpHttpServer::new(
+            &cli,
+            &McpServeOptions {
+                tools: McpToolFilter {
+                    discovery: McpDiscovery::Direct,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            McpHttpConfig::default(),
+        )
+        .unwrap()
+    }
+
+    fn tool_server_with_options(
+        mut command: CommandDef,
+        options: McpServeOptions,
+    ) -> McpHttpServer {
+        command.output_schema = Some(json!({ "type": "object" }));
+        let name = command.name.clone();
+        let cli = Cli::create("portable-peer").command(name, command);
+        McpHttpServer::new(&cli, &options, McpHttpConfig::default()).unwrap()
+    }
+
+    fn post(body: Value, version: &str, method: &str, name: &str) -> McpHttpRequest {
+        McpHttpRequest {
+            method: "POST".to_string(),
+            path: "/mcp".to_string(),
+            headers: vec![
+                ("host".to_string(), "localhost".to_string()),
+                ("content-type".to_string(), "application/json".to_string()),
+                (
+                    "accept".to_string(),
+                    "application/json, text/event-stream".to_string(),
+                ),
+                (PROTOCOL_VERSION_HEADER.to_string(), version.to_string()),
+                ("mcp-method".to_string(), method.to_string()),
+                ("mcp-name".to_string(), name.to_string()),
+            ],
+            body: serde_json::to_vec(&body).unwrap(),
+        }
+    }
+
+    async fn collect_event_stream(response: McpHttpResponse) -> Vec<Value> {
+        let McpHttpBody::EventStream(mut stream) = response.body else {
+            panic!("event stream response")
+        };
+        let mut messages = Vec::new();
+        while let Some(event) = stream.next().await {
+            let payload = event
+                .strip_prefix("data: ")
+                .and_then(|event| event.strip_suffix("\n\n"))
+                .expect("SSE data event");
+            messages.push(serde_json::from_str(payload).unwrap());
+        }
+        messages
+    }
+
+    #[test]
+    fn progressive_direct_tools_are_callable_by_advertised_name() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("direct", EchoOptions)
+                    .description("Direct tool")
+                    .mcp(McpCommandOptions {
+                        name: Some("direct.tool".to_string()),
+                        direct: true,
+                        ..McpCommandOptions::default()
+                    })
+                    .done(),
+                McpServeOptions {
+                    tools: McpToolFilter {
+                        discovery: McpDiscovery::Progressive,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "direct",
+                        "method": "tools/call",
+                        "params": { "name": "direct.tool", "arguments": { "value": 42 } }
+                    }),
+                    "2025-03-26",
+                    "tools/call",
+                    "direct.tool",
+                ))
+                .await;
+            let messages = collect_event_stream(response).await;
+            assert_eq!(
+                messages[0]["result"]["structuredContent"]["options"]["value"],
+                42
+            );
+        });
+    }
+
+    #[test]
+    fn result_mapper_can_replace_content_and_add_dynamic_meta() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("mapped", EchoOptions)
+                    .description("Mapped tool")
+                    .done(),
+                McpServeOptions {
+                    tools: McpToolFilter {
+                        discovery: McpDiscovery::Direct,
+                        ..Default::default()
+                    },
+                    result_mapper: Some(McpResultMapper::new(|_| McpResultMapping {
+                        is_error: Some(false),
+                        structured_content: Some(json!({ "mapped": true })),
+                        content: Some(Vec::new()),
+                        meta: BTreeMap::from([("example/meta".to_string(), json!(true))]),
+                    })),
+                    ..Default::default()
+                },
+            );
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "mapped",
+                        "method": "tools/call",
+                        "params": { "name": "mapped", "arguments": { "value": 7 } }
+                    }),
+                    "2025-03-26",
+                    "tools/call",
+                    "mapped",
+                ))
+                .await;
+            let messages = collect_event_stream(response).await;
+            assert_eq!(
+                messages[0]["result"]["content"],
+                json!([]),
+                "{:#?}",
+                messages[0]
+            );
+            assert_eq!(messages[0]["result"]["structuredContent"]["mapped"], true);
+            assert_eq!(messages[0]["result"]["_meta"]["example/meta"], true);
+        });
+    }
+
+    #[test]
+    fn modern_mrtr_input_required_replays_with_input_responses() {
+        futures::executor::block_on(async {
+            let server = tool_server(
+                CommandDef::build("mrtr", NeedsInput)
+                    .description("Needs input")
+                    .done(),
+            );
+            let first = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "first",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "mrtr",
+                            "arguments": {},
+                            "_meta": {
+                                META_PROTOCOL_VERSION: MODERN,
+                                META_CLIENT_CAPABILITIES: {}
+                            }
+                        }
+                    }),
+                    MODERN,
+                    "tools/call",
+                    "mrtr",
+                ))
+                .await;
+            let messages = collect_event_stream(first).await;
+            assert_eq!(messages[0]["result"]["resultType"], "input_required");
+            assert_eq!(messages[0]["result"]["requestState"], "state-1");
+            assert_eq!(
+                messages[0]["result"]["inputRequests"]["roots"]["method"],
+                "roots/list"
+            );
+
+            let second = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "second",
+                        "method": "tools/call",
+                        "params": {
+                            "name": "mrtr",
+                            "arguments": {},
+                            "inputResponses": { "roots": { "roots": [] } },
+                            "requestState": "state-1",
+                            "_meta": {
+                                META_PROTOCOL_VERSION: MODERN,
+                                META_CLIENT_CAPABILITIES: {}
+                            }
+                        }
+                    }),
+                    MODERN,
+                    "tools/call",
+                    "mrtr",
+                ))
+                .await;
+            let messages = collect_event_stream(second).await;
+            assert_eq!(messages[0]["result"]["resultType"], "complete");
+            assert_eq!(
+                messages[0]["result"]["structuredContent"]["responses"]["roots"]["roots"],
+                json!([])
+            );
+            assert_eq!(
+                messages[0]["result"]["structuredContent"]["state"],
+                "state-1"
+            );
+        });
+    }
+
+    #[test]
+    fn portable_peer_request_emits_literal_method_and_consumes_response() {
+        futures::executor::block_on(async {
+            let server = tool_server(
+                CommandDef::build("peer", UsesPeer)
+                    .description("Uses peer")
+                    .done(),
+            );
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "call",
+                        "method": "tools/call",
+                        "params": { "name": "peer", "arguments": {} }
+                    }),
+                    "2025-03-26",
+                    "tools/call",
+                    "peer",
+                ))
+                .await;
+            let McpHttpBody::EventStream(mut stream) = response.body else {
+                panic!("event stream response")
+            };
+            let event = stream.next().await.expect("peer request event");
+            let payload = event
+                .strip_prefix("data: ")
+                .and_then(|event| event.strip_suffix("\n\n"))
+                .expect("SSE data event");
+            let peer_request: Value = serde_json::from_str(payload).unwrap();
+            assert_eq!(peer_request["method"], "sampling/createMessage");
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": peer_request["id"].clone(),
+                        "result": { "accepted": true }
+                    }),
+                    "2025-03-26",
+                    "tools/call",
+                    "peer",
+                ))
+                .await;
+            assert_eq!(response.status, 202);
+            let event = stream.next().await.expect("tool result event");
+            let payload = event
+                .strip_prefix("data: ")
+                .and_then(|event| event.strip_suffix("\n\n"))
+                .expect("SSE data event");
+            let result: Value = serde_json::from_str(payload).unwrap();
+            assert_eq!(result["result"]["structuredContent"]["accepted"], true);
+        });
+    }
+
+    #[test]
+    fn dropping_peer_request_stream_clears_pending_response() {
+        futures::executor::block_on(async {
+            let server = tool_server(
+                CommandDef::build("peer", UsesPeer)
+                    .description("Uses peer")
+                    .done(),
+            );
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "call",
+                        "method": "tools/call",
+                        "params": { "name": "peer", "arguments": {} }
+                    }),
+                    "2025-03-26",
+                    "tools/call",
+                    "peer",
+                ))
+                .await;
+            let McpHttpBody::EventStream(mut stream) = response.body else {
+                panic!("event stream response")
+            };
+            let event = stream.next().await.expect("peer request event");
+            let payload = event
+                .strip_prefix("data: ")
+                .and_then(|event| event.strip_suffix("\n\n"))
+                .expect("SSE data event");
+            let peer_request: Value = serde_json::from_str(payload).unwrap();
+            assert_eq!(peer_request["method"], "sampling/createMessage");
+            assert_eq!(server.pending_peer.lock().unwrap().len(), 1);
+
+            drop(stream);
+
+            assert_eq!(server.pending_peer.lock().unwrap().len(), 0);
+        });
     }
 }
