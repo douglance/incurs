@@ -73,6 +73,7 @@ async fn run_initialize_and_notifications() -> AppResult<()> {
         InitializeParams::new("browser-smoke", "1.0.0", "2025-06-18"),
         RequestOptions {
             timeout_ms: Some(500),
+            cancellation: None,
         },
     )
     .await?;
