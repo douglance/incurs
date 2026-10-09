@@ -518,3 +518,196 @@ fn model_context_content_blocks_reject_nested_arrays() {
         serde_json::json!({"updateId":"u", "content":[[{"type":"text", "text":"hello"}]]});
     assert!(validate_schema("OpenAIModelContextHostStateSchema", &invalid).is_err());
 }
+
+#[test]
+fn regression_unicode_date_time_is_rejected_without_panicking() {
+    let form = serde_json::json!({"type":"object","properties":{"v":{"type":"string","format":"date-time"}}});
+    assert!(
+        validate_form_content(
+            &form,
+            &serde_json::json!({"v":"123456789éxxxxxxxxxxxxxxxx"})
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn regression_date_time_validates_calendar_clock_and_offset() {
+    let form = serde_json::json!({"type":"object","properties":{"v":{"type":"string","format":"date-time"}}});
+    for (value, accepted) in [
+        ("2026-10-08T02:03:04Z", true),
+        ("2024-02-29t23:59:59.125z", true),
+        ("2026-10-08T02:03:04+05:30", true),
+        ("2026-10-08 02:03:04z", true),
+        ("2026-12-31T23:59:60Z", true),
+        ("2026-10-08T99:99:99Z", false),
+        ("2026-02-29T02:03:04Z", false),
+        ("2026-10-08T02:03:04+24:00", false),
+        ("2026-10-08T02:03:04+01:60", false),
+        ("2026-10-08T02:03:04.Z", false),
+        ("2026-10-08T02:03:04Zgarbage", false),
+    ] {
+        assert_eq!(
+            validate_form_content(&form, &serde_json::json!({"v":value})).is_ok(),
+            accepted,
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn regression_uri_validates_rfc3986_components() {
+    let form =
+        serde_json::json!({"type":"object","properties":{"v":{"type":"string","format":"uri"}}});
+    for (value, accepted) in [
+        ("https://example.com/a%20b?x=y#part", true),
+        ("host-resource://uploaded", true),
+        ("urn:example:resource", true),
+        ("mailto:person@example.com", true),
+        ("https://[2001:db8::1]:443/a", true),
+        ("http://example.com\n", false),
+        ("https://example.com/a b", false),
+        ("https://example.com/%zz", false),
+        ("https://[broken]/a", false),
+        ("https://example.com:bad/a", false),
+        ("https://example.com/a#one#two", false),
+        ("relative/path", false),
+    ] {
+        assert_eq!(
+            validate_form_content(&form, &serde_json::json!({"v":value})).is_ok(),
+            accepted,
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
+fn regression_form_integers_retain_exact_literal_text_and_bounds() {
+    let form: Value = serde_json::from_str(r#"{"type":"object","properties":{"v":{"type":"integer","minimum":-9223372036854775808,"maximum":18446744073709551615}}}"#).unwrap();
+    for text in [
+        r#"{"v":9007199254740993}"#,
+        r#"{"v":-9223372036854775808}"#,
+        r#"{"v":18446744073709551615}"#,
+    ] {
+        let value: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            serde_json::to_string(&validate_form_content(&form, &value).unwrap()).unwrap(),
+            text
+        );
+    }
+    let bounded: Value = serde_json::from_str(
+        r#"{"type":"object","properties":{"v":{"type":"integer","maximum":9007199254740992}}}"#,
+    )
+    .unwrap();
+    let above: Value = serde_json::from_str(r#"{"v":9007199254740993}"#).unwrap();
+    assert!(validate_form_content(&bounded, &above).is_err());
+    let below: Value = serde_json::from_str(
+        r#"{"type":"object","properties":{"v":{"type":"integer","minimum":-9007199254740992}}}"#,
+    )
+    .unwrap();
+    let negative: Value = serde_json::from_str(r#"{"v":-9007199254740993}"#).unwrap();
+    assert!(validate_form_content(&below, &negative).is_err());
+}
+
+#[test]
+fn regression_implicit_resources_allow_unlisted_uris_but_explicit_restricts() {
+    for (selection, accepted) in [("implicit", true), ("explicit", false)] {
+        let form = serde_json::json!({"type":"object","properties":{"v":{"type":"array","items":{"type":"string","format":"uri"},"x-openai-input":{"type":"resource","options":[{"uri":"https://example.com/a","name":"A"}],"selection":selection}}}});
+        assert_eq!(
+            validate_form_content(&form, &serde_json::json!({"v":["https://example.com/b"]}))
+                .is_ok(),
+            accepted
+        );
+        assert!(
+            validate_form_content(&form, &serde_json::json!({"v":["https://example.com/a"]}))
+                .is_ok()
+        );
+    }
+}
+
+#[test]
+fn regression_exact_fractional_bounds_and_large_exponents() {
+    for (schema, accepted, rejected) in [
+        (
+            r#"{"type":"object","properties":{"v":{"type":"number","maximum":0.10000000000000000000001}}}"#,
+            r#"{"v":0.10000000000000000000001}"#,
+            r#"{"v":0.10000000000000000000002}"#,
+        ),
+        (
+            r#"{"type":"object","properties":{"v":{"type":"integer","maximum":18446744073709551616}}}"#,
+            r#"{"v":18446744073709551616}"#,
+            r#"{"v":18446744073709551617}"#,
+        ),
+        (
+            r#"{"type":"object","properties":{"v":{"type":"number","minimum":1e400,"maximum":1e401}}}"#,
+            r#"{"v":1e400}"#,
+            r#"{"v":1e399}"#,
+        ),
+    ] {
+        let schema: Value = serde_json::from_str(schema).unwrap();
+        let accepted_value: Value = serde_json::from_str(accepted).unwrap();
+        assert_eq!(
+            validate_form_content(&schema, &accepted_value).unwrap(),
+            accepted_value
+        );
+        let rejected_value: Value = serde_json::from_str(rejected).unwrap();
+        assert!(validate_form_content(&schema, &rejected_value).is_err());
+    }
+}
+
+#[test]
+fn regression_typed_numeric_limits_remain_exact_and_python_integers_stay_strict() {
+    let field: OpenAIFormField = serde_json::from_str(
+        r#"{"type":"integer","minimum":-9007199254740993,"maximum":9007199254740993}"#,
+    )
+    .unwrap();
+    let text = serde_json::to_string(&field).unwrap();
+    assert!(text.contains(r#""minimum":-9007199254740993"#));
+    assert!(text.contains(r#""maximum":9007199254740993"#));
+    let exact: Value = serde_json::from_str("9007199254740993").unwrap();
+    assert!(is_valid_value_with_options(&field, &exact, 0, &[]).unwrap());
+    let above: Value = serde_json::from_str("9007199254740994").unwrap();
+    assert!(!is_valid_value_with_options(&field, &above, 0, &[]).unwrap());
+    let decimal: Value = serde_json::from_str("1.0").unwrap();
+    assert!(!is_valid_value_with_options(&field, &decimal, 0, &[]).unwrap());
+}
+
+#[test]
+fn regression_python_timestamp_rules_remain_distinct() {
+    let field: OpenAIFormField =
+        serde_json::from_str(r#"{"type":"string","format":"date-time"}"#).unwrap();
+    for (value, accepted) in [
+        ("2026-10-08T02:03:04Z", true),
+        ("2026-10-08t02:03:04.125z", true),
+        ("2026-10-08T02:03:04+05:30", true),
+        ("2026-10-08 02:03:04Z", false),
+        ("2026-12-31T23:59:60Z", false),
+        ("2026-10-08T02:03:04+24:00", false),
+        ("123456789éxxxxxxxxxxxxxxxx", false),
+    ] {
+        assert_eq!(
+            is_valid_value_with_options(&field, &serde_json::json!(value), 0, &[]).unwrap(),
+            accepted,
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn regression_python_integer_tokens_above_u64_remain_integers() {
+    let field: OpenAIFormField =
+        serde_json::from_str(r#"{"type":"integer","maximum":18446744073709551616}"#).unwrap();
+    for (token, accepted) in [
+        ("18446744073709551616", true),
+        ("18446744073709551617", false),
+        ("18446744073709551616.0", false),
+        ("1e3", false),
+    ] {
+        let value: Value = serde_json::from_str(token).unwrap();
+        assert_eq!(
+            is_valid_value_with_options(&field, &value, 0, &[]).unwrap(),
+            accepted,
+            "{token}"
+        );
+    }
+}

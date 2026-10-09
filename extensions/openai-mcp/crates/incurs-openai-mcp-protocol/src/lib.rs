@@ -954,10 +954,10 @@ pub struct OpenAIFormField {
     pub items: Option<OpenAIFormArrayItems>,
     /// Minimum numeric value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub minimum: Option<f64>,
+    pub minimum: Option<serde_json::Number>,
     /// Maximum numeric value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub maximum: Option<f64>,
+    pub maximum: Option<serde_json::Number>,
     /// Minimum UTF-16 string length.
     #[serde(default, rename = "minLength", skip_serializing_if = "Option::is_none")]
     pub min_length: Option<u64>,
@@ -2267,12 +2267,12 @@ fn is_form_content_value(value: &Value) -> bool {
 
 fn normalize_form_content_value(field: &Map<String, Value>, value: &Value) -> Value {
     if field.get("type").and_then(Value::as_str) == Some("integer")
-        && let Some(number) = value.as_f64()
-        && number.fract() == 0.0
-        && number >= i64::MIN as f64
-        && number <= i64::MAX as f64
+        && value.as_i64().is_none()
+        && value.as_u64().is_none()
+        && let Some(number) =
+            ExactDecimal::from_value(value).and_then(|number| number.small_integer())
     {
-        return Value::Number(serde_json::Number::from(number as i64));
+        return Value::Number(number);
     }
     value.clone()
 }
@@ -2343,7 +2343,8 @@ fn is_valid_field_value_with_options(
         .and_then(Value::as_str)
         .unwrap_or_default();
     if let Some(input) = field.get("x-openai-input").and_then(Value::as_object)
-        && !(allow_user_files && input.contains_key("userOptions"))
+        && !(input.get("selection").and_then(Value::as_str) == Some("implicit")
+            || (allow_user_files && input.contains_key("userOptions")))
     {
         let mut choices: BTreeSet<String> = input
             .get("options")
@@ -2457,11 +2458,24 @@ fn python_string_constraints_match(
         return Ok(false);
     }
     if let Some(format) = field.get("format").and_then(Value::as_str)
-        && !format_matches(format, value)
+        && !python_format_matches(format, value)
     {
         return Ok(false);
     }
     Ok(true)
+}
+
+fn python_format_matches(format: &str, value: &str) -> bool {
+    match format {
+        "date" => valid_date(value) && !value.starts_with("0000"),
+        "date-time" => {
+            valid_date_time(value)
+                && !value.starts_with("0000")
+                && matches!(value.as_bytes()[10], b'T' | b't')
+                && &value[17..19] != "60"
+        }
+        _ => format_matches(format, value),
+    }
 }
 
 fn pattern_matches(pattern: &str, value: &str) -> Result<bool, ValidationError> {
@@ -2525,30 +2539,136 @@ fn valid_uri(value: &str) -> bool {
     let Some((scheme, rest)) = value.split_once(':') else {
         return false;
     };
-    !scheme.is_empty()
-        && scheme.bytes().enumerate().all(|(index, byte)| match byte {
-            b'a'..=b'z' | b'A'..=b'Z' => true,
-            b'0'..=b'9' if index > 0 => true,
-            b'+' | b'.' | b'-' if index > 0 => true,
-            _ => false,
+    if scheme.is_empty()
+        || !scheme.bytes().enumerate().all(|(index, byte)| {
+            byte.is_ascii_alphabetic()
+                || (index > 0 && (byte.is_ascii_digit() || b"+.-".contains(&byte)))
         })
-        && rest.strip_prefix("//").is_some_and(|tail| !tail.is_empty())
+    {
+        return false;
+    }
+    let (before_fragment, fragment) = rest.split_once('#').unwrap_or((rest, ""));
+    if !uri_component(fragment, b":@/?") {
+        return false;
+    }
+    let (hierarchy, query) = before_fragment
+        .split_once('?')
+        .unwrap_or((before_fragment, ""));
+    if !uri_component(query, b":@/?") {
+        return false;
+    }
+    if let Some(authority_path) = hierarchy.strip_prefix("//") {
+        let (authority, path) = authority_path
+            .split_once('/')
+            .unwrap_or((authority_path, ""));
+        valid_uri_authority(authority) && uri_component(path, b":@/")
+    } else {
+        uri_component(hierarchy, b":@/")
+    }
+}
+
+fn uri_component(value: &str, extra: &[u8]) -> bool {
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'%' {
+            if bytes.get(index + 1).is_none_or(|b| !b.is_ascii_hexdigit())
+                || bytes.get(index + 2).is_none_or(|b| !b.is_ascii_hexdigit())
+            {
+                return false;
+            }
+            index += 3;
+        } else if byte.is_ascii_alphanumeric()
+            || b"-._~!$&'()*+,;=".contains(&byte)
+            || extra.contains(&byte)
+        {
+            index += 1;
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn valid_uri_authority(value: &str) -> bool {
+    let host_port = if let Some((user, host)) = value.rsplit_once('@') {
+        if !uri_component(user, b":") {
+            return false;
+        }
+        host
+    } else {
+        value
+    };
+    if let Some(literal_port) = host_port.strip_prefix('[') {
+        let Some((literal, port)) = literal_port.split_once(']') else {
+            return false;
+        };
+        let valid_literal = literal.parse::<std::net::Ipv6Addr>().is_ok()
+            || literal
+                .strip_prefix('v')
+                .or_else(|| literal.strip_prefix('V'))
+                .and_then(|future| future.split_once('.'))
+                .is_some_and(|(version, address)| {
+                    !version.is_empty()
+                        && version.bytes().all(|b| b.is_ascii_hexdigit())
+                        && !address.is_empty()
+                        && uri_component(address, b":")
+                        && !address.contains('%')
+                });
+        valid_literal
+            && (port.is_empty()
+                || port
+                    .strip_prefix(':')
+                    .is_some_and(|p| p.bytes().all(|b| b.is_ascii_digit())))
+    } else {
+        let (host, port) = host_port.split_once(':').unwrap_or((host_port, ""));
+        uri_component(host, b"") && port.bytes().all(|b| b.is_ascii_digit())
+    }
 }
 
 fn valid_date_time(value: &str) -> bool {
     let bytes = value.as_bytes();
-    let timezone = value
-        .get(value.len().saturating_sub(6)..)
-        .unwrap_or_default();
-    bytes.len() >= 20
-        && valid_date(&value[..10])
-        && matches!(bytes[10], b'T' | b't')
-        && bytes[13] == b':'
-        && bytes[16] == b':'
-        && (value.ends_with('Z')
-            || value.ends_with('z')
-            || timezone.contains('+')
-            || timezone.contains('-'))
+    if bytes.len() < 20 || !value.is_ascii() || !valid_date(&value[..10]) {
+        return false;
+    }
+    if !matches!(bytes[10], b'T' | b't' | b' ') || bytes[13] != b':' || bytes[16] != b':' {
+        return false;
+    }
+    let decimal_pair = |start: usize| {
+        let pair = bytes.get(start..start + 2)?;
+        pair.iter()
+            .all(u8::is_ascii_digit)
+            .then(|| (pair[0] - b'0') * 10 + pair[1] - b'0')
+    };
+    let (Some(hour), Some(minute), Some(second)) =
+        (decimal_pair(11), decimal_pair(14), decimal_pair(17))
+    else {
+        return false;
+    };
+    if hour > 23 || minute > 59 || !(second <= 59 || (hour == 23 && minute == 59 && second == 60)) {
+        return false;
+    }
+    let mut suffix = &value[19..];
+    if let Some(fraction) = suffix.strip_prefix('.') {
+        let count = fraction.bytes().take_while(u8::is_ascii_digit).count();
+        if count == 0 {
+            return false;
+        }
+        suffix = &fraction[count..];
+    }
+    if matches!(suffix, "Z" | "z") {
+        return true;
+    }
+    let offset = suffix.as_bytes();
+    offset.len() == 6
+        && matches!(offset[0], b'+' | b'-')
+        && offset[3] == b':'
+        && [offset[1], offset[2], offset[4], offset[5]]
+            .iter()
+            .all(u8::is_ascii_digit)
+        && (offset[1] - b'0') * 10 + offset[2] - b'0' <= 23
+        && (offset[4] - b'0') * 10 + offset[5] - b'0' <= 59
 }
 
 fn numeric_constraints_match(
@@ -2557,36 +2677,134 @@ fn numeric_constraints_match(
     integer: bool,
     allow_float_integer: bool,
 ) -> bool {
-    if value.is_boolean() || !value.is_number() {
-        return false;
-    }
-    if integer
-        && !(value.as_i64().is_some()
-            || value.as_u64().is_some()
-            || (allow_float_integer && value.as_f64().is_some_and(|number| number.fract() == 0.0)))
-    {
-        return false;
-    }
-    let Some(number) = value.as_f64() else {
+    let Some(number) = ExactDecimal::from_value(value) else {
         return false;
     };
-    if field
-        .get("minimum")
-        .and_then(Value::as_f64)
-        .is_some_and(|minimum| number < minimum)
+    if integer
+        && (!number.is_integer()
+            || (!allow_float_integer
+                && !matches!(value, Value::Number(number) if !number.to_string().contains(['.', 'e', 'E']))))
     {
         return false;
     }
-    if field
-        .get("maximum")
-        .and_then(Value::as_f64)
-        .is_some_and(|maximum| number > maximum)
-    {
-        return false;
+    for (key, rejected) in [
+        ("minimum", std::cmp::Ordering::Less),
+        ("maximum", std::cmp::Ordering::Greater),
+    ] {
+        if let Some(bound) = field.get(key) {
+            let Some(bound) = ExactDecimal::from_value(bound) else {
+                return false;
+            };
+            if number.compare(&bound) == rejected {
+                return false;
+            }
+        }
     }
     true
 }
 
+// Decimal magnitude comparison never materializes the exponent's power of ten.
+struct ExactDecimal {
+    negative: bool,
+    digits: Vec<u8>,
+    exponent: num_bigint::BigInt,
+}
+
+impl ExactDecimal {
+    fn from_value(value: &Value) -> Option<Self> {
+        let Value::Number(number) = value else {
+            return None;
+        };
+        let text = number.to_string();
+        let (mantissa, exponent) = text.split_once(['e', 'E']).unwrap_or((text.as_str(), "0"));
+        let negative = mantissa.starts_with('-');
+        let mantissa = mantissa.strip_prefix('-').unwrap_or(mantissa);
+        let mut exponent: num_bigint::BigInt = exponent.parse().ok()?;
+        let fraction = mantissa
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        exponent -= fraction;
+        let mut digits: Vec<u8> = mantissa.bytes().filter(|b| *b != b'.').collect();
+        let leading = digits.iter().take_while(|b| **b == b'0').count();
+        digits.drain(..leading);
+        if digits.is_empty() {
+            return Some(Self {
+                negative: false,
+                digits: vec![b'0'],
+                exponent: 0.into(),
+            });
+        }
+        while digits.last() == Some(&b'0') {
+            digits.pop();
+            exponent += 1;
+        }
+        Some(Self {
+            negative,
+            digits,
+            exponent,
+        })
+    }
+
+    fn is_zero(&self) -> bool {
+        self.digits.as_slice() == b"0"
+    }
+
+    fn is_integer(&self) -> bool {
+        self.is_zero() || self.exponent >= 0.into()
+    }
+
+    fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        if self.is_zero() && other.is_zero() {
+            return Ordering::Equal;
+        }
+        if self.negative != other.negative {
+            return self.negative.cmp(&other.negative).reverse();
+        }
+        let magnitude = if self.is_zero() {
+            Ordering::Less
+        } else if other.is_zero() {
+            Ordering::Greater
+        } else {
+            let left_order = &self.exponent + self.digits.len();
+            let right_order = &other.exponent + other.digits.len();
+            left_order.cmp(&right_order).then_with(|| {
+                let length = self.digits.len().max(other.digits.len());
+                (0..length)
+                    .map(|index| self.digits.get(index).copied().unwrap_or(b'0'))
+                    .cmp((0..length).map(|index| other.digits.get(index).copied().unwrap_or(b'0')))
+            })
+        };
+        if self.negative {
+            magnitude.reverse()
+        } else {
+            magnitude
+        }
+    }
+
+    fn small_integer(&self) -> Option<serde_json::Number> {
+        if !self.is_integer() {
+            return None;
+        }
+        if self.is_zero() {
+            return Some(0.into());
+        }
+        let zeros: usize = self.exponent.to_string().parse().ok()?;
+        if zeros > 20 || self.digits.len() + zeros > 20 {
+            return None;
+        }
+        let mut text = String::new();
+        if self.negative {
+            text.push('-');
+        }
+        text.extend(self.digits.iter().map(|b| char::from(*b)));
+        text.extend(std::iter::repeat_n('0', zeros));
+        text.parse::<i64>()
+            .map(Into::into)
+            .or_else(|_| text.parse::<u64>().map(Into::into))
+            .ok()
+    }
+}
 fn array_constraints_match(
     field: &Map<String, Value>,
     value: &Value,

@@ -9,6 +9,7 @@ description = "Portable OpenAI MCP extension wire models and validators"
 readme = "README.md"
 
 [dependencies]
+num-bigint = { version = "0.4", default-features = false, features = ["std"] }
 regress = "0.12"
 schemars.workspace = true
 serde.workspace = true
