@@ -445,6 +445,11 @@ impl McpHttpServer {
             method: request.method.clone(),
             path: request.path.clone(),
         };
+        if matches!(client_request.kind, Kind::SubscriptionsListen { .. }) {
+            return Ok(self
+                .subscription_response(*client_request, peer_version, Some(transport))
+                .await);
+        }
         let mut stream = MessageStream::spawn(
             self.clone(),
             *client_request,
@@ -617,16 +622,69 @@ impl McpHttpServer {
         json!({ "name": self.tools.server_name, "version": self.tools.server_version })
     }
 
+    fn capabilities(&self) -> Value {
+        let mut capabilities = self.tools.capabilities();
+        if self.tools.subscription_listen_supported()
+            && let Some(object) = capabilities.as_object_mut()
+        {
+            object.insert("subscriptions".to_string(), json!({ "listen": true }));
+        }
+        capabilities
+    }
+
     fn initialize_result(&self, protocol_version: &str) -> Value {
         let mut result = json!({
             "protocolVersion": protocol_version,
-            "capabilities": self.tools.capabilities(),
+            "capabilities": self.capabilities(),
             "serverInfo": self.server_info(),
         });
         if let Some(instructions) = &self.tools.instructions {
             result["instructions"] = json!(instructions);
         }
         result
+    }
+
+    async fn subscription_response(
+        &self,
+        request: ClientRequest,
+        peer_version: String,
+        transport: Option<crate::command::RequestContext>,
+    ) -> McpHttpResponse {
+        let id = request.id.clone();
+        let requested = request.meta_protocol_version();
+        let protocol_version = requested.unwrap_or(peer_version);
+        let context = resource_context(&request, &protocol_version, None);
+        let Kind::SubscriptionsListen {
+            notifications,
+            resource_uris,
+            cursor,
+        } = request.kind
+        else {
+            return McpHttpResponse::json(
+                500,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": error(INVALID_REQUEST, "request was not subscriptions/listen"),
+                }),
+            );
+        };
+        let _ = transport;
+        match self
+            .tools
+            .listen_subscriptions(notifications, resource_uris, cursor, context)
+            .await
+        {
+            Ok(stream) => McpHttpResponse::event_stream(stream),
+            Err(subscription_error) => {
+                let message = json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": resource_error(subscription_error),
+                });
+                McpHttpResponse::json(http_status(&message), &message)
+            }
+        }
     }
 
     async fn dispatch_result(
@@ -714,7 +772,7 @@ impl McpHttpServer {
                 let mut result = json!({
                     "resultType": "complete",
                     "supportedVersions": supported,
-                    "capabilities": self.tools.capabilities(),
+                    "capabilities": self.capabilities(),
                     "ttlMs": 0,
                     "cacheScope": "private",
                     "_meta": { "io.modelcontextprotocol/serverInfo": self.server_info() },
@@ -796,9 +854,11 @@ impl McpHttpServer {
             Kind::Ping
             | Kind::SetLevel
             | Kind::GetPrompt
-            | Kind::SubscriptionsListen
+            | Kind::SubscriptionsListen { .. }
             | Kind::Task
-            | Kind::Custom => return Err(error(METHOD_NOT_FOUND, request.method)),
+            | Kind::Custom => {
+                return Err(error(METHOD_NOT_FOUND, request.method));
+            }
         };
         if !modern_result && result.get("resultType") == Some(&json!("input_required")) {
             return Err(error(
@@ -1425,7 +1485,11 @@ enum Kind {
     ReadResource {
         uri: String,
     },
-    SubscriptionsListen,
+    SubscriptionsListen {
+        notifications: Value,
+        resource_uris: Vec<String>,
+        cursor: Option<String>,
+    },
     Subscribe {
         uri: String,
     },
@@ -1609,6 +1673,12 @@ fn is_optional(params: &Value, key: &str, check: fn(&Value) -> bool) -> bool {
         .is_none_or(|value| value.is_null() || check(value))
 }
 
+fn string_array(value: &Value) -> bool {
+    value
+        .as_array()
+        .is_some_and(|items| items.iter().all(Value::is_string))
+}
+
 fn is_implementation(value: &Value) -> bool {
     is_str(value, "name")
         && is_str(value, "version")
@@ -1702,10 +1772,33 @@ fn classify(method: &str, params: Option<&Value>) -> Kind {
             },
             _ => Kind::Custom,
         },
-        "subscriptions/listen" => with(
-            &|params| params.get("notifications").is_some_and(Value::is_object),
-            Kind::SubscriptionsListen,
-        ),
+        "subscriptions/listen" => match object {
+            Some(params)
+                if params.get("notifications").is_some_and(Value::is_object)
+                    && is_optional(params, "resourceUris", string_array)
+                    && is_optional(params, "cursor", Value::is_string) =>
+            {
+                Kind::SubscriptionsListen {
+                    notifications: params["notifications"].clone(),
+                    resource_uris: params
+                        .get("resourceUris")
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    cursor: params
+                        .get("cursor")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                }
+            }
+            _ => Kind::Custom,
+        },
         "resources/subscribe" => match object {
             Some(params) if is_str(params, "uri") => Kind::Subscribe {
                 uri: params["uri"].as_str().unwrap_or_default().to_string(),
@@ -1751,7 +1844,8 @@ mod tests {
         CommandContext, CommandDef, CommandHandler, McpCommandOptions, McpPeerRequest,
     };
     use crate::mcp::{
-        McpDiscovery, McpResultMapper, McpResultMapping, McpServeOptions, McpToolFilter,
+        McpDiscovery, McpResourceRegistry, McpResultMapper, McpResultMapping, McpServeOptions,
+        McpSubscriptionListenHandler, McpToolFilter,
     };
     use crate::output::CommandResult;
     use serde_json::json;
@@ -2325,6 +2419,78 @@ mod tests {
             .unwrap();
             assert_eq!(result["result"]["structuredContent"]["accepted"], "owner");
             assert!(server.pending_peer.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn modern_subscription_listener_advertises_and_streams_events() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("echo", EchoOptions).done(),
+                McpServeOptions {
+                    resources: McpResourceRegistry {
+                        listen: Some(McpSubscriptionListenHandler::new(|request| async move {
+                            assert_eq!(request.resource_uris, vec!["memory://one".to_string()]);
+                            assert_eq!(request.cursor.as_deref(), Some("opaque-1"));
+                            assert_eq!(request.notifications["resources"], true);
+                            Ok(futures::stream::iter([json!({
+                                "jsonrpc": "2.0",
+                                "method": "notifications/resources/updated",
+                                "params": {
+                                    "cursor": "opaque-2",
+                                    "resourceUris": ["memory://one"],
+                                    "kind": "updated"
+                                }
+                            })])
+                            .boxed())
+                        })),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let discover = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "discover",
+                        "method": "server/discover",
+                        "params": {
+                            "_meta": {
+                                META_PROTOCOL_VERSION: MODERN,
+                                META_CLIENT_CAPABILITIES: {}
+                            }
+                        }
+                    }),
+                    MODERN,
+                    "server/discover",
+                    "",
+                ))
+                .await;
+            let messages = collect_event_stream(discover).await;
+            assert_eq!(messages[0]["result"]["capabilities"]["subscriptions"]["listen"], true);
+
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "listen",
+                        "method": "subscriptions/listen",
+                        "params": {
+                            "notifications": { "resources": true },
+                            "resourceUris": ["memory://one"],
+                            "cursor": "opaque-1"
+                        }
+                    }),
+                    MODERN,
+                    "subscriptions/listen",
+                    "",
+                ))
+                .await;
+            let messages = collect_event_stream(response).await;
+            assert_eq!(messages.len(), 1);
+            assert_eq!(messages[0]["method"], "notifications/resources/updated");
+            assert_eq!(messages[0]["params"]["cursor"], "opaque-2");
         });
     }
 

@@ -12,6 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::schema::FieldMeta;
+use futures::stream::BoxStream;
 use serde_json::Value;
 
 #[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
@@ -368,6 +369,62 @@ impl McpResourceSubscriptionHandler {
     }
 }
 
+/// Request passed to a modern MCP subscription listener.
+#[derive(Debug, Clone)]
+pub struct McpSubscriptionListenRequest {
+    /// Requested notification families and options.
+    pub notifications: Value,
+    /// Resource URI filters requested by the client.
+    pub resource_uris: Vec<String>,
+    /// Last delivery cursor observed by the client.
+    pub cursor: Option<String>,
+    /// Shared request metadata.
+    pub context: McpResourceRequest,
+}
+
+/// Stream returned by a modern MCP subscription listener.
+pub type McpSubscriptionListenStream = BoxStream<'static, Value>;
+
+/// Future returned by a modern MCP subscription listener.
+pub type McpSubscriptionListenFuture = Pin<
+    Box<
+        dyn Future<Output = Result<McpSubscriptionListenStream, McpResourceError>> + Send + 'static,
+    >,
+>;
+
+/// Async callback used to open a modern `subscriptions/listen` stream.
+#[derive(Clone)]
+pub struct McpSubscriptionListenHandler(
+    Arc<dyn Fn(McpSubscriptionListenRequest) -> McpSubscriptionListenFuture + Send + Sync>,
+);
+
+impl std::fmt::Debug for McpSubscriptionListenHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("McpSubscriptionListenHandler")
+            .finish_non_exhaustive()
+    }
+}
+
+impl McpSubscriptionListenHandler {
+    /// Creates a modern subscription listener from an async function.
+    pub fn new<F, Fut>(handler: F) -> Self
+    where
+        F: Fn(McpSubscriptionListenRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<McpSubscriptionListenStream, McpResourceError>>
+            + Send
+            + 'static,
+    {
+        Self(Arc::new(move |request| Box::pin(handler(request))))
+    }
+
+    pub(super) async fn listen(
+        &self,
+        request: McpSubscriptionListenRequest,
+    ) -> Result<McpSubscriptionListenStream, McpResourceError> {
+        (self.0)(request).await
+    }
+}
+
 /// Resources and handlers owned by the MCP host runtime.
 #[derive(Debug, Clone, Default)]
 pub struct McpResourceRegistry {
@@ -381,6 +438,8 @@ pub struct McpResourceRegistry {
     pub subscribe: Option<McpResourceSubscriptionHandler>,
     /// Optional handler for `resources/unsubscribe`.
     pub unsubscribe: Option<McpResourceSubscriptionHandler>,
+    /// Optional handler for modern `subscriptions/listen`.
+    pub listen: Option<McpSubscriptionListenHandler>,
 }
 
 /// Options for the MCP server.
