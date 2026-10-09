@@ -6,9 +6,13 @@
   "license": "MIT",
   "repository": "github:douglance/incurs",
   "files": [
-    "subscriptions/worker.mjs"
+    "subscriptions/worker.mjs",
+    "subscriptions/worker.d.ts"
   ],
   "exports": {
-    "./subscriptions-worker": "./subscriptions/worker.mjs"
+    "./subscriptions-worker": {
+      "types": "./subscriptions/worker.d.ts",
+      "default": "./subscriptions/worker.mjs"
+    }
   }
 }
