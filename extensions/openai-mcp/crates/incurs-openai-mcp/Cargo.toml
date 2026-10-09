@@ -10,7 +10,7 @@ description = "Server-side OpenAI MCP extension helpers for incurs"
 
 [dependencies]
 async-trait = "0.1"
-incurs = { path = "../../../../crates/incurs", version = "0.11.0", default-features = false }
+incurs = { path = "../../../../crates/incurs", version = "0.12.0", default-features = false }
 incurs-openai-mcp-protocol = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
