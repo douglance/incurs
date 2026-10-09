@@ -447,9 +447,14 @@ impl McpHttpServer {
             path: request.path.clone(),
         };
         if matches!(client_request.kind, Kind::SubscriptionsListen { .. }) {
-            return Ok(self
-                .subscription_response(*client_request, peer_version, Some(transport))
-                .await);
+            let protocol_version = client_request
+                .meta_protocol_version()
+                .unwrap_or_else(|| peer_version.clone());
+            if protocol_version.as_str() >= MODERN {
+                return Ok(self
+                    .subscription_response(*client_request, peer_version, Some(transport))
+                    .await);
+            }
         }
         let mut stream = MessageStream::spawn(
             self.clone(),
@@ -2785,7 +2790,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_protocol_rejects_modern_subscription_listen() {
+    fn legacy_protocol_routes_subscription_listen_through_ordinary_dispatch() {
         futures::executor::block_on(async {
             let server = tool_server_with_options(
                 CommandDef::build("echo", EchoOptions).done(),
@@ -2812,10 +2817,12 @@ mod tests {
                     "",
                 ))
                 .await;
-            assert_eq!(response.status, 404);
-            let body = full_json(response);
-            assert_eq!(body["id"], "legacy-listen");
-            assert_eq!(body["error"]["code"], METHOD_NOT_FOUND);
+            assert_eq!(response.status, 200);
+            let messages = collect_event_stream(response).await;
+            assert_eq!(messages.len(), 1, "{messages:#?}");
+            assert_eq!(messages[0]["id"], "legacy-listen");
+            assert_eq!(messages[0]["error"]["code"], METHOD_NOT_FOUND);
+            assert_eq!(messages[0]["error"]["message"], "subscriptions/listen");
         });
     }
 
