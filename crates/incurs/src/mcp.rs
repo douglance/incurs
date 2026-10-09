@@ -257,6 +257,10 @@ pub struct McpResourceReadResult {
 /// Metadata passed to an MCP resource handler.
 #[derive(Debug, Clone, Default)]
 pub struct McpResourceRequest {
+    /// JSON-RPC request id for the request, when the transport exposes one.
+    pub request_id: Option<Value>,
+    /// Trusted transport request metadata, when served over a request transport.
+    pub request: Option<crate::command::RequestContext>,
     /// Selected protocol version for the request.
     pub protocol_version: Option<String>,
     /// Complete request `_meta` object, when the client supplied one.
@@ -410,9 +414,8 @@ impl McpSubscriptionListenHandler {
     pub fn new<F, Fut>(handler: F) -> Self
     where
         F: Fn(McpSubscriptionListenRequest) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<McpSubscriptionListenStream, McpResourceError>>
-            + Send
-            + 'static,
+        Fut:
+            Future<Output = Result<McpSubscriptionListenStream, McpResourceError>> + Send + 'static,
     {
         Self(Arc::new(move |request| Box::pin(handler(request))))
     }
@@ -1553,6 +1556,8 @@ mod server {
         peer: Option<crate::command::McpPeer>,
     ) -> ResourceContext {
         ResourceContext {
+            request_id: None,
+            request: None,
             protocol_version,
             request_meta,
             client_capabilities,
