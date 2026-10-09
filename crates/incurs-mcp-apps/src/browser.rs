@@ -313,13 +313,15 @@ fn emit_notification(inner: &Rc<RefCell<BrowserState>>, method: &str, params: Va
     }
 }
 
+type InstalledTimeout = (Option<i32>, Option<Closure<dyn FnMut()>>);
+
 fn install_timeout(
     inner: Rc<RefCell<BrowserState>>,
     id: String,
     method: String,
     timeout: Option<Duration>,
     window: &Window,
-) -> AppResult<(Option<i32>, Option<Closure<dyn FnMut()>>)> {
+) -> AppResult<InstalledTimeout> {
     let Some(timeout) = timeout else {
         return Ok((None, None));
     };
@@ -398,8 +400,9 @@ fn finish_pending(
 }
 
 fn post_value(inner: &Rc<RefCell<BrowserState>>, value: &Value) -> AppResult<()> {
-    let message = serde_wasm_bindgen::to_value(value)
-        .map_err(|error| AppError::Transport(error.to_string()))?;
+    let message =
+        serde::Serialize::serialize(value, &serde_wasm_bindgen::Serializer::json_compatible())
+            .map_err(|error| AppError::Transport(error.to_string()))?;
     inner
         .borrow()
         .parent

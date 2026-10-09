@@ -101,6 +101,7 @@ async function writeProofWorkspace(root, consumerPath) {
   await writeFile(join(consumerPath, 'Cargo.toml'), consumerManifest);
   await writeFile(join(consumerPath, 'src/lib.rs'), rustProofSource);
   await writeFile(join(consumerPath, 'index.html'), indexHtml);
+  await writeFile(join(consumerPath, 'app.html'), appHtml);
   await writeFile(join(consumerPath, 'package.json'), await readFile(new URL('./browser-smoke-package.json', import.meta.url), 'utf8'));
   await writeFile(join(consumerPath, 'package-lock.json'), await readFile(new URL('./browser-smoke-package-lock.json', import.meta.url), 'utf8'));
   await writeFile(join(consumerPath, 'run-playwright.mjs'), playwrightRunner);
@@ -191,6 +192,120 @@ web-sys = { version = "=0.3.103", features = ["CssStyleDeclaration", "Document",
 
 const indexHtml = String.raw`<!doctype html>
 <meta charset="utf-8">
+<title>Independent OpenAI MCP host proof</title>
+<h1>Rust MCP App runtime proof</h1>
+<iframe id="evil" srcdoc="<script>addEventListener('message',e=>{parent.document.getElementById('app').contentWindow.postMessage(e.data,'*')})</script>" hidden></iframe>
+<iframe id="app" src="/app.html" title="Compiled Rust WASM guest"></iframe>
+<pre id="proof-status">Running independent host checks...</pre>
+<script>
+const guest = document.getElementById('app');
+window.__hostMessages = [];
+window.__hostErrors = [];
+window.__forgedResponses = 0;
+function requireHost(ok, text) { if (!ok) throw new Error(text); }
+function send(message) { guest.contentWindow.postMessage(message, '*'); }
+function notify(method, params) { send({jsonrpc:'2.0', method, params}); }
+addEventListener('message', async event => {
+  if (event.source !== guest.contentWindow) return;
+  const message = event.data;
+  try {
+    requireHost(message && Object.getPrototypeOf(message) === Object.prototype,
+      'JSON-RPC payload must be a plain object, received ' + Object.prototype.toString.call(message));
+    requireHost(message.jsonrpc === '2.0', 'missing JSON-RPC version');
+    window.__hostMessages.push(message);
+    const {method, params = {}, id} = message;
+    if (id === undefined) {
+      requireHost(method === 'ui/notifications/initialized' || method === 'notifications/cancelled',
+        'unexpected notification: ' + method);
+      return;
+    }
+    let result = {};
+    switch (method) {
+      case 'ui/initialize':
+        requireHost(params.appInfo.name === 'openai-browser-gate', 'wrong app name');
+        document.getElementById('evil').contentWindow.postMessage({
+          jsonrpc:'2.0', id, result:{protocolVersion:'spoof', hostInfo:{name:'evil'}, hostCapabilities:{}, hostContext:{}}
+        }, '*');
+        window.__forgedResponses += 1;
+        send({jsonrpc:'2.0', id:'unrelated-id', result:{protocolVersion:'spoof'}});
+        await new Promise(resolve => setTimeout(resolve, 25));
+        result = {
+          protocolVersion:'2025-06-18', hostInfo:{name:'independent-javascript-host', version:'1'},
+          hostCapabilities:{experimental:{
+            'openai/files':{}, 'openai/message':{}, 'openai/modelContext':{}, 'openai/resource':{}
+          }},
+          hostContext:{
+            'openai/deepLink':{url:'/browser-gate'},
+            'openai/modelContext':{content:[],updateId:'initial'},
+            'openai/interactionCursor':'default'
+          }
+        };
+        break;
+      case 'proof/cursor':
+        notify('ui/notifications/host-context-changed', {
+          'openai/interactionCursor':'pointer', 'openai/deepLink':{url:'/updated'}
+        });
+        break;
+      case 'openai/files/open':
+        requireHost(params.path === '/projects/part.step', 'file path wire mismatch');
+        result = {_meta:{trace:'file-open'}};
+        break;
+      case 'ui/message':
+        requireHost(params.role === 'user', 'wrong role');
+        requireHost(params._meta['openai/message'].target === 'active', 'missing active target');
+        requireHost(params._meta['openai/message'].send === true, 'missing send true');
+        if (params.content[0].text === 'cancel' || params.content[0].text === 'dispose') return;
+        requireHost(params.content[0].text === 'hello', 'invalid message reached host');
+        result = {accepted:true};
+        break;
+      case 'ui/update-model-context':
+        requireHost(params.content[0].text === 'next', 'model context wire mismatch');
+        result = {_meta:{'openai/modelContext':{updateId:'next-id'}}};
+        break;
+      case 'resources/read':
+        requireHost(params.uri === 'file://a', 'resource read URI mismatch');
+        requireHost(params._meta['openai/resource'].representation === 'text', 'representation override lost');
+        requireHost(params.representation === undefined, 'convenience representation leaked');
+        result = {contents:[{uri:'file://a', text:'hello', mimeType:'text/plain',
+          _meta:{'openai/resource':{etag:'e1',writable:true}}}],_meta:{trace:'resource-read'},hostField:'retained'};
+        break;
+      case 'resources/subscribe':
+        requireHost(params.uri === 'file://watched', 'subscribe URI mismatch');
+        notify('notifications/resources/updated', {uri:'file://watched',_meta:{trace:'resource-update'}});
+        break;
+      case 'resources/unsubscribe':
+        requireHost(params.uri === 'file://watched', 'unsubscribe URI mismatch');
+        notify('notifications/resources/updated', {uri:'file://ignored'});
+        break;
+      case 'openai/resources/write':
+        if (params.uri === 'file://empty') {
+          requireHost(params.blob === '' && params.text === undefined, 'empty blob wire mismatch');
+          result = {outcome:'saved',etag:'empty'};
+        } else if (params.uri === 'file://a') {
+          requireHost(params.text === 'updated' && params.ifMatch === 'e1' && params.blob === undefined,
+            'text/ETag wire mismatch');
+          result = {outcome:'saved',etag:'e2'};
+        } else if (params.uri === 'file://conflict') {
+          result = {outcome:'conflict',etag:'current'};
+        } else if (params.uri === 'file://large') {
+          result = {outcome:'too-large',maxBytes:1};
+        } else if (params.uri === 'file://invalid-response') {
+          result = {outcome:'saved',etag:123};
+        } else throw new Error('invalid write reached host: ' + params.uri);
+        break;
+      case 'proof/never': return;
+      default: throw new Error('unexpected wire method: ' + method);
+    }
+    send({jsonrpc:'2.0',id,result});
+  } catch (error) {
+    window.__hostErrors.push(String(error));
+    if (message?.id !== undefined) send({jsonrpc:'2.0',id:message.id,error:{code:-32602,message:String(error)}});
+  }
+});
+</script>`;
+
+const appHtml = String.raw`<!doctype html>
+<meta charset="utf-8">
 <title>OpenAI MCP App Browser Gate</title>
 <script type="module">
   import init, { run_smoke } from './pkg/openai_browser_gate.js';
@@ -237,9 +352,38 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage();
   await page.goto('http://127.0.0.1:' + port + '/');
-  await page.waitForFunction(() => typeof window.__runSmoke === 'function');
-  const summary = await page.evaluate(() => window.__runSmoke());
-  console.log(summary);
+    await page.waitForFunction(() => typeof document.getElementById('app').contentWindow.__runSmoke === 'function');
+    let summary;
+    try {
+      summary = JSON.parse(await page.evaluate(() => document.getElementById('app').contentWindow.__runSmoke()));
+    } catch (error) {
+      const errors = await page.evaluate(() => window.__hostErrors);
+      throw new Error(String(error) + '\nIndependent host errors: ' + JSON.stringify(errors));
+    }
+    const host = await page.evaluate(() => ({
+      errors: window.__hostErrors, forgedResponses: window.__forgedResponses,
+      messages: window.__hostMessages,
+    }));
+    if (host.errors.length) throw new Error(JSON.stringify(host.errors));
+    const counts = {};
+    for (const message of host.messages) counts[message.method] = (counts[message.method] ?? 0) + 1;
+    for (const [method, expected] of Object.entries({
+      'ui/initialize':1, 'ui/notifications/initialized':1, 'proof/cursor':1,
+      'openai/files/open':1, 'ui/message':3, 'ui/update-model-context':1,
+      'resources/read':1, 'resources/subscribe':1, 'resources/unsubscribe':1,
+      'openai/resources/write':5, 'proof/never':1,
+    })) {
+      if (counts[method] !== expected) throw new Error(JSON.stringify({method,expected,actual:counts[method]}));
+    }
+    if (host.forgedResponses !== 1) throw new Error('source filter control was not sent');
+    if (host.messages.some(message => message.params?.content?.[0]?.text === 'draft')) throw new Error('invalid draft reached host');
+    const evidence = { ...summary, wireCounts:counts, rejectedSourceResponses:host.forgedResponses };
+    await page.evaluate(value => { document.getElementById('proof-status').textContent = JSON.stringify(value,null,2); }, evidence);
+    if (process.env.INCURS_OPENAI_BROWSER_SCREENSHOT) {
+      await page.screenshot({path:process.env.INCURS_OPENAI_BROWSER_SCREENSHOT,fullPage:true});
+    }
+    console.log(JSON.stringify(evidence));
+
 } finally {
   await browser.close();
   server.close();
@@ -252,15 +396,15 @@ const rustProofSource = String.raw`//! Browser proof for OpenAI MCP App helpers.
 
 use std::{cell::Cell, rc::Rc};
 
-use futures::{FutureExt, channel::oneshot};
+use futures::channel::oneshot;
 use incurs_mcp_apps::{
-    AppError, AppResult, AppTransport, HOST_CONTEXT_CHANGED_METHOD, INITIALIZE_METHOD,
-    InitializeParams, MODEL_CONTEXT_UPDATE_METHOD, McpApp, RequestCancellation, RequestOptions,
-    SEND_MESSAGE_METHOD, browser::BrowserPostMessageTransport,
+    AppError, AppResult, AppTransport, InitializeParams, McpApp, RequestCancellation, RequestOptions,
+    browser::BrowserPostMessageTransport,
 };
 use incurs_openai_mcp_app::{
-    OPENAI_MCP_APP_RESOURCE_WRITE_METHOD, OpenAiAppExtensions, OpenAiMessageMetadata,
-    OpenAiMessageOptions, OpenAiMessageParams, OpenAiMessageTarget, OpenAiResourceWriteContent,
+    OpenAiAppExtensions, OpenAiMessageMetadata, OpenAiMessageOptions, OpenAiMessageParams,
+    OpenAiMessageTarget, OpenAiResourceReadParams, OpenAiResourceReadMetadata,
+    OpenAiResourceReadPreference, OpenAiResourceRepresentation, OpenAiResourceWriteContent,
     OpenAiResourceWriteOptions,
 };
 use js_sys::Promise;
@@ -278,117 +422,68 @@ pub async fn run_smoke() -> Result<String, JsValue> {
 }
 
 async fn run_smoke_inner() -> AppResult<Value> {
-    let window = web_sys::window().ok_or_else(|| AppError::Transport("missing window".into()))?;
-    let transport = BrowserPostMessageTransport::new_for_window(
-        window.clone(),
-        window.clone(),
-        window.clone(),
-    )?;
-    install_handlers(&transport);
-
+    let transport = BrowserPostMessageTransport::new()?;
     let app = McpApp::new(transport.clone());
     let openai = OpenAiAppExtensions::new(app.clone());
     require(openai.files().is_none(), "files enabled before initialize")?;
     require(openai.message().is_none(), "message enabled before initialize")?;
-
     app.initialize(
         InitializeParams::new("openai-browser-gate", "1.0.0", "2025-06-18"),
         short_options(),
-    )
-    .await?;
+    ).await?;
     require(openai.files().is_some(), "files helper missing")?;
     require(openai.message().is_some(), "message helper missing")?;
     require(openai.model_context().is_some(), "model context helper missing")?;
     require(openai.resources().is_some(), "resources helper missing")?;
-    require(
-        openai
-            .deep_link()
-            .current()
-            .is_some_and(|link| link.url == "/browser-gate"),
-        "deep link mismatch",
-    )?;
-
+    require(openai.deep_link().current().is_some_and(|link| link.url == "/browser-gate"), "deep link mismatch")?;
     let cursor = openai.install_interaction_cursor_style()?;
     require_stylesheet()?;
     require_cursor("default")?;
-    transport.notify(
-        HOST_CONTEXT_CHANGED_METHOD,
-        json!({ "openai/interactionCursor": "pointer" }),
-    )?;
-    wait_for_browser(0).await?;
+    transport.request("proof/cursor", json!({}), short_options()).await?;
     require_cursor("pointer")?;
+    require(openai.deep_link().current().is_some_and(|link| link.url == "/updated"), "deep link update missing")?;
 
+    let files = openai.files().unwrap();
+    let opened = files.open("/projects/part.step").await?;
+    require(serde_json::to_value(opened).unwrap()["_meta"]["trace"] == "file-open", "file metadata lost")?;
+    require(files.open("").await.is_err(), "empty file path reached transport")?;
     prove_message_defaults_send_false_and_cancel(&transport, &openai).await?;
     prove_model_context(&openai).await?;
     prove_empty_blob_write(&openai).await?;
+    prove_resources(&openai).await?;
 
+    let timeout = transport.request("proof/never", json!({}), RequestOptions {
+        timeout_ms: Some(25), ..RequestOptions::default()
+    }).await.expect_err("unanswered request must time out");
+    require(matches!(timeout, AppError::Timeout { .. }), "wrong timeout error")?;
+    require(transport.pending_request_count() == 0, "timeout left pending request")?;
+
+    let (sender, receiver) = oneshot::channel();
+    let message = openai.message().unwrap();
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = message.send(
+            OpenAiMessageParams::user(vec![json!({"type":"text","text":"dispose"})]),
+            short_options(),
+        ).await;
+        let _ = sender.send(result);
+    });
+    wait_for_browser(0).await?;
+    require(transport.pending_request_count() == 1, "dispose request not pending")?;
     cursor.dispose();
     transport.dispose();
+    let disposed = receiver.await.map_err(|_| AppError::Transport("dispose task dropped".into()))?
+        .expect_err("dispose must reject pending work");
+    require(matches!(disposed, AppError::Disposed), "wrong dispose error")?;
+    require(transport.pending_request_count() == 0, "dispose left pending request")?;
+    require(files.open("/after-dispose").await.is_err(), "disposed transport accepted work")?;
     Ok(json!({
-        "browserGate": true,
-        "uiHandshake": true,
-        "messageDefaults": true,
-        "sendFalseRejectedBeforePost": true,
-        "requestCancellation": true,
-        "modelContext": true,
-        "emptyBlob": true,
-        "cursorStyle": true
+        "browserGate": true, "independentHost": true, "parentWindow": true,
+        "uiHandshake": true, "sourceAndIdFiltering": true, "files": true,
+        "deepLinkUpdates": true, "messageDefaults": true, "sendFalseRejectedBeforePost": true,
+        "requestCancellation": true, "requestTimeout": true, "disposePending": true,
+        "modelContext": true, "resources": true, "resourceNotifications": true,
+        "emptyBlob": true, "cursorStyle": true, "metadataPreservation": true
     }))
-}
-
-fn install_handlers(transport: &BrowserPostMessageTransport) {
-    transport.handle(
-        INITIALIZE_METHOD,
-        incurs_mcp_apps::value_handler(|params| {
-            require(params["appInfo"]["name"] == "openai-browser-gate", "wrong app name")?;
-            Ok(json!({
-                "protocolVersion": "2025-06-18",
-                "hostInfo": { "name": "browser-gate-host" },
-                "hostCapabilities": { "experimental": {
-                    "openai/files": {},
-                    "openai/message": {},
-                    "openai/modelContext": {},
-                    "openai/resource": {}
-                }},
-                "hostContext": {
-                    "openai/deepLink": { "url": "/browser-gate" },
-                    "openai/modelContext": { "content": [], "updateId": "initial" },
-                    "openai/interactionCursor": "default"
-                }
-            }))
-        }),
-    );
-
-    let message_count = Rc::new(Cell::new(0));
-    transport.handle(SEND_MESSAGE_METHOD, {
-        let message_count = message_count.clone();
-        Rc::new(move |params| {
-            let index = message_count.get();
-            message_count.set(index + 1);
-            if index == 0 {
-                async move {
-                    require(params["content"][0]["text"] == "hello", "wrong message text")?;
-                    require(params["_meta"]["openai/message"]["target"] == "active", "missing active target")?;
-                    require(params["_meta"]["openai/message"]["send"] == true, "missing send true")?;
-                    Ok(json!({ "accepted": true }))
-                }
-                .boxed_local()
-            } else {
-                async move { futures::future::pending::<AppResult<Value>>().await }.boxed_local()
-            }
-        })
-    });
-
-    transport.handle(MODEL_CONTEXT_UPDATE_METHOD, incurs_mcp_apps::value_handler(|params| {
-        require(params["content"][0]["text"] == "next", "wrong model context update")?;
-        Ok(json!({ "_meta": { "openai/modelContext": { "updateId": "next-id" } } }))
-    }));
-
-    transport.handle(OPENAI_MCP_APP_RESOURCE_WRITE_METHOD, incurs_mcp_apps::value_handler(|params| {
-        require(params["blob"] == "", "empty blob was not sent literally")?;
-        require(params.get("text").is_none(), "blob write included text")?;
-        Ok(json!({ "outcome": "saved", "etag": "empty" }))
-    }));
 }
 
 async fn prove_message_defaults_send_false_and_cancel(
@@ -442,7 +537,7 @@ async fn prove_message_defaults_send_false_and_cancel(
         .map_err(|_| AppError::Transport("cancelled task dropped".into()))?
         .expect_err("cancelled request succeeded");
     match cancelled {
-        AppError::Cancelled { method } if method == SEND_MESSAGE_METHOD => {}
+        AppError::Cancelled { method } if method == "ui/message" => {}
         other => return Err(AppError::validation("cancel", format!("unexpected error: {other}"))),
     }
     wait_for_browser(0).await?;
@@ -485,6 +580,55 @@ async fn prove_empty_blob_write(
     )
 }
 
+async fn prove_resources(
+    openai: &OpenAiAppExtensions<BrowserPostMessageTransport>,
+) -> AppResult<()> {
+    let resources = openai.resources().unwrap();
+    let read = resources.read(OpenAiResourceReadParams {
+        uri: "file://a".into(),
+        meta: Some(OpenAiResourceReadMetadata { openai_resource: Some(OpenAiResourceReadPreference {
+            representation: Some(OpenAiResourceRepresentation::Blob),
+        }), ..OpenAiResourceReadMetadata::default() }),
+        representation: Some(OpenAiResourceRepresentation::Text),
+    }, short_options()).await?;
+    require(read.contents[0].text.as_deref() == Some("hello"), "resource text mismatch")?;
+    let value = serde_json::to_value(&read).unwrap();
+    require(value["_meta"]["trace"] == "resource-read" && value["hostField"] == "retained", "read result fields lost")?;
+    require(read.contents[0].openai_metadata.as_ref().is_some_and(|meta| meta.etag.as_deref() == Some("e1") && meta.writable == Some(true)), "resource metadata mismatch")?;
+    let seen = Rc::new(Cell::new(0));
+    let seen_handler = seen.clone();
+    let registration = resources.add_update_handler(move |notification| {
+        if notification.method == "notifications/resources/updated" && notification.params.uri == "file://watched" && notification.params.meta.as_ref().is_some_and(|meta| meta.get("trace") == Some(&json!("resource-update"))) {
+            seen_handler.set(seen_handler.get() + 1);
+        } else {
+            seen_handler.set(100);
+        }
+    });
+    resources.subscribe("file://watched", short_options()).await?;
+    require(seen.get() == 1, "resource update callback missing")?;
+    registration.dispose();
+    resources.unsubscribe("file://watched", short_options()).await?;
+    require(seen.get() == 1, "removed resource handler called")?;
+
+    for (uri, expected, content, if_match) in [
+        ("file://a", "saved", "updated", Some("e1".to_string())),
+        ("file://conflict", "conflict", "stale", Some("old".to_string())),
+        ("file://large", "too-large", "large", None),
+    ] {
+        let result = resources.write(uri, OpenAiResourceWriteOptions {
+            if_match, content: OpenAiResourceWriteContent::Text(content.into()),
+        }, short_options()).await?;
+        require(serde_json::to_value(result).unwrap()["outcome"] == expected, "write outcome mismatch")?;
+    }
+    require(resources.write("file://invalid-response", OpenAiResourceWriteOptions {
+        if_match: None, content: OpenAiResourceWriteContent::Text("bad".into()),
+    }, short_options()).await.is_err(), "invalid write response accepted")?;
+    require(resources.write("file://invalid-blob", OpenAiResourceWriteOptions {
+        if_match: None, content: OpenAiResourceWriteContent::Blob("!".into()),
+    }, short_options()).await.is_err(), "invalid blob reached host")?;
+    Ok(())
+}
+
 fn require_stylesheet() -> AppResult<()> {
     let text = document_root()?
         .owner_document()
@@ -515,7 +659,7 @@ fn document_root() -> AppResult<web_sys::HtmlElement> {
 
 fn short_options() -> RequestOptions {
     RequestOptions {
-        timeout_ms: Some(500),
+        timeout_ms: Some(2000),
         ..RequestOptions::default()
     }
 }

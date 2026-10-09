@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from rust_oracle import cargo_example, exchange_jsonl
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[2]
 def literal_assignment(name):
@@ -13,14 +14,8 @@ def literal_assignment(name):
             return ast.literal_eval(node.value)
     raise RuntimeError("Missing literal corpus " + name)
 def exchange(argv, requests):
-    result = subprocess.run(argv, cwd=ROOT, input="".join(json.dumps(r) + "\n" for r in requests),
-        text=True, capture_output=True, check=False)
-    if result.returncode:
-        raise RuntimeError(json.dumps({"command": argv, "exit": result.returncode, "stderr": result.stderr[-8000:]}))
-    observations = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    if len(observations) != len(requests):
-        raise RuntimeError("Oracle response count mismatch")
-    return observations
+    return exchange_jsonl(argv, requests, ROOT)
+
 def main():
     requests = []
     fields = literal_assignment("fields")
@@ -35,9 +30,7 @@ def main():
             for content in content_values:
                 requests.append({"schema": "OpenAIFormContentSchema", "form": form, "value": content})
     expected = exchange(["node", "--import", "tsx", "oracle.mjs"], requests)
-    actual = exchange(["cargo", "run", "--quiet", "--locked", "--manifest-path",
-        str(REPO / "extensions/openai-mcp/Cargo.toml"), "-p", "incurs-openai-mcp-protocol",
-        "--example", "schema_oracle"], requests)
+    actual = exchange(cargo_example(REPO, "schema_oracle"), requests)
     failures = [{"index": i, "request": r, "expected": e, "actual": a}
         for i, (r, e, a) in enumerate(zip(requests, expected, actual))
         if e.get("ok") != a.get("ok") or (e.get("ok") and e.get("value") != a.get("value"))]

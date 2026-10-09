@@ -73,6 +73,14 @@
 - **Generated future lints stay at their boundary** - async_trait annotates generated futures with must_use. Scope the double_must_use compatibility allowance to the affected trait declarations and retain warnings-denied Clippy across the workspace.
 
 
+- **App resource wrappers retain MCP fields** — preserve request and result metadata, loose resource fields, and notification parameters across typed models. Validate the selected text or blob payload, and keep unparsed OpenAI decorations in raw metadata without blocking otherwise valid resource content. Keep independent literal controls for metadata overlays, optional decorations, and resource payload alternatives.
+
+- **Browser proof uses an independent host** — send plain JSON-RPC objects across `postMessage`. A Rust-to-Rust fixture can accept shared serialization mistakes such as JavaScript Maps. Keep host method strings and notification envelopes independent of SDK constants, and confirm an implementation mutation makes the browser gate fail.
+
+- **App notification listeners receive params** — decode the transport's parameter value and reconstruct the public notification envelope at the helper boundary. Injecting a full envelope into an in-memory listener masked dropped resource notifications in the browser.
+
+- **Typed results preserve numeric schemas** — a JSON Schema number is independent of its domain label. JavaScript sends whole numbers as floating-point values; retain numeric result tokens instead of narrowing them to unsigned integers. Exercise integer, fractional, and negative host controls when the declared schema permits them.
+
 - **Response media checks stop at the response value** — skip binary-annotation discovery for JSON media before traversing schemas. A binary child property, array item, or unused definition does not make its container a binary response. Follow only value-level references and compositions with a visited set; profiling the full Stripe document exposed repeated traversal through unrelated JSON properties.
 
 - **Nullable read models retain their original root schema** — removing null to choose a Rust payload type must not remove null from response validation. JSON Schema type arrays may contain several non-null types; preserve that union and exercise nullable object roots as well as scalar roots.
