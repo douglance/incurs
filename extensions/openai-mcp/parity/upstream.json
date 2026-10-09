@@ -1,0 +1,166 @@
+{
+  "repository": "https://github.com/openai/mcp-extensions",
+  "revision": "7e1be49daea03d7ec46ed2472f410099db2743d6",
+  "files": [
+    {
+      "path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": "docs/spec.md",
+      "sha256": "a17f3a0ad36fe2175791ff9f5b9572bd368313a4a4651a8eb80dd2ac49a10b10"
+    },
+    {
+      "path": "python/pyproject.toml",
+      "sha256": "0852655fb020586ef1a8100d7ba8dd7cb82f9ceeb071a4465ec33f05526a7502"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/__init__.py",
+      "sha256": "d0df9681ba9a63aa7c0d5c6a5baa627ba25278a72293d97ff51f7e6684793846"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/_models.py",
+      "sha256": "bdbcf876630f0101e5f3337b58c1d43e35b67cf8fe869f038a6b295504d7a50e"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/extensions.py",
+      "sha256": "86db6d95668b1f3678b418cb4d597e9160bfa7f20517a95bfa6c40b3327a8543"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/form/__init__.py",
+      "sha256": "06dfa2421b336fd1ef0a4ed4f324b80d23661d11137973749983446c2d585508"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/form/_elicitation.py",
+      "sha256": "9fc359317486386d4c4592f452b5df058b19b5d63b26ecb06f451cfa5144d21c"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/form/_resource_picker.py",
+      "sha256": "13ab2e91373135a14fa138be8aeed40d2ab27fd46d7f94c1c59e835ce7e5bfaa"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/form/_schema.py",
+      "sha256": "fc51f5a7ef63fd352b2fcbf9685c986d80882b3ecd39a326f11ae426fb9aa563"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/mentions.py",
+      "sha256": "e450f631932aeb3c79a3a7fa89216d19c16b4a3c04bce1279f219336a8425fa6"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/py.typed",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/resources.py",
+      "sha256": "9c39975a830025de1cc27cc21cb75e48b5d950e08ff1d6a6e65d4994f74c159d"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/settings.py",
+      "sha256": "64bad3a0afb5ec5c9fd7a0ca48c39728bfc3f74efd5a11a2a9212eb78d51512b"
+    },
+    {
+      "path": "python/src/openai_mcp_extensions/ui.py",
+      "sha256": "b8279a2d74454c1074b8fd703acf8f6713e0c9fa20f150f13c2eea20e9744a64"
+    },
+    {
+      "path": "python/src/openai_mcp_form_protocol/__init__.py",
+      "sha256": "e807a74ff4fa9470cc33ad883381ace0798cc507ef43688796f5560575c25646"
+    },
+    {
+      "path": "python/src/openai_mcp_form_protocol/py.typed",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "typescript/package.json",
+      "sha256": "f682dfdf775df68a0dffbf3c2881abba20ae2fa18ed091a5cb8c14ff814bb9e8"
+    },
+    {
+      "path": "typescript/src/app/deep-link.ts",
+      "sha256": "6f5b6e2ba204b54120fc2296d395bc81bab24cd8e8595dc01c74728b99641d9f"
+    },
+    {
+      "path": "typescript/src/app/extensions.ts",
+      "sha256": "1d198de3f5a397924c6ab2cca80aad6d472fe80e1bdde46dee22e3139597d950"
+    },
+    {
+      "path": "typescript/src/app/files.ts",
+      "sha256": "e9582f4d2e07933b312cba082cc4f21cae7143cce21a2e659508332815dc45e4"
+    },
+    {
+      "path": "typescript/src/app/index.ts",
+      "sha256": "b61071f9b7a53e1a281c8e30b98ef67129f0e666184b02d975f0ee51e9abb419"
+    },
+    {
+      "path": "typescript/src/app/message.ts",
+      "sha256": "bebb7923884926654cc512c807017eeb21eefd78b0963e4bbc6d51e800a49796"
+    },
+    {
+      "path": "typescript/src/app/model-context.ts",
+      "sha256": "068b41ae007f956778d179b38b9d271bfd47041bea706cd9eba570803ccf2a65"
+    },
+    {
+      "path": "typescript/src/app/resources.ts",
+      "sha256": "18073e0230c227a9aee0eadd4d9e64e3aa35f7b5dba2135ab0b38597b03e330d"
+    },
+    {
+      "path": "typescript/src/app/transport.ts",
+      "sha256": "f6e63bb8084175b285385265ba0c0853909a627f38b136ca0bab4918248ffffb"
+    },
+    {
+      "path": "typescript/src/server/extensions.ts",
+      "sha256": "822f741445b2b3c53143ca3a6636825dd019f75f5003e5c85428da67704c987b"
+    },
+    {
+      "path": "typescript/src/server/forms/elicitation.ts",
+      "sha256": "1ccc5b7ec09e85330360820af0aafe56858ec41015c337d2b98b6897c3732d87"
+    },
+    {
+      "path": "typescript/src/server/forms/fields.ts",
+      "sha256": "d22d43bc5cf491c1e94bfb5aab796b479515065f5aa3bf1f80a06c972a7f26b6"
+    },
+    {
+      "path": "typescript/src/server/forms/file-picker.ts",
+      "sha256": "b0e016810b25f0ce45cf734ae866abc2e7b4aff1b8b803a968d8fbf72b982922"
+    },
+    {
+      "path": "typescript/src/server/forms/schema.ts",
+      "sha256": "f82e556939257696e7d99fde09cee78923602c3a2ac62a38e24aa1a914a5fee0"
+    },
+    {
+      "path": "typescript/src/server/index.ts",
+      "sha256": "a453153c6ffdb718b0b931f17ca05cb64d9ade3be035663157f527d010f460eb"
+    },
+    {
+      "path": "typescript/src/server/mentions.ts",
+      "sha256": "c66ccc41d109b10726345b9e61646ffc1071c54d1be833f74ed2e505167fdfd8"
+    },
+    {
+      "path": "typescript/src/server/resources.ts",
+      "sha256": "bc13adc0ffb2fcd5a87c17d20a45fb8cb502c6bfc80cf06da17c21129f26ab2f"
+    },
+    {
+      "path": "typescript/src/server/settings.ts",
+      "sha256": "cd18a09646c840d4a34d222585a4d2d4848e11bb40f646cb27bd69f3898d1d71"
+    },
+    {
+      "path": "typescript/src/server/ui.ts",
+      "sha256": "91f6463440f9a80ebfe4fc64a7f0c51def821063d9eb94505b90b235960cbc0e"
+    },
+    {
+      "path": "typescript/src/shared/file-entrypoint.ts",
+      "sha256": "76b15e07adb9dd82db41a29fdd13eb78569a32bf49979ecdeae04e219d8b655e"
+    },
+    {
+      "path": "typescript/src/shared/resources.ts",
+      "sha256": "39472b21950a38a46dbe8ef289ba9a377dde81bbec79409f1cffc59b0135eefa"
+    },
+    {
+      "path": "typescript/src/shared/strings.ts",
+      "sha256": "63d8ba7aab4fcc1fbceaeb58efa6eee065f7b6a8556eb6b3e41c302904100659"
+    },
+    {
+      "path": "typescript/styles.css",
+      "sha256": "21d09125579c5f96e5bc2650dcc69dba03e6c96a1079a70a3304aecb7593895b"
+    }
+  ]
+}

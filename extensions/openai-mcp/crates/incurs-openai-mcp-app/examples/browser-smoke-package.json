@@ -1,0 +1,1 @@
+{"name":"openai-browser-gate","private":true,"type":"module","dependencies":{"@playwright/test":"1.56.1"}}

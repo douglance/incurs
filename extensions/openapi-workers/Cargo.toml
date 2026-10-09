@@ -12,7 +12,7 @@ worker = { git = "https://github.com/cloudflare/workers-rs", rev = "b57ba6ef8198
 tokio = { version = "1", default-features = false, features = ["rt", "macros", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-incurs-openapi = { path = "../openapi", default-features = false }
+incurs-openapi = { path = "../openapi", version = "0.1.0", default-features = false }
 
 [patch."https://github.com/guybedford/libc"]
 libc = { git = "https://github.com/rust-lang/libc", rev = "ab79e74db7f0f063de9d479a8593d88dfdf7f2eb" }

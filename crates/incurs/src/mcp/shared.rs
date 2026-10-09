@@ -13,9 +13,12 @@ use incurs_mcp_protocol::structured::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{McpDiscovery, McpServeOptions, McpToolFilter};
+use super::{
+    McpDiscovery, McpResourceReadRequest, McpResourceRegistry, McpResourceRequest,
+    McpResourceSubscriptionRequest, McpServeOptions, McpToolFilter,
+};
 use crate::cli::ConfigOptions;
-use crate::command::McpResultContent;
+use crate::command::{McpPeer, McpResultContent};
 use crate::schema::FieldMeta;
 use crate::tool::{
     ConfigSource, EnvironmentSource, ToolCallControl, ToolCallOptions, ToolCallOutcome,
@@ -32,6 +35,16 @@ pub(crate) struct SharedTool {
     pub(crate) name: String,
     /// Human-readable description.
     pub(crate) description: String,
+    /// Human-readable display title.
+    pub(crate) title: Option<String>,
+    /// Icon descriptors exposed to MCP clients.
+    pub(crate) icons: Vec<Value>,
+    /// Namespaced metadata exposed on MCP tool listings.
+    pub(crate) meta: BTreeMap<String, Value>,
+    /// Namespaced metadata exposed on successful MCP tool results.
+    pub(crate) result_meta: BTreeMap<String, Value>,
+    /// Whether this tool is directly listed in progressive discovery mode.
+    pub(crate) direct: bool,
     /// Merged JSON Schema for the tool's input.
     pub(crate) input_schema: Map<String, Value>,
     /// JSON Schema for structured MCP output when object-shaped.
@@ -80,6 +93,11 @@ fn shared_tool(definition: &ToolDefinition) -> Result<SharedTool, crate::errors:
         output_shape: projection.as_ref().map(|projection| projection.shape),
         name: definition.name.clone(),
         description: definition.description.clone(),
+        title: definition.title.clone(),
+        icons: definition.icons.clone(),
+        meta: definition.meta.clone(),
+        result_meta: definition.result_meta.clone(),
+        direct: definition.direct,
         input_schema: definition
             .input_schema
             .as_object()
@@ -187,6 +205,12 @@ pub(crate) fn direct_tool(tool: &SharedTool) -> Value {
     let mut wire = Map::new();
     wire.insert("name".to_string(), json!(tool.name));
     wire.insert("description".to_string(), json!(tool.description));
+    if let Some(title) = &tool.title {
+        wire.insert("title".to_string(), json!(title));
+    }
+    if !tool.icons.is_empty() {
+        wire.insert("icons".to_string(), Value::Array(tool.icons.clone()));
+    }
     wire.insert(
         "inputSchema".to_string(),
         Value::Object(tool.input_schema.clone()),
@@ -206,6 +230,9 @@ pub(crate) fn direct_tool(tool: &SharedTool) -> Value {
 /// Metadata shared by direct tool listing and detailed discovery.
 fn tool_metadata(tool: &SharedTool) -> Option<Map<String, Value>> {
     let mut metadata = tool.output_shape.and_then(projection_metadata);
+    if !tool.meta.is_empty() {
+        metadata.get_or_insert_default().extend(tool.meta.clone());
+    }
     if let Some(instructions) = &tool.instructions {
         metadata
             .get_or_insert_default()
@@ -388,6 +415,8 @@ pub(crate) fn discovery_result(
             let mut details = json!({
                 "name": tool.name,
                 "description": tool.description,
+                "title": tool.title,
+                "icons": tool.icons,
                 "inputSchema": Value::Object(tool.input_schema.clone()),
                 "outputSchema": tool.output_schema.clone().map(Value::Object),
                 "annotations": tool.annotations,
@@ -564,6 +593,24 @@ pub(crate) fn tool_call_result(
         ToolCallOutcome::Ok { data, cta } => {
             tool_result_success(name, data, cta, structured, presentation)
         }
+        ToolCallOutcome::InputRequired {
+            input_requests,
+            request_state,
+            meta,
+        } => {
+            let mut wire = Map::new();
+            wire.insert("resultType".to_string(), json!("input_required"));
+            if !input_requests.is_empty() {
+                wire.insert("inputRequests".to_string(), json!(input_requests));
+            }
+            if let Some(request_state) = request_state {
+                wire.insert("requestState".to_string(), json!(request_state));
+            }
+            if !meta.is_empty() {
+                wire.insert("_meta".to_string(), json!(meta));
+            }
+            Value::Object(wire)
+        }
         ToolCallOutcome::Error {
             code,
             message,
@@ -607,6 +654,16 @@ pub(crate) struct CallContext {
     pub(crate) protocol_version: String,
     /// Transport request metadata handed to the command.
     pub(crate) request: Option<crate::command::RequestContext>,
+    /// Complete request `_meta` object handed to the command.
+    pub(crate) request_meta: Option<Value>,
+    /// Client capabilities handed to the command.
+    pub(crate) client_capabilities: Option<Value>,
+    /// MRTR input responses handed to the command.
+    pub(crate) input_responses: Option<Value>,
+    /// MRTR request state handed to the command.
+    pub(crate) request_state: Option<String>,
+    /// Connected peer hook for this request.
+    pub(crate) peer: Option<McpPeer>,
     /// Cancellation and event delivery for this call.
     pub(crate) control: ToolCallControl,
     /// Environment values for command environment fields.
@@ -632,6 +689,12 @@ pub(crate) struct ToolServer {
     discovery: McpDiscovery,
     /// Optional application classification applied after default rendering.
     result_mapper: Option<super::McpResultMapper>,
+    /// Additional server capabilities.
+    capabilities: BTreeMap<String, Value>,
+    /// Host-owned resource registry.
+    resources: Arc<McpResourceRegistry>,
+    /// Optional peer request handle exposed to command contexts.
+    peer: Option<crate::command::McpPeer>,
     /// Exact standards enabled for this server.
     pub(crate) standards: incurs_mcp_protocol::McpStandardSet,
 }
@@ -673,6 +736,22 @@ impl ToolServer {
             .map(shared_tool)
             .collect::<Result<Vec<_>, _>>()?;
         let mut names = HashSet::new();
+        if options.tools.discovery == McpDiscovery::Progressive {
+            for tool in resolved.iter().filter(|tool| tool.direct) {
+                if matches!(
+                    tool.name.as_str(),
+                    "search_tools" | "get_tool_details" | "call_read_tool" | "call_write_tool"
+                ) {
+                    return Err(crate::errors::Error::Other(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "MCP tool name is reserved for progressive discovery: {}",
+                            tool.name
+                        ),
+                    ))));
+                }
+            }
+        }
         for tool in &resolved {
             if !names.insert(tool.name.clone()) {
                 return Err(crate::errors::Error::Other(Box::new(std::io::Error::new(
@@ -681,11 +760,14 @@ impl ToolServer {
                 ))));
             }
         }
-        let tool_list = if options.tools.discovery == McpDiscovery::Direct {
+        let mut tool_list: Vec<Value> = if options.tools.discovery == McpDiscovery::Direct {
             resolved.iter().map(direct_tool).collect()
         } else {
             progressive_tools()
         };
+        if options.tools.discovery == McpDiscovery::Progressive {
+            tool_list.extend(resolved.iter().filter(|tool| tool.direct).map(direct_tool));
+        }
         let tools_by_name = resolved
             .into_iter()
             .map(|tool| (tool.name.clone(), Arc::new(tool)))
@@ -699,8 +781,101 @@ impl ToolServer {
             instructions: options.instructions.clone(),
             discovery: options.tools.discovery,
             result_mapper: options.result_mapper.clone(),
+            capabilities: options.capabilities.clone(),
+            resources: Arc::new(options.resources.clone()),
+            peer: options.peer.clone(),
             standards: options.standards.clone(),
         })
+    }
+
+    /// Returns the server capability object shared by initialize and discovery.
+    pub(crate) fn capabilities(&self) -> Value {
+        let mut capabilities = Map::new();
+        capabilities.insert("prompts".to_string(), json!({}));
+        let mut resources = Map::new();
+        if self.resources.subscribe.is_some() || self.resources.unsubscribe.is_some() {
+            resources.insert("subscribe".to_string(), Value::Bool(true));
+        }
+        capabilities.insert("resources".to_string(), Value::Object(resources));
+        capabilities.insert("tools".to_string(), json!({}));
+        capabilities.extend(self.capabilities.clone());
+        Value::Object(capabilities)
+    }
+
+    /// Returns the resource entries advertised by this server.
+    pub(crate) fn list_resources(&self) -> Value {
+        let resources = self
+            .resources
+            .resources
+            .iter()
+            .map(|resource| serde_json::to_value(resource).expect("MCP resource is serializable"))
+            .collect::<Vec<_>>();
+        json!({ "resultType": "complete", "resources": resources })
+    }
+
+    /// Returns the resource templates advertised by this server.
+    pub(crate) fn list_resource_templates(&self) -> Value {
+        let templates = self
+            .resources
+            .templates
+            .iter()
+            .map(|template| {
+                serde_json::to_value(template).expect("MCP resource template is serializable")
+            })
+            .collect::<Vec<_>>();
+        json!({ "resultType": "complete", "resourceTemplates": templates })
+    }
+
+    /// Reads one registered resource through the host-owned resource handler.
+    pub(crate) async fn read_resource(
+        &self,
+        uri: String,
+        context: ResourceContext,
+    ) -> Result<Value, super::McpResourceError> {
+        let Some(reader) = &self.resources.read else {
+            return Err(super::McpResourceError {
+                code: -32602,
+                message: "Resource reading is not supported".to_string(),
+                data: None,
+            });
+        };
+        let result = reader
+            .read(McpResourceReadRequest {
+                uri,
+                context: context.into_request(),
+            })
+            .await?;
+        let mut value = serde_json::to_value(result).expect("MCP resource result is serializable");
+        value["resultType"] = json!("complete");
+        Ok(value)
+    }
+
+    /// Changes one resource subscription through the host-owned subscription handler.
+    pub(crate) async fn set_resource_subscription(
+        &self,
+        uri: String,
+        subscribe: bool,
+        context: ResourceContext,
+    ) -> Result<Value, super::McpResourceError> {
+        let handler = if subscribe {
+            &self.resources.subscribe
+        } else {
+            &self.resources.unsubscribe
+        };
+        let Some(handler) = handler else {
+            return Err(super::McpResourceError {
+                code: -32602,
+                message: "Resource subscriptions are not supported".to_string(),
+                data: None,
+            });
+        };
+        handler
+            .handle(McpResourceSubscriptionRequest {
+                uri,
+                context: context.into_request(),
+            })
+            .await?;
+        Ok(json!({ "resultType": "complete" }))
     }
 
     /// Handles one `tools/call` request.
@@ -715,7 +890,12 @@ impl ToolServer {
     ) -> Result<Value, String> {
         let mut tool_name = name;
         let mut arguments = arguments;
-        if self.discovery == McpDiscovery::Progressive {
+        if self.discovery == McpDiscovery::Progressive
+            && !self
+                .tools_by_name
+                .get(&tool_name)
+                .is_some_and(|tool| tool.direct)
+        {
             if let Some(result) =
                 discovery_result(&tool_name, arguments.clone(), &self.tools_by_name)?
             {
@@ -736,6 +916,7 @@ impl ToolServer {
             .ok_or_else(|| format!("Unknown tool: {tool_name}"))?;
         let input_options: BTreeMap<String, Value> =
             arguments.unwrap_or_default().into_iter().collect();
+        let peer = context.peer.or_else(|| self.peer.clone());
         let outcome = self
             .catalog
             .call(
@@ -746,6 +927,14 @@ impl ToolServer {
                     config: ConfigSource::Auto,
                     globals: None,
                     request: context.request,
+                    mcp: Some(crate::command::McpCallContext {
+                        protocol_version: Some(context.protocol_version.clone()),
+                        request_meta: context.request_meta,
+                        client_capabilities: context.client_capabilities,
+                        input_responses: context.input_responses,
+                        request_state: context.request_state,
+                        peer,
+                    }),
                     control: context.control,
                 },
             )
@@ -796,10 +985,34 @@ impl ToolServer {
                 }
             }
         }
+        if success && !tool.result_meta.is_empty() {
+            if !result["_meta"].is_object() {
+                result["_meta"] = json!({});
+            }
+            result["_meta"]
+                .as_object_mut()
+                .unwrap()
+                .extend(tool.result_meta.clone());
+        }
+        if let Some(structured_content) = mapping.structured_content {
+            result["structuredContent"] = structured_content;
+        }
+        if let Some(content) = mapping.content {
+            result["content"] = Value::Array(content);
+        }
+        if !mapping.meta.is_empty() {
+            if !result["_meta"].is_object() {
+                result["_meta"] = json!({});
+            }
+            result["_meta"]
+                .as_object_mut()
+                .unwrap()
+                .extend(mapping.meta);
+        }
         if let Some(is_error) = mapping.is_error {
             result["isError"] = json!(is_error);
         }
-        if let Some(content) = result["content"].as_array_mut() {
+        if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
             content.retain(|block| match block["type"].as_str() {
                 Some("audio") => context.protocol_version.as_str() >= "2025-03-26",
                 Some("resource_link") => context.protocol_version.as_str() >= "2025-06-18",
@@ -807,5 +1020,35 @@ impl ToolServer {
             });
         }
         Ok(result)
+    }
+}
+
+/// Per-call metadata for an MCP resource request.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ResourceContext {
+    /// Selected protocol version.
+    pub(crate) protocol_version: Option<String>,
+    /// Complete request `_meta` object.
+    pub(crate) request_meta: Option<Value>,
+    /// Client capabilities copied from request metadata or initialization.
+    pub(crate) client_capabilities: Option<Value>,
+    /// MRTR input responses.
+    pub(crate) input_responses: Option<Value>,
+    /// MRTR request state.
+    pub(crate) request_state: Option<String>,
+    /// Connected peer hook for this resource request.
+    pub(crate) peer: Option<McpPeer>,
+}
+
+impl ResourceContext {
+    fn into_request(self) -> McpResourceRequest {
+        McpResourceRequest {
+            protocol_version: self.protocol_version,
+            request_meta: self.request_meta,
+            client_capabilities: self.client_capabilities,
+            input_responses: self.input_responses,
+            request_state: self.request_state,
+            peer: self.peer,
+        }
     }
 }

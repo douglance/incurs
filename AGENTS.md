@@ -30,6 +30,8 @@
 - **Every feature builds alone** — CI checks each Cargo feature by itself on native and wasm32. `--all-features` hid an `http` feature that only compiled alongside `agent-plugins-mcp`.
 - **Code Mode is platform-neutral** — `incurs-codemode` owns the lifecycle, dispatch, replay, approval, rollback, and shared JavaScript program contract. Executors supply isolation and host bridging. Keep provider names, dependencies, configuration, documentation, tests, and runtime assumptions inside standalone workspaces under `extensions/`.
 - **`ToolCatalog` is the non-CLI invocation boundary** — MCP, Code Mode, and future transports resolve command metadata and execute through `ToolCatalog`. Preserve canonical command paths for config lookup and middleware context. `ParseMode::Flat` does not apply config defaults, so merge resolved command defaults into structured arguments before `command::execute`.
+- **Facade registration preserves existing commands** — check both advertised tool names and canonical command paths before staging a registration. A unique facade-local name can still replace a base CLI command during materialization. Keep a regression that rejects the collision and invokes the original command, plus a confirmed mutation of the collision check.
+
 - **Tool cancellation covers active commands** — race the shared `command::execute` future against `ToolCallControl::cancellation`; a pre-invocation check and stream-only cancellation do not stop an ordinary asynchronous command.
 - **CLI option boundaries are absolute** — built-in and custom global extraction must stop at the first literal `--`, preserve that separator for the command parser, and never inspect later tokens.
 - **Local Code Mode uses an actor boundary** — QuickJS execution is non-`Send`. Construct and drive it on a dedicated current-thread runtime, return the durable running state before the pass begins, and keep lifecycle requests responsive so cancellation can interrupt active code.
@@ -48,6 +50,23 @@
 
 ## Testing Conventions
 
+- **App resource wrappers retain MCP fields** — preserve request and result metadata, loose resource fields, and notification parameters across typed models. Validate the selected text or blob payload, and keep unparsed OpenAI decorations in raw metadata without blocking otherwise valid resource content. Keep independent literal controls for metadata overlays, optional decorations, and resource payload alternatives.
+
+- **Portable peer responses require trusted session ownership** — the host supplies an authenticated client-session scope for the initiating call and peer responses. Request IDs and caller-supplied headers establish no authority. Pin anonymous and cross-session rejection plus owning-session completion through both the core server and Axum adapter.
+
+- **Browser JSON uses the JSON codec** — arbitrary-precision serde numbers expose an internal representation to general Serde serializers. Encode the frame with serde_json before converting it to a JavaScript object, and test outgoing nested numbers and metadata against an independent JavaScript host with arbitrary precision enabled.
+
+- **MRTR field presence stays explicit** — mutable JSON indexing can insert content: null into an intermediate result. Use non-inserting lookups and assert that InputRequired results omit content.
+
+- **Form numbers stay exact through typed boundaries** — preserve number tokens and typed minimum/maximum values rather than passing through f64. Keep Python helper integer-token and timestamp rules separate from general form validation, with independent positive and negative controls.
+
+
+- **Capture one formatter output at a time** — when migrating rustfmt output through griz, pass source on stdin with skip_children=true. Formatting a file path may print several child-module files with filename headers; never treat that concatenation as the replacement for one file. Verify the resulting diff before compilation.
+
+- **Schema oracles distinguish schemas from factories** — an exported name ending in Schema may be a function that builds a schema. Give every compared schema a positive control, and test form-content factories with a declared form and an independent answer corpus. Include nested array elements and Unicode scalar length controls; an object-only mutator misses invalid content blocks and UTF-16 length differences.
+
+- **Verification never rewrites source lockfiles** — use --locked in real workspaces and examples. Resolve changed manifests in a disposable mirror, then migrate the resulting lockfile through griz. A dependency change requires new package archives and a consumer built from those extractions.
+
 - **Noninteractive searches name their roots** - pass explicit files or directories to `rg` under apoc. Its retained stdin can otherwise make a source search wait for input.
 
 - **Signal handlers request cleanup; the main loop performs it** — set a stop flag in the handler and reap the child after its active wait returns. Calling wait recursively from a signal handler can hold the child wait lock and end in an exception. Require the expected signal exit code, empty stderr, and a closed grandchild listener in the cleanup control.
@@ -64,6 +83,12 @@
 
 - **Generated future lints stay at their boundary** - async_trait annotates generated futures with must_use. Scope the double_must_use compatibility allowance to the affected trait declarations and retain warnings-denied Clippy across the workspace.
 
+
+- **Browser proof uses an independent host** — send plain JSON-RPC objects across `postMessage`. A Rust-to-Rust fixture can accept shared serialization mistakes such as JavaScript Maps. Keep host method strings and notification envelopes independent of SDK constants, and confirm an implementation mutation makes the browser gate fail.
+
+- **App notification listeners receive params** — decode the transport's parameter value and reconstruct the public notification envelope at the helper boundary. Injecting a full envelope into an in-memory listener masked dropped resource notifications in the browser.
+
+- **Typed results preserve numeric schemas** — a JSON Schema number is independent of its domain label. JavaScript sends whole numbers as floating-point values; retain numeric result tokens instead of narrowing them to unsigned integers. Exercise integer, fractional, and negative host controls when the declared schema permits them.
 
 - **Response media checks stop at the response value** — skip binary-annotation discovery for JSON media before traversing schemas. A binary child property, array item, or unused definition does not make its container a binary response. Follow only value-level references and compositions with a visited set; profiling the full Stripe document exposed repeated traversal through unrelated JSON properties.
 
@@ -131,6 +156,11 @@
 - **Extension CI resolves locked dependencies** — run extension tests, Clippy, and target checks with --locked. An unlocked GPUI source build silently refreshed a stale dependency graph while its release archive refused the tracked lockfile. Verify fresh package archives after their new core dependencies are published.
 
 ## Git Conventions
+
+- **Self test dependencies stay local** — when a crate enables its own testing feature through a dev-dependency with `path = "."`, omit the version. Cargo otherwise resolves the unpublished self-version from the registry during packaging. Keep versions on ordinary dependencies.
+
+- **Archive deferral is limited to release dependencies** — before publication, the release checker recognizes missing registry dependencies listed in its release catalog, including newly introduced package names. External dependency errors and missing local paths remain failures. After publishing the dependencies, rerun archive verification and require no deferred packages.
+
 
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
 - **Release archives are fresh, locked, and version-aligned** — bump publishable package manifests, their internal dependency requirements, lockfiles, and `xtask release-check` together. The release checker must remove each expected archive before packaging and package with `--locked` so stale archives cannot satisfy verification and release checks cannot rewrite tracked lockfiles.

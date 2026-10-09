@@ -1,0 +1,41 @@
+[project]
+name = "openai-mcp-extensions"
+version = "0.1.0"
+description = "OpenAI extensions for MCP Python servers."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["anyio>=4.5", "email-validator", "mcp>=2.0.0b2", "mcp-types>=2.0.0", "pydantic>=2.12", "pydantic-core>=2.41", "rfc3986-validator>=0.1.1", "typing-extensions>=4.12"]
+
+[project.urls]
+Repository = "https://github.com/openai/mcp-extensions"
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["openai_mcp_extensions*", "openai_mcp_form_protocol*"]
+
+[dependency-groups]
+dev = ["build>=1.2", "pyright>=1.1.400", "ruff>=0.12", "twine>=6", "tomli>=2; python_version < '3.11'"]
+
+[tool.pyright]
+stubPath = "typings"
+include = ["src"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.10"
+typeCheckingMode = "strict"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["openai_mcp_extensions"]

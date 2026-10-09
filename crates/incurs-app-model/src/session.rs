@@ -372,6 +372,30 @@ impl AppSession {
                     }
                 }
             }
+            ToolCallOutcome::InputRequired {
+                input_requests,
+                request_state,
+                meta,
+            } => {
+                if cancelled {
+                    RunState::Cancelled
+                } else {
+                    let mut details = vec![format!("inputRequests: {input_requests:?}")];
+                    if let Some(request_state) = request_state {
+                        details.push(format!("requestState: {request_state}"));
+                    }
+                    if !meta.is_empty() {
+                        details.push(format!("_meta: {meta:?}"));
+                    }
+                    RunState::Failed {
+                        message:
+                            "MCP input is required; this surface cannot replay MCP input responses"
+                                .to_string(),
+                        code: "MCP_INPUT_REQUIRED".to_string(),
+                        details,
+                    }
+                }
+            }
             ToolCallOutcome::Error {
                 code,
                 message,

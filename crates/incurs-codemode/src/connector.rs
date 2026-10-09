@@ -302,6 +302,19 @@ impl Connector for IncurConnector {
                     Ok(data)
                 }
             }
+            ToolCallOutcome::InputRequired {
+                input_requests,
+                request_state,
+                meta,
+            } => Err(serde_json::json!({
+                "code": "MCP_INPUT_REQUIRED",
+                "message": "MCP input is required; Code Mode connectors cannot replay MCP input responses",
+                "retryable": false,
+                "inputRequests": input_requests,
+                "requestState": request_state,
+                "_meta": meta,
+            })
+            .to_string()),
             ToolCallOutcome::Error {
                 code,
                 message,

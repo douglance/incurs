@@ -1212,6 +1212,54 @@ async fn portable_server_matches_native_rmcp_service() {
     }
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn modern_protocol_is_discovered_not_initialized() {
+    let cli = fixture_cli(McpDiscovery::Direct);
+    let portable = McpHttpServer::from_cli(&cli, portable_config()).unwrap();
+
+    let initialize_modern = case(
+        "initialize-modern",
+        with(base_headers(), &[("mcp-protocol-version", MODERN)]),
+        initialize(MODERN),
+    );
+    let native_initialize = observe_native(&cli, &initialize_modern).await;
+    let portable_initialize = observe_portable(&portable, &initialize_modern).await;
+    for observed in [&native_initialize, &portable_initialize] {
+        let supported = observed.messages[0]["error"]["data"]["supported"]
+            .as_array()
+            .expect("unsupported protocol response lists initialize versions");
+        assert!(
+            supported.iter().all(|version| version != MODERN),
+            "initialize advertised modern version: {observed:#?}"
+        );
+        assert!(
+            supported.iter().any(|version| version == "2025-11-25"),
+            "initialize did not advertise a legacy version: {observed:#?}"
+        );
+    }
+
+    let discover_modern = case(
+        "discover-modern",
+        modern_headers("server/discover", None),
+        rpc(
+            json!(54),
+            "server/discover",
+            Some(json!({ "_meta": modern_meta() })),
+        ),
+    );
+    let native_discover = observe_native(&cli, &discover_modern).await;
+    let portable_discover = observe_portable(&portable, &discover_modern).await;
+    for observed in [&native_discover, &portable_discover] {
+        let supported = observed.messages[0]["result"]["supportedVersions"]
+            .as_array()
+            .expect("discover response lists supported versions");
+        assert!(
+            supported.iter().any(|version| version == MODERN),
+            "discover did not advertise modern version: {observed:#?}"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Portable-only behaviour
 // ---------------------------------------------------------------------------
@@ -1680,5 +1728,107 @@ async fn mcp_output_boundary_rejects_unsupported_wrapping_dialects() {
     {
         assert_eq!(called["structuredContent"], data);
         assert_eq!(called["isError"], false);
+    }
+}
+
+struct ReleaseNeedsInput;
+#[async_trait::async_trait]
+impl CommandHandler for ReleaseNeedsInput {
+    async fn run(&self, _ctx: CommandContext) -> CommandResult {
+        CommandResult::InputRequired {
+            input_requests: std::collections::BTreeMap::from([(
+                "roots".to_string(),
+                json!({ "method": "roots/list", "params": {} }),
+            )]),
+            request_state: Some("literal-state".to_string()),
+            meta: Default::default(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn release_legacy_mrtr_is_rejected_on_both_transports() {
+    let cli = Cli::create("release-mrtr")
+        .mcp(McpServeOptions {
+            tools: McpToolFilter {
+                discovery: McpDiscovery::Direct,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .command(
+            "input",
+            CommandDef::build("input", ReleaseNeedsInput).done(),
+        );
+    let portable = McpHttpServer::from_cli(&cli, portable_config()).unwrap();
+    for version in ["2025-03-26", "2025-06-18", "2025-11-25"] {
+        let request = case(
+            "legacy-mrtr",
+            with(base_headers(), &[("mcp-protocol-version", version)]),
+            rpc(
+                json!(901),
+                "tools/call",
+                Some(json!({ "name": "input", "arguments": {} })),
+            ),
+        );
+        for observation in [
+            observe_native(&cli, &request).await,
+            observe_portable(&portable, &request).await,
+        ] {
+            assert_eq!(
+                observation.messages[0]["error"]["code"], -32600,
+                "{observation:#?}"
+            );
+            assert_eq!(
+                observation.messages[0]["error"]["message"],
+                "InputRequiredResult requires negotiated protocol version 2026-07-28 or newer"
+            );
+            assert!(observation.messages[0].get("result").is_none());
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn release_resource_errors_preserve_literal_code_on_both_transports() {
+    let resources = super::McpResourceRegistry {
+        read: Some(super::McpResourceReader::new(|_| async {
+            Err(super::McpResourceError {
+                code: -32001,
+                message: "literal resource denied".to_string(),
+                data: Some(json!({ "reason": "literal-control" })),
+            })
+        })),
+        ..Default::default()
+    };
+    let cli = Cli::create("release-resource").mcp(McpServeOptions {
+        resources,
+        ..Default::default()
+    });
+    let portable = McpHttpServer::from_cli(&cli, portable_config()).unwrap();
+    let request = case(
+        "resource-error",
+        base_headers(),
+        rpc(
+            json!(902),
+            "resources/read",
+            Some(json!({ "uri": "memory://denied" })),
+        ),
+    );
+    for observation in [
+        observe_native(&cli, &request).await,
+        observe_portable(&portable, &request).await,
+    ] {
+        assert_eq!(
+            observation.messages[0]["error"]["code"], -32001,
+            "{observation:#?}"
+        );
+        assert_eq!(
+            observation.messages[0]["error"]["message"],
+            "literal resource denied"
+        );
+        assert_eq!(
+            observation.messages[0]["error"]["data"]["reason"],
+            "literal-control"
+        );
     }
 }

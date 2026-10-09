@@ -414,6 +414,7 @@ impl RemoteToolRuntime for ToolCatalogRemoteRuntime {
                 environment: self.options.environment.clone(),
                 config: self.options.config.clone(),
                 globals: self.options.globals.clone(),
+                mcp: None,
                 request: Some(request.to_request_context()),
                 control: ToolCallControl {
                     cancellation: cancellation.clone(),
@@ -450,6 +451,28 @@ impl RemoteToolRuntime for ToolCatalogRemoteRuntime {
                 duration_ms: elapsed_ms(started_at),
                 artifacts,
                 cta,
+            },
+            ToolCallOutcome::InputRequired {
+                input_requests,
+                request_state,
+                meta,
+            } => RemoteToolResult::Error {
+                call_id,
+                error: RemoteToolError {
+                    code: "MCP_INPUT_REQUIRED".to_string(),
+                    message: "MCP input is required; this remote protocol cannot replay MCP input responses".to_string(),
+                    retryable: Some(false),
+                    field_errors: None,
+                    exit_code: None,
+                    cta: None,
+                    details: Some(serde_json::json!({
+                        "inputRequests": input_requests,
+                        "requestState": request_state,
+                        "_meta": meta,
+                    })),
+                },
+                duration_ms: elapsed_ms(started_at),
+                artifacts,
             },
             ToolCallOutcome::Error {
                 code,

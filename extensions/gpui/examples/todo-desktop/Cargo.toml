@@ -6,8 +6,8 @@ license = "MIT"
 publish = false
 
 [dependencies]
-incurs = { path = "../../../../crates/incurs" }
-incurs-app-gpui = { path = "../../crates/incurs-app-gpui" }
+incurs = { path = "../../../../crates/incurs", version = "0.12.0" }
+incurs-app-gpui = { path = "../../crates/incurs-app-gpui", version = "0.7.0" }
 async-stream = "0.3"
 async-trait = "0.1"
 futures = "0.3"

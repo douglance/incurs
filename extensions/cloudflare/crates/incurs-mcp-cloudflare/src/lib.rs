@@ -259,6 +259,10 @@ async fn call_tool(
         .await;
     Ok(match outcome {
         ToolCallOutcome::Ok { data, .. } => tool_result(data, false),
+        ToolCallOutcome::InputRequired { .. } => tool_result(
+            json!({"code": "MCP_INPUT_REQUIRED_UNSUPPORTED", "message": "This legacy MCP adapter does not support input-required results"}),
+            true,
+        ),
         ToolCallOutcome::Error { code, message, .. } => {
             tool_result(json!({"code": code, "message": message}), true)
         }

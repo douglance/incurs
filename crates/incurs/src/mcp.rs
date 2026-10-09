@@ -7,9 +7,11 @@
 //! adapter over [`crate::tool::ToolCatalog`].
 
 use std::collections::BTreeMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use crate::schema::FieldMeta;
-#[cfg(any(feature = "http", feature = "agent-plugins-mcp"))]
 use serde_json::Value;
 
 #[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
@@ -95,10 +97,16 @@ pub struct McpResultContext<'a> {
 }
 
 /// Application overrides for the MCP result envelope.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct McpResultMapping {
     /// Override for `isError`; `None` keeps the normal classification.
     pub is_error: Option<bool>,
+    /// Replacement MCP `structuredContent`; `None` keeps the command output projection.
+    pub structured_content: Option<Value>,
+    /// Replacement MCP `content` blocks; `None` keeps the generated content.
+    pub content: Option<Vec<Value>>,
+    /// Dynamic namespaced result metadata merged into `_meta`.
+    pub meta: BTreeMap<String, Value>,
 }
 impl McpResultMapping {
     /// Keeps normal MCP outcome classification.
@@ -109,12 +117,18 @@ impl McpResultMapping {
     pub fn success() -> Self {
         Self {
             is_error: Some(false),
+            structured_content: None,
+            content: None,
+            meta: BTreeMap::new(),
         }
     }
     /// Projects this outcome as a failed MCP result.
     pub fn error() -> Self {
         Self {
             is_error: Some(true),
+            structured_content: None,
+            content: None,
+            meta: BTreeMap::new(),
         }
     }
 }
@@ -143,6 +157,232 @@ impl McpResultMapper {
     }
 }
 
+/// A resource advertised by an MCP server.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResource {
+    /// URI identifying this resource.
+    pub uri: String,
+    /// Programmatic resource name.
+    pub name: String,
+    /// Optional display title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Optional human-readable description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional MIME type.
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Optional raw byte size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    /// Optional icon descriptors.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub icons: Vec<Value>,
+    /// Namespaced resource metadata.
+    #[serde(rename = "_meta", skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub meta: BTreeMap<String, Value>,
+}
+
+/// A URI template advertised by an MCP server.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResourceTemplate {
+    /// RFC 6570 URI template.
+    pub uri_template: String,
+    /// Programmatic template name.
+    pub name: String,
+    /// Optional display title.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Optional human-readable description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional MIME type for matching resources.
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Optional icon descriptors.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub icons: Vec<Value>,
+    /// Namespaced template metadata.
+    #[serde(rename = "_meta", skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub meta: BTreeMap<String, Value>,
+}
+
+/// One content item returned from reading an MCP resource.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum McpResourceContents {
+    /// UTF-8 text resource contents.
+    Text {
+        /// Resource URI for this content item.
+        uri: String,
+        /// Optional MIME type.
+        #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        /// Text payload.
+        text: String,
+        /// Namespaced content metadata.
+        #[serde(rename = "_meta", skip_serializing_if = "BTreeMap::is_empty", default)]
+        meta: BTreeMap<String, Value>,
+    },
+    /// Base64-encoded binary resource contents.
+    Blob {
+        /// Resource URI for this content item.
+        uri: String,
+        /// Optional MIME type.
+        #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        /// Base64-encoded payload.
+        blob: String,
+        /// Namespaced content metadata.
+        #[serde(rename = "_meta", skip_serializing_if = "BTreeMap::is_empty", default)]
+        meta: BTreeMap<String, Value>,
+    },
+}
+
+/// Result returned by an MCP resource reader.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpResourceReadResult {
+    /// Content items for the requested resource.
+    pub contents: Vec<McpResourceContents>,
+    /// Namespaced result metadata.
+    #[serde(rename = "_meta", skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub meta: BTreeMap<String, Value>,
+}
+
+/// Metadata passed to an MCP resource handler.
+#[derive(Debug, Clone, Default)]
+pub struct McpResourceRequest {
+    /// Selected protocol version for the request.
+    pub protocol_version: Option<String>,
+    /// Complete request `_meta` object, when the client supplied one.
+    pub request_meta: Option<Value>,
+    /// Client capabilities copied from request metadata or initialization.
+    pub client_capabilities: Option<Value>,
+    /// Client responses for a retry after an input-required result.
+    pub input_responses: Option<Value>,
+    /// Opaque request state echoed by the client for a retry.
+    pub request_state: Option<String>,
+    /// Optional provider-neutral request and notification hook for the connected peer.
+    pub peer: Option<crate::command::McpPeer>,
+}
+
+/// Request passed to an MCP resource reader.
+#[derive(Debug, Clone)]
+pub struct McpResourceReadRequest {
+    /// URI requested by the client.
+    pub uri: String,
+    /// Shared request metadata.
+    pub context: McpResourceRequest,
+}
+
+/// Request passed to an MCP resource subscription handler.
+#[derive(Debug, Clone)]
+pub struct McpResourceSubscriptionRequest {
+    /// URI whose subscription state is changing.
+    pub uri: String,
+    /// Shared request metadata.
+    pub context: McpResourceRequest,
+}
+
+/// Failure returned by an MCP resource handler.
+#[derive(Debug, Clone)]
+pub struct McpResourceError {
+    /// JSON-RPC error code, shared with the native transport's signed 32-bit code.
+    pub code: i32,
+    /// Human-readable error message.
+    pub message: String,
+    /// Optional structured error data.
+    pub data: Option<Value>,
+}
+
+/// Future returned by an MCP resource reader.
+pub type McpResourceReadFuture =
+    Pin<Box<dyn Future<Output = Result<McpResourceReadResult, McpResourceError>> + Send + 'static>>;
+
+/// Future returned by an MCP resource subscription hook.
+pub type McpResourceSubscriptionFuture =
+    Pin<Box<dyn Future<Output = Result<(), McpResourceError>> + Send + 'static>>;
+
+/// Async callback used to read resource contents.
+#[derive(Clone)]
+pub struct McpResourceReader(
+    Arc<dyn Fn(McpResourceReadRequest) -> McpResourceReadFuture + Send + Sync>,
+);
+
+impl std::fmt::Debug for McpResourceReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("McpResourceReader").finish_non_exhaustive()
+    }
+}
+
+impl McpResourceReader {
+    /// Creates a resource reader from an async function.
+    pub fn new<F, Fut>(reader: F) -> Self
+    where
+        F: Fn(McpResourceReadRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<McpResourceReadResult, McpResourceError>> + Send + 'static,
+    {
+        Self(Arc::new(move |request| Box::pin(reader(request))))
+    }
+
+    pub(super) async fn read(
+        &self,
+        request: McpResourceReadRequest,
+    ) -> Result<McpResourceReadResult, McpResourceError> {
+        (self.0)(request).await
+    }
+}
+
+/// Async callback used to subscribe or unsubscribe from resource updates.
+#[derive(Clone)]
+pub struct McpResourceSubscriptionHandler(
+    Arc<dyn Fn(McpResourceSubscriptionRequest) -> McpResourceSubscriptionFuture + Send + Sync>,
+);
+
+impl std::fmt::Debug for McpResourceSubscriptionHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("McpResourceSubscriptionHandler")
+            .finish_non_exhaustive()
+    }
+}
+
+impl McpResourceSubscriptionHandler {
+    /// Creates a resource subscription hook from an async function.
+    pub fn new<F, Fut>(handler: F) -> Self
+    where
+        F: Fn(McpResourceSubscriptionRequest) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), McpResourceError>> + Send + 'static,
+    {
+        Self(Arc::new(move |request| Box::pin(handler(request))))
+    }
+
+    pub(super) async fn handle(
+        &self,
+        request: McpResourceSubscriptionRequest,
+    ) -> Result<(), McpResourceError> {
+        (self.0)(request).await
+    }
+}
+
+/// Resources and handlers owned by the MCP host runtime.
+#[derive(Debug, Clone, Default)]
+pub struct McpResourceRegistry {
+    /// Static resources returned by `resources/list`.
+    pub resources: Vec<McpResource>,
+    /// Static URI templates returned by `resources/templates/list`.
+    pub templates: Vec<McpResourceTemplate>,
+    /// Optional handler for `resources/read`.
+    pub read: Option<McpResourceReader>,
+    /// Optional handler for `resources/subscribe`.
+    pub subscribe: Option<McpResourceSubscriptionHandler>,
+    /// Optional handler for `resources/unsubscribe`.
+    pub unsubscribe: Option<McpResourceSubscriptionHandler>,
+}
+
 /// Options for the MCP server.
 #[derive(Debug, Clone, Default)]
 pub struct McpServeOptions {
@@ -154,6 +394,12 @@ pub struct McpServeOptions {
     pub instructions: Option<String>,
     /// Tool discovery and filtering configuration.
     pub tools: McpToolFilter,
+    /// Additional server capabilities merged into initialize and discovery results.
+    pub capabilities: BTreeMap<String, Value>,
+    /// Host-owned resource registry and runtime handlers.
+    pub resources: McpResourceRegistry,
+    /// Optional provider-neutral peer request handle exposed to command contexts.
+    pub peer: Option<crate::command::McpPeer>,
     /// Exact MCP standards served concurrently. Preference order is used for
     /// legacy fallback and modern discovery.
     pub standards: incurs_mcp_protocol::McpStandardSet,
@@ -1186,15 +1432,18 @@ mod server {
     use std::borrow::Cow;
     use std::sync::Arc;
 
-    use serde_json::Value;
+    use serde_json::{Map, Value};
 
     use rmcp::ErrorData as McpError;
     use rmcp::handler::server::ServerHandler;
     use rmcp::model::{
-        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, Implementation,
-        InitializeRequestParams, InitializeResult, ListPromptsResult, ListResourceTemplatesResult,
-        ListResourcesResult, ListToolsResult, PaginatedRequestParams, ProgressNotificationParam,
-        ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+        CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, CustomNotification,
+        CustomRequest, Implementation, InitializeRequestParams, InitializeResult,
+        InputRequiredResult, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+        ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, ProtocolVersion,
+        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, ServerCapabilities,
+        ServerInfo, ServerNotification, ServerRequest, SubscribeRequestParams, Tool,
+        UnsubscribeRequestParams,
     };
     use rmcp::service::{RequestContext, RoleServer};
 
@@ -1206,11 +1455,168 @@ mod server {
 
     use super::McpServeOptions;
     pub(super) use super::shared::ServerSource;
-    use super::shared::{self, CallContext, ToolServer};
+    use super::shared::{self, CallContext, ResourceContext, ToolServer};
+
+    fn non_empty_json_object(value: Value) -> Option<Value> {
+        if value.as_object().is_some_and(serde_json::Map::is_empty) {
+            None
+        } else {
+            Some(value)
+        }
+    }
+
+    fn context_protocol_version(context: &RequestContext<RoleServer>) -> Option<String> {
+        context
+            .protocol_version()
+            .or_else(|| context.meta.protocol_version())
+            .map(|version| version.as_str().to_string())
+    }
+
+    fn context_meta_value(context: &RequestContext<RoleServer>) -> Option<Value> {
+        serde_json::to_value(&context.meta)
+            .ok()
+            .and_then(non_empty_json_object)
+    }
+
+    fn context_client_capabilities(context: &RequestContext<RoleServer>) -> Option<Value> {
+        context
+            .meta
+            .client_capabilities()
+            .and_then(|capabilities| serde_json::to_value(capabilities).ok())
+    }
+
+    fn resource_context<I: serde::Serialize>(
+        protocol_version: Option<String>,
+        request_meta: Option<Value>,
+        client_capabilities: Option<Value>,
+        input_responses: &Option<I>,
+        request_state: Option<String>,
+        peer: Option<crate::command::McpPeer>,
+    ) -> ResourceContext {
+        ResourceContext {
+            protocol_version,
+            request_meta,
+            client_capabilities,
+            input_responses: input_responses
+                .as_ref()
+                .and_then(|responses| serde_json::to_value(responses).ok()),
+            request_state,
+            peer,
+        }
+    }
+
+    fn params_with_meta(params: Option<Value>, meta: Option<Value>) -> Option<Value> {
+        let Some(meta) = meta else {
+            return params;
+        };
+        match params {
+            Some(Value::Object(mut object)) => {
+                object.insert("_meta".to_string(), meta);
+                Some(Value::Object(object))
+            }
+            Some(value) => {
+                let mut object = Map::new();
+                object.insert("value".to_string(), value);
+                object.insert("_meta".to_string(), meta);
+                Some(Value::Object(object))
+            }
+            None => {
+                let mut object = Map::new();
+                object.insert("_meta".to_string(), meta);
+                Some(Value::Object(object))
+            }
+        }
+    }
+
+    fn native_peer(peer: rmcp::service::Peer<RoleServer>) -> crate::command::McpPeer {
+        let request_peer = peer.clone();
+        let notify_peer = peer;
+        crate::command::McpPeer::with_notify(
+            move |request: crate::command::McpPeerRequest| {
+                let peer = request_peer.clone();
+                async move {
+                    let params = params_with_meta(request.params, request.meta);
+                    let result = peer
+                        .send_request(ServerRequest::CustomRequest(CustomRequest::new(
+                            request.method,
+                            params,
+                        )))
+                        .await
+                        .map_err(|error| crate::command::McpPeerError {
+                            code: "MCP_PEER_REQUEST_FAILED".to_string(),
+                            message: error.to_string(),
+                            data: None,
+                        })?;
+                    serde_json::to_value(result).map_err(|error| crate::command::McpPeerError {
+                        code: "MCP_PEER_RESPONSE_SERIALIZATION_FAILED".to_string(),
+                        message: error.to_string(),
+                        data: None,
+                    })
+                }
+            },
+            move |notification: crate::command::McpPeerNotification| {
+                let peer = notify_peer.clone();
+                async move {
+                    let params = params_with_meta(notification.params, notification.meta);
+                    peer.send_notification(ServerNotification::CustomNotification(
+                        CustomNotification::new(notification.method, params),
+                    ))
+                    .await
+                    .map_err(|error| crate::command::McpPeerError {
+                        code: "MCP_PEER_NOTIFICATION_FAILED".to_string(),
+                        message: error.to_string(),
+                        data: None,
+                    })
+                }
+            },
+        )
+    }
+
+    fn native_capabilities(tools: &ToolServer) -> ServerCapabilities {
+        serde_json::from_value(tools.capabilities()).unwrap_or_else(|_| {
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_prompts()
+                .enable_resources()
+                .build()
+        })
+    }
+
+    fn resource_error(error: super::McpResourceError) -> McpError {
+        McpError::new(
+            rmcp::model::ErrorCode(error.code),
+            error.message,
+            error.data,
+        )
+    }
+
+    async fn resource_call<T>(
+        future: impl std::future::Future<Output = Result<T, super::McpResourceError>>,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<T, McpError> {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(McpError::new(
+                rmcp::model::ErrorCode(-32800), "Resource request cancelled", None,
+            )),
+            result = future => result.map_err(resource_error),
+        }
+    }
 
     /// Converts a shared `CallToolResult` wire value into the `rmcp` model.
     fn call_tool_result(value: Value) -> CallToolResult {
         serde_json::from_value(value).expect("shared CallToolResult wire value is valid")
+    }
+
+    /// Converts a shared `CallToolResponse` wire value into the `rmcp` model.
+    fn call_tool_response(value: Value) -> CallToolResponse {
+        if value.get("resultType") == Some(&Value::String("input_required".to_string())) {
+            let result: InputRequiredResult = serde_json::from_value(value)
+                .expect("shared InputRequiredResult wire value is valid");
+            result.into()
+        } else {
+            call_tool_result(value).into()
+        }
     }
 
     #[cfg(test)]
@@ -1288,7 +1694,7 @@ mod server {
     }
 
     impl IncurMcpServer {
-        fn new(
+        pub(super) fn new(
             source: &ServerSource<'_>,
             options: &McpServeOptions,
         ) -> Result<Self, crate::errors::Error> {
@@ -1305,26 +1711,28 @@ mod server {
                 tool_list: Arc::new(tool_list),
             })
         }
+
+        fn initialize_protocol_versions(&self) -> Vec<ProtocolVersion> {
+            super::rmcp_protocol_versions(&self.tools.standards)
+                .into_iter()
+                .filter(|version| version.as_str() != "2026-07-28")
+                .collect()
+        }
     }
 
     impl ServerHandler for IncurMcpServer {
         fn get_info(&self) -> ServerInfo {
-            let protocol = super::rmcp_protocol_versions(&self.tools.standards)
+            let protocol = self
+                .initialize_protocol_versions()
                 .into_iter()
-                .find(|version| version.as_str() != "2026-07-28")
+                .next()
                 .unwrap_or(ProtocolVersion::V_2026_07_28);
-            let info = ServerInfo::new(
-                ServerCapabilities::builder()
-                    .enable_tools()
-                    .enable_prompts()
-                    .enable_resources()
-                    .build(),
-            )
-            .with_protocol_version(protocol)
-            .with_server_info(Implementation::new(
-                self.tools.server_name.clone(),
-                self.tools.server_version.clone(),
-            ));
+            let info = ServerInfo::new(native_capabilities(&self.tools))
+                .with_protocol_version(protocol)
+                .with_server_info(Implementation::new(
+                    self.tools.server_name.clone(),
+                    self.tools.server_version.clone(),
+                ));
             if let Some(instructions) = &self.tools.instructions {
                 info.with_instructions(instructions.clone())
             } else {
@@ -1343,31 +1751,23 @@ mod server {
         ) -> impl std::future::Future<Output = Result<InitializeResult, McpError>> + Send + '_
         {
             context.peer.set_peer_info(request.clone());
-            let supported = super::rmcp_protocol_versions(&self.tools.standards);
-            let selected = supported
+            let initialize_supported = self.initialize_protocol_versions();
+            let selected = initialize_supported
                 .iter()
-                .find(|version| {
-                    version.as_str() == request.protocol_version.as_str()
-                        && version.as_str() != "2026-07-28"
-                })
+                .find(|version| version.as_str() == request.protocol_version.as_str())
                 .cloned();
             let selected = if selected.is_none()
                 && ProtocolVersion::KNOWN_VERSIONS.contains(&request.protocol_version)
             {
                 None
             } else {
-                selected.or_else(|| {
-                    supported
-                        .iter()
-                        .find(|version| version.as_str() != "2026-07-28")
-                        .cloned()
-                })
+                selected.or_else(|| initialize_supported.first().cloned())
             };
             std::future::ready(match selected {
                 Some(selected) => Ok(self.get_info().with_protocol_version(selected)),
                 None => Err(McpError::unsupported_protocol_version(
                     request.protocol_version,
-                    &supported,
+                    &initialize_supported,
                 )),
             })
         }
@@ -1416,7 +1816,8 @@ mod server {
             context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_
         {
-            let mut result = ListResourcesResult::default();
+            let mut result: ListResourcesResult =
+                serde_json::from_value(self.tools.list_resources()).unwrap_or_default();
             if context
                 .protocol_version()
                 .is_some_and(|version| version.as_str() == "2026-07-28")
@@ -1432,7 +1833,8 @@ mod server {
             context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_
         {
-            let mut result = ListResourceTemplatesResult::default();
+            let mut result: ListResourceTemplatesResult =
+                serde_json::from_value(self.tools.list_resource_templates()).unwrap_or_default();
             if context
                 .protocol_version()
                 .is_some_and(|version| version.as_str() == "2026-07-28")
@@ -1440,6 +1842,106 @@ mod server {
                 result = result.with_ttl_ms(0).with_cache_scope(CacheScope::Private);
             }
             std::future::ready(Ok(result))
+        }
+
+        fn read_resource(
+            &self,
+            request: ReadResourceRequestParams,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<ReadResourceResponse, McpError>> + Send + '_
+        {
+            let tools = self.tools.clone();
+            let cancellation = context.ct.clone();
+            let protocol_version = context_protocol_version(&context);
+            let request_meta = context_meta_value(&context).or_else(|| {
+                request
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| serde_json::to_value(meta).ok())
+                    .and_then(non_empty_json_object)
+            });
+            let client_capabilities = context_client_capabilities(&context).or_else(|| {
+                request_meta
+                    .as_ref()
+                    .and_then(|meta| meta.get("io.modelcontextprotocol/clientCapabilities"))
+                    .cloned()
+            });
+            let peer = native_peer(context.peer.clone());
+            async move {
+                let ctx = resource_context(
+                    protocol_version,
+                    request_meta,
+                    client_capabilities,
+                    &request.input_responses,
+                    request.request_state.clone(),
+                    Some(peer),
+                );
+                let value =
+                    resource_call(tools.read_resource(request.uri, ctx), cancellation).await?;
+                let result: ReadResourceResult = serde_json::from_value(value)
+                    .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+                Ok(ReadResourceResponse::from(result))
+            }
+        }
+
+        #[allow(deprecated)]
+        fn subscribe(
+            &self,
+            request: SubscribeRequestParams,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+            let tools = self.tools.clone();
+            let cancellation = context.ct.clone();
+            let protocol_version = context
+                .protocol_version()
+                .map(|version| version.as_str().to_string());
+            let peer = native_peer(context.peer.clone());
+            async move {
+                resource_call(
+                    tools.set_resource_subscription(
+                        request.uri,
+                        true,
+                        ResourceContext {
+                            protocol_version,
+                            peer: Some(peer),
+                            ..ResourceContext::default()
+                        },
+                    ),
+                    cancellation,
+                )
+                .await?;
+                Ok(())
+            }
+        }
+
+        #[allow(deprecated)]
+        fn unsubscribe(
+            &self,
+            request: UnsubscribeRequestParams,
+            context: RequestContext<RoleServer>,
+        ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+            let tools = self.tools.clone();
+            let cancellation = context.ct.clone();
+            let protocol_version = context
+                .protocol_version()
+                .map(|version| version.as_str().to_string());
+            let peer = native_peer(context.peer.clone());
+            async move {
+                resource_call(
+                    tools.set_resource_subscription(
+                        request.uri,
+                        false,
+                        ResourceContext {
+                            protocol_version,
+                            peer: Some(peer),
+                            ..ResourceContext::default()
+                        },
+                    ),
+                    cancellation,
+                )
+                .await?;
+                Ok(())
+            }
         }
 
         fn call_tool(
@@ -1471,11 +1973,23 @@ mod server {
                     });
             #[cfg(not(feature = "http"))]
             let transport_request = None;
-            let protocol_version = context
-                .protocol_version()
-                .map(|version| version.as_str().to_string())
-                .unwrap_or_else(|| "2025-03-26".to_string());
+            let request_meta = context_meta_value(&context).or_else(|| {
+                request
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| serde_json::to_value(meta).ok())
+                    .and_then(non_empty_json_object)
+            });
+            let client_capabilities = context_client_capabilities(&context).or_else(|| {
+                request_meta
+                    .as_ref()
+                    .and_then(|meta| meta.get("io.modelcontextprotocol/clientCapabilities"))
+                    .cloned()
+            });
+            let protocol_version =
+                context_protocol_version(&context).unwrap_or_else(|| "2025-03-26".to_string());
             let peer = context.peer;
+            let mcp_peer = native_peer(peer.clone());
             let cancellation = context.ct;
 
             async move {
@@ -1486,6 +2000,17 @@ mod server {
                         CallContext {
                             protocol_version,
                             request: transport_request,
+                            request_meta,
+                            client_capabilities,
+                            input_responses: request
+                                .input_responses
+                                .clone()
+                                .map(serde_json::to_value)
+                                .transpose()
+                                .ok()
+                                .flatten(),
+                            request_state: request.request_state.clone(),
+                            peer: Some(mcp_peer),
                             control: ToolCallControl {
                                 cancellation,
                                 events: Some(Arc::new(McpEventSink {
@@ -1499,7 +2024,7 @@ mod server {
                     )
                     .await
                     .map_err(|message| McpError::invalid_params(message, None))?;
-                Ok(call_tool_result(result).into())
+                Ok(call_tool_response(result))
             }
         }
     }
@@ -2021,6 +2546,253 @@ mod tests {
             progressive.structured_content.unwrap()["options"]["profile"],
             "configured"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn native_duplex_transport_carries_metadata_resources_and_peer_requests() {
+        use crate::command::{CommandContext, CommandDef, McpCommandOptions, McpPeerRequest};
+        use crate::output::CommandResult;
+        use rmcp::model::{
+            CallToolRequestParams, ClientInfo, CustomRequest, CustomResult, ErrorData as McpError,
+            Implementation, ProtocolVersion, ReadResourceRequestParams,
+        };
+        use rmcp::service::{RequestContext, RoleClient};
+        use rmcp::{ClientHandler, ClientServiceExt, ServiceExt};
+
+        struct ContextTool;
+
+        #[async_trait::async_trait]
+        impl crate::command::CommandHandler for ContextTool {
+            async fn run(&self, ctx: CommandContext) -> CommandResult {
+                let mcp = ctx.mcp.expect("MCP context");
+                let peer = mcp.peer.clone().expect("connected peer");
+                let peer_response = peer
+                    .request(McpPeerRequest {
+                        method: "client/echo".to_string(),
+                        params: Some(serde_json::json!({ "from": "server" })),
+                        meta: None,
+                    })
+                    .await
+                    .expect("peer response");
+                CommandResult::Ok {
+                    data: serde_json::json!({
+                        "protocolVersion": mcp.protocol_version,
+                        "requestMeta": mcp.request_meta,
+                        "clientCapabilities": mcp.client_capabilities,
+                        "peer": peer_response,
+                    }),
+                    cta: None,
+                    exit_code: None,
+                }
+            }
+        }
+
+        struct EchoClient;
+
+        impl ClientHandler for EchoClient {
+            fn get_info(&self) -> ClientInfo {
+                let mut info = ClientInfo::default();
+                info.protocol_version = ProtocolVersion::V_2026_07_28;
+                info.client_info = Implementation::new("native-duplex", "1.0.0");
+                info
+            }
+
+            fn on_custom_request(
+                &self,
+                request: CustomRequest,
+                _context: RequestContext<RoleClient>,
+            ) -> impl Future<Output = Result<CustomResult, McpError>> + rmcp::service::MaybeSendFuture + '_
+            {
+                std::future::ready(Ok(CustomResult::new(serde_json::json!({
+                    "method": request.method,
+                    "params": request.params,
+                }))))
+            }
+        }
+
+        let mut command = CommandDef::build("context", ContextTool)
+            .description("Return MCP context")
+            .mcp(McpCommandOptions {
+                name: Some("native.context".to_string()),
+                title: Some("Native Context".to_string()),
+                meta: BTreeMap::from([("example/tool".to_string(), serde_json::json!(true))]),
+                result_meta: BTreeMap::from([(
+                    "example/result".to_string(),
+                    serde_json::json!(true),
+                )]),
+                direct: true,
+                ..McpCommandOptions::default()
+            })
+            .done();
+        command.output_schema = Some(serde_json::json!({ "type": "object" }));
+        let mut resources = McpResourceRegistry::default();
+        resources.resources.push(McpResource {
+            uri: "memory://native".to_string(),
+            name: "native-resource".to_string(),
+            title: Some("Native Resource".to_string()),
+            description: Some("Resource served over native transport".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            size: Some(6),
+            icons: Vec::new(),
+            meta: BTreeMap::from([("example/resource".to_string(), serde_json::json!(true))]),
+        });
+        struct ResourceDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for ResourceDrop {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let resource_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resource_dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = resource_started.clone();
+        let dropped = resource_dropped.clone();
+        resources.read = Some(McpResourceReader::new(move |request| {
+            let started = started.clone();
+            let dropped = dropped.clone();
+            async move {
+                if request.uri == "memory://pending" {
+                    let _guard = ResourceDrop(dropped);
+                    started.store(true, std::sync::atomic::Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                }
+                Ok(McpResourceReadResult {
+                    contents: vec![McpResourceContents::Text {
+                        uri: request.uri,
+                        mime_type: Some("text/plain".to_string()),
+                        text: "native".to_string(),
+                        meta: BTreeMap::from([(
+                            "example/content".to_string(),
+                            serde_json::json!(true),
+                        )]),
+                    }],
+                    meta: BTreeMap::from([("example/read".to_string(), serde_json::json!(true))]),
+                })
+            }
+        }));
+        let cli = crate::cli::Cli::create("native-duplex")
+            .mcp(McpServeOptions {
+                tools: McpToolFilter {
+                    discovery: McpDiscovery::Direct,
+                    ..Default::default()
+                },
+                resources,
+                capabilities: BTreeMap::from([
+                    (
+                        "extensions".to_string(),
+                        serde_json::json!({ "example/extensions": { "enabled": true } }),
+                    ),
+                    (
+                        "experimental".to_string(),
+                        serde_json::json!({ "example/feature": { "mode": "on" } }),
+                    ),
+                ]),
+                ..Default::default()
+            })
+            .command("context", command);
+
+        let (server_io, client_io) = tokio::io::duplex(32 * 1024);
+        let (server_read, server_write) = tokio::io::split(server_io);
+        let (client_read, client_write) = tokio::io::split(client_io);
+        let server =
+            server::IncurMcpServer::new(&server::ServerSource::from_cli(&cli), &cli.mcp_options)
+                .unwrap();
+        let server_task = tokio::spawn(async move {
+            let running = server
+                .serve((server_read, server_write))
+                .await
+                .expect("server starts");
+            let _ = running.waiting().await;
+        });
+        let client = EchoClient
+            .serve_with_lifecycle(
+                (client_read, client_write),
+                rmcp::ClientLifecycleMode::Discover {
+                    preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+                },
+            )
+            .await
+            .expect("client discovers server");
+        let info = client.peer_info().expect("server info");
+        let capabilities =
+            serde_json::to_value(&info.capabilities).expect("capabilities serialize");
+        assert_eq!(
+            capabilities["extensions"]["example/extensions"]["enabled"],
+            true
+        );
+        assert_eq!(
+            capabilities["experimental"]["example/feature"]["mode"],
+            "on"
+        );
+
+        let tools = client.list_tools(None).await.expect("tools list");
+        let tool = serde_json::to_value(&tools.tools[0]).expect("tool serializes");
+        assert_eq!(tool["name"], "native.context");
+        assert_eq!(tool["title"], "Native Context");
+        assert_eq!(tool["_meta"]["example/tool"], true);
+
+        let resources = client.list_resources(None).await.expect("resources list");
+        let resource = serde_json::to_value(&resources.resources[0]).expect("resource serializes");
+        assert_eq!(resource["uri"], "memory://native");
+        assert_eq!(resource["_meta"]["example/resource"], true);
+        let read = client
+            .read_resource(ReadResourceRequestParams::new("memory://native"))
+            .await
+            .expect("resource read");
+        let read = serde_json::to_value(read).expect("read result serializes");
+        assert_eq!(read["contents"][0]["text"], "native");
+        assert_eq!(read["contents"][0]["_meta"]["example/content"], true);
+        assert_eq!(read["_meta"]["example/read"], true);
+
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("native.context").with_arguments(serde_json::Map::new()),
+            )
+            .await
+            .expect("tool call");
+        let result = serde_json::to_value(result).expect("tool result serializes");
+        assert_eq!(result["structuredContent"]["protocolVersion"], "2026-07-28");
+        assert!(result["structuredContent"]["requestMeta"].is_object());
+        assert!(result["structuredContent"]["clientCapabilities"].is_object());
+        assert_eq!(result["structuredContent"]["peer"]["method"], "client/echo");
+        assert_eq!(
+            result["structuredContent"]["peer"]["params"]["from"],
+            "server"
+        );
+        assert_eq!(result["_meta"]["example/result"], true);
+
+        let pending_request = client
+            .send_cancellable_request(
+                rmcp::model::ClientRequest::ReadResourceRequest(
+                    rmcp::model::ReadResourceRequest::new(ReadResourceRequestParams::new(
+                        "memory://pending",
+                    )),
+                ),
+                rmcp::service::PeerRequestOptions::no_options(),
+            )
+            .await
+            .expect("pending read is sent");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !resource_started.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("resource callback started");
+        pending_request
+            .cancel(Some("literal cancellation control".to_string()))
+            .await
+            .expect("cancel notification sent");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !resource_dropped.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled resource callback is dropped");
+
+        drop(client);
+        server_task.abort();
     }
 
     #[cfg(feature = "http")]

@@ -1,0 +1,486 @@
+{
+  "typescript": {
+    "server": [
+      {
+        "name": "createElicitInput",
+        "typeOnly": false
+      },
+      {
+        "name": "createMentions",
+        "typeOnly": false
+      },
+      {
+        "name": "createOpenAIFormContentSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "createSettings",
+        "typeOnly": false
+      },
+      {
+        "name": "getResourcePath",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_RESOURCE_METADATA_KEY",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_SETTINGS_CAPABILITY_KEY",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIElicitInput",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIExtensions",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFileEntrypointInput",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFileEntrypointInputSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFileFormField",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFileFormFieldSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIForm",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFormField",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFormFieldSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFormOption",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFormRequestParams",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFormResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFormResultSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFormSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIMentionItem",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMentionItemSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIMentionResource",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMentionResourceSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIMentions",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMentionSearchHandler",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMentionSearchParams",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMentionSearchParamsSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIMentionSearchResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMentionSearchResultSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIResourceToolCallMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceToolCallMetadataSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettings",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsCapability",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsCapabilitySchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsField",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsFieldPresentation",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsFieldPresentationSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsGroup",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsGroupSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsLayoutItem",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsLayoutItemSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsPropertySchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsReadResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsReadResultSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsRegistration",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsTool",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsToolSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsUpdateArguments",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsUpdateArgumentsSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAISettingsUpdateResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAISettingsUpdateResultSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIUiEntrypoint",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIUiEntrypointSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIUiQuickAction",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIUiQuickActionSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIUiResourceMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIUiResourceMetadataSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIUiToolMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIUiToolMetadataSchema",
+        "typeOnly": false
+      }
+    ],
+    "app": [
+      {
+        "name": "OPENAI_DEEP_LINK_KEY",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_FILE_OPEN_METHOD",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_MCP_APP_RESOURCE_WRITE_METHOD",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_MESSAGE_KEY",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_MODEL_CONTEXT_KEY",
+        "typeOnly": false
+      },
+      {
+        "name": "OPENAI_RESOURCE_METADATA_KEY",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIDeepLink",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIDeepLinkHostState",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIDeepLinkHostStateSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIExtensions",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFileEntrypointInput",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFileEntrypointInputSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFileOpenParams",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIFileOpenParamsSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIFiles",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMessage",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMessageOptions",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMessageOptionsSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIMessageParams",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIMessageParamsSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIModelContext",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIModelContextHostState",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIModelContextHostStateSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIModelContextMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIModelContextMetadataSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIModelContextUpdateResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceContent",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceContentMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceContentMetadataSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIResourceMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceMetadataSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIResourceRead",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceReadMetadata",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceReadMetadataSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIResourceReadResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceRepresentation",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceRepresentationSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIResources",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceUpdatedHandler",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceWriteOptions",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceWriteParams",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceWriteParamsSchema",
+        "typeOnly": false
+      },
+      {
+        "name": "OpenAIResourceWriteResult",
+        "typeOnly": true
+      },
+      {
+        "name": "OpenAIResourceWriteResultSchema",
+        "typeOnly": false
+      }
+    ]
+  },
+  "python": {
+    "python/src/openai_mcp_extensions/__init__.py": [
+      "OPENAI_ELICITATION_METHOD",
+      "OPENAI_RESOURCE_METADATA_KEY",
+      "OPENAI_SETTINGS_CAPABILITY_KEY",
+      "OpenAIExtensions",
+      "OpenAIFileEntrypoint",
+      "OpenAIFileEntrypointFile",
+      "OpenAIFileEntrypointInput",
+      "OpenAIGlobalEntrypoint",
+      "OpenAIMentionItem",
+      "OpenAIMentionResource",
+      "OpenAIMentionSearchHandler",
+      "OpenAIMentionSearchParams",
+      "OpenAIMentionSearchResult",
+      "OpenAIMentions",
+      "OpenAIResourceMetadata",
+      "OpenAIResourceToolCallMetadata",
+      "OpenAISettings",
+      "OpenAISettingsCapability",
+      "OpenAISettingsEntrypoint",
+      "OpenAISettingsFieldPresentation",
+      "OpenAISettingsGroup",
+      "OpenAISettingsLayoutItem",
+      "OpenAISettingsProperty",
+      "OpenAISettingsReadResult",
+      "OpenAISettingsTool",
+      "OpenAISettingsUpdateArguments",
+      "OpenAISettingsUpdateResult",
+      "OpenAIThreadEntrypoint",
+      "OpenAIUiEntrypoint",
+      "OpenAIUiQuickAction",
+      "OpenAIUiQuickActionToolTarget",
+      "OpenAIUiResourceMetadata",
+      "OpenAIUiToolMetadata",
+      "get_resource_path"
+    ],
+    "python/src/openai_mcp_extensions/form/__init__.py": [
+      "FileUserOptions",
+      "OPENAI_ELICITATION_METHOD",
+      "UserResourceOptions",
+      "elicit_form",
+      "file_input",
+      "resource_input"
+    ],
+    "python/src/openai_mcp_form_protocol/__init__.py": [
+      "FormField",
+      "FormModel",
+      "FormSchema",
+      "McpAppToolTarget",
+      "PreviewTarget",
+      "complete_field_submission",
+      "is_valid_value",
+      "prepare_field_submission",
+      "validate_file_selections",
+      "validate_form_selections"
+    ]
+  }
+}

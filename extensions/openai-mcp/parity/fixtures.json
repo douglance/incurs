@@ -1,0 +1,259 @@
+[
+  {
+    "name": "literal-1",
+    "module": "server",
+    "schema": "OpenAIFileEntrypointInputSchema",
+    "value": {
+      "file": {
+        "name": "part.stl",
+        "resourceUri": "host-resource://part"
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-2",
+    "module": "server",
+    "schema": "OpenAIFileEntrypointInputSchema",
+    "value": {
+      "file": {
+        "name": "",
+        "resourceUri": "host-resource://part"
+      }
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-3",
+    "module": "server",
+    "schema": "OpenAIMentionSearchParamsSchema",
+    "value": {
+      "query": ""
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-4",
+    "module": "server",
+    "schema": "OpenAIMentionSearchParamsSchema",
+    "value": {
+      "query": 42
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-5",
+    "module": "server",
+    "schema": "OpenAIMentionResourceSchema",
+    "value": {
+      "type": "resource",
+      "resourceUri": "cad://part",
+      "title": "Part"
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-6",
+    "module": "server",
+    "schema": "OpenAIMentionResourceSchema",
+    "value": {
+      "type": "resource",
+      "resourceUri": " ",
+      "title": "Part"
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-7",
+    "module": "server",
+    "schema": "OpenAIUiEntrypointSchema",
+    "value": {
+      "type": "file",
+      "extensions": [
+        ".stl"
+      ]
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-8",
+    "module": "server",
+    "schema": "OpenAIUiEntrypointSchema",
+    "value": {
+      "type": "file",
+      "extensions": [
+        "stl"
+      ]
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-9",
+    "module": "server",
+    "schema": "OpenAIUiEntrypointSchema",
+    "value": {
+      "type": "settings",
+      "searchTerms": [
+        "units"
+      ]
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-10",
+    "module": "server",
+    "schema": "OpenAIUiQuickActionSchema",
+    "value": {
+      "title": "Add part",
+      "icons": [
+        {
+          "src": "https://example.com/icon.svg"
+        }
+      ],
+      "target": {
+        "type": "tool",
+        "name": "cad.add"
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-11",
+    "module": "server",
+    "schema": "OpenAISettingsUpdateArgumentsSchema",
+    "value": {
+      "set": {}
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-12",
+    "module": "server",
+    "schema": "OpenAISettingsUpdateArgumentsSchema",
+    "value": {
+      "set": {
+        "units": "mm"
+      }
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-13",
+    "module": "server",
+    "schema": "OpenAISettingsCapabilitySchema",
+    "value": {
+      "readTool": "settings.read",
+      "updateTool": "settings.update"
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-14",
+    "module": "server",
+    "schema": "OpenAISettingsCapabilitySchema",
+    "value": {
+      "readTool": " ",
+      "updateTool": "settings.update"
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-15",
+    "module": "app",
+    "schema": "OpenAIResourceWriteParamsSchema",
+    "value": {
+      "uri": "host-resource://part",
+      "text": "abc",
+      "ifMatch": "v1"
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-16",
+    "module": "app",
+    "schema": "OpenAIResourceWriteParamsSchema",
+    "value": {
+      "uri": "host-resource://part",
+      "text": "abc",
+      "blob": "YWJj"
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-17",
+    "module": "app",
+    "schema": "OpenAIResourceWriteParamsSchema",
+    "value": {
+      "uri": "host-resource://part",
+      "blob": "YWJj",
+      "ifMatch": ""
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-18",
+    "module": "app",
+    "schema": "OpenAIResourceWriteResultSchema",
+    "value": {
+      "outcome": "conflict",
+      "etag": "v2"
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-19",
+    "module": "app",
+    "schema": "OpenAIResourceWriteResultSchema",
+    "value": {
+      "outcome": "too-large",
+      "maxBytes": 100
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-20",
+    "module": "app",
+    "schema": "OpenAIModelContextHostStateSchema",
+    "value": null,
+    "expected": true
+  },
+  {
+    "name": "literal-21",
+    "module": "app",
+    "schema": "OpenAIModelContextHostStateSchema",
+    "value": {
+      "updateId": "",
+      "content": []
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-22",
+    "module": "app",
+    "schema": "OpenAIMessageParamsSchema",
+    "value": {
+      "role": "assistant",
+      "content": []
+    },
+    "expected": false
+  },
+  {
+    "name": "literal-23",
+    "module": "server",
+    "schema": "OpenAIFormResultSchema",
+    "value": {
+      "action": "cancel"
+    },
+    "expected": true
+  },
+  {
+    "name": "literal-24",
+    "module": "server",
+    "schema": "OpenAIFormResultSchema",
+    "value": {
+      "action": "accept",
+      "content": {}
+    },
+    "expected": true
+  }
+]

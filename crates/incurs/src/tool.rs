@@ -16,7 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::cli::{Cli, CommandEntry, ConfigOptions};
 use crate::command::{
-    self, CommandDef, ExecuteOptions, McpAnnotations, McpResultContent, ParseMode, RequestContext,
+    self, CommandDef, ExecuteOptions, McpAnnotations, McpCallContext, McpResultContent, ParseMode,
+    RequestContext,
 };
 use crate::errors::FieldError;
 use crate::middleware::MiddlewareFn;
@@ -30,6 +31,16 @@ pub struct ToolDefinition {
     pub name: String,
     /// Human-readable description.
     pub description: String,
+    /// Human-readable display title.
+    pub title: Option<String>,
+    /// Icon descriptors exposed to MCP clients.
+    pub icons: Vec<Value>,
+    /// Namespaced metadata exposed on MCP tool listings.
+    pub meta: BTreeMap<String, Value>,
+    /// Namespaced metadata exposed on successful MCP tool results.
+    pub result_meta: BTreeMap<String, Value>,
+    /// Whether the tool is listed directly in progressive discovery mode.
+    pub direct: bool,
     /// JSON Schema for the flat tool input.
     pub input_schema: Value,
     /// JSON Schema for successful structured output.
@@ -135,6 +146,8 @@ pub struct ToolCallOptions {
     pub globals: Option<Value>,
     /// Transport request metadata.
     pub request: Option<RequestContext>,
+    /// MCP-specific request metadata.
+    pub mcp: Option<McpCallContext>,
     /// Execution-scoped cancellation and events.
     pub control: ToolCallControl,
 }
@@ -175,6 +188,15 @@ pub enum ToolCallOutcome {
         data: Value,
         /// Optional follow-up commands.
         cta: Option<CtaBlock>,
+    },
+    /// Intermediate MCP MRTR result requesting client-side input before retry.
+    InputRequired {
+        /// Server-assigned input request objects keyed by request identifier.
+        input_requests: BTreeMap<String, Value>,
+        /// Opaque state the client echoes on the retry.
+        request_state: Option<String>,
+        /// Namespaced protocol metadata attached to the intermediate result.
+        meta: BTreeMap<String, Value>,
     },
     /// Structured command failure.
     Error {
@@ -330,6 +352,7 @@ impl ToolCatalog {
                 parse_mode: ParseMode::Flat,
                 path: tool.path.clone(),
                 request: options.request,
+                mcp: options.mcp,
                 vars_fields: Vec::new(),
                 version: self.version.clone(),
             },
@@ -350,6 +373,15 @@ impl ToolCatalog {
                 cta,
                 exit_code: _,
             } => ToolCallOutcome::Ok { data, cta },
+            command::InternalResult::InputRequired {
+                input_requests,
+                request_state,
+                meta,
+            } => ToolCallOutcome::InputRequired {
+                input_requests,
+                request_state,
+                meta,
+            },
             command::InternalResult::Error {
                 code,
                 message,
@@ -558,6 +590,11 @@ fn collect(
                                 .clone()
                                 .or_else(|| command.description.clone())
                                 .unwrap_or_default(),
+                            title: mcp.title.clone(),
+                            icons: mcp.icons.clone(),
+                            meta: mcp.meta.clone(),
+                            result_meta: mcp.result_meta.clone(),
+                            direct: mcp.direct,
                             input_schema,
                             output_schema: command.output_schema.clone(),
                             annotations: mcp.annotations.clone(),
@@ -766,7 +803,10 @@ mod tests {
         assert!(matches!(options.config, ConfigSource::Disabled));
     }
     use crate::cli::ConfigOptions;
-    use crate::command::{CommandContext, CommandHandler, Example, McpCommandOptions};
+    use crate::command::{
+        CommandContext, CommandHandler, Example, McpCallContext, McpCommandOptions, McpPeer,
+        McpPeerRequest,
+    };
     use crate::output::CommandResult;
     use crate::schema::FieldType;
     use tokio::sync::Mutex;
@@ -795,6 +835,38 @@ mod tests {
                     "globals": ctx.globals,
                     "options": ctx.options,
                     "request": ctx.request.map(|request| request.path),
+                }),
+                cta: None,
+                exit_code: None,
+            }
+        }
+    }
+
+    struct McpContextEcho;
+
+    #[async_trait::async_trait]
+    impl CommandHandler for McpContextEcho {
+        async fn run(&self, ctx: CommandContext) -> CommandResult {
+            let mcp = ctx.mcp.expect("MCP context is present");
+            let peer = if let Some(peer) = mcp.peer {
+                peer.request(McpPeerRequest {
+                    method: "client/ping".to_string(),
+                    params: None,
+                    meta: None,
+                })
+                .await
+                .expect("peer request succeeds")
+            } else {
+                Value::Null
+            };
+            CommandResult::Ok {
+                data: serde_json::json!({
+                    "protocolVersion": mcp.protocol_version,
+                    "requestMeta": mcp.request_meta,
+                    "clientCapabilities": mcp.client_capabilities,
+                    "inputResponses": mcp.input_responses,
+                    "requestState": mcp.request_state,
+                    "peer": peer,
                 }),
                 cta: None,
                 exit_code: None,
@@ -876,6 +948,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn preserves_mcp_metadata_and_context() {
+        let catalog = Cli::create("demo")
+            .command(
+                "mcp",
+                CommandDef::build("mcp", McpContextEcho)
+                    .mcp(McpCommandOptions {
+                        title: Some("MCP Echo".to_string()),
+                        icons: vec![serde_json::json!({ "src": "icon.svg" })],
+                        meta: BTreeMap::from([(
+                            "com.example/tool".to_string(),
+                            serde_json::json!(true),
+                        )]),
+                        result_meta: BTreeMap::from([(
+                            "com.example/result".to_string(),
+                            serde_json::json!("ok"),
+                        )]),
+                        direct: true,
+                        ..McpCommandOptions::default()
+                    })
+                    .done(),
+            )
+            .tool_catalog();
+
+        let definition = &catalog.definitions()[0];
+        assert_eq!(definition.title.as_deref(), Some("MCP Echo"));
+        assert_eq!(
+            definition.icons,
+            vec![serde_json::json!({ "src": "icon.svg" })]
+        );
+        assert_eq!(definition.meta["com.example/tool"], true);
+        assert_eq!(definition.result_meta["com.example/result"], "ok");
+        assert!(definition.direct);
+
+        let peer = McpPeer::new(|request| {
+            Box::pin(async move {
+                Ok(serde_json::json!({
+                    "method": request.method,
+                    "params": request.params,
+                    "meta": request.meta,
+                }))
+            })
+        });
+        let outcome = catalog
+            .call(
+                "mcp",
+                BTreeMap::new(),
+                ToolCallOptions {
+                    mcp: Some(McpCallContext {
+                        protocol_version: Some("2025-06-18".to_string()),
+                        request_meta: Some(serde_json::json!({ "trace": "abc" })),
+                        client_capabilities: Some(serde_json::json!({ "elicitation": {} })),
+                        input_responses: Some(serde_json::json!([{ "answer": 7 }])),
+                        request_state: Some(serde_json::json!({ "cursor": "state" }).to_string()),
+                        peer: Some(peer),
+                    }),
+                    ..ToolCallOptions::isolated()
+                },
+            )
+            .await;
+
+        match outcome {
+            ToolCallOutcome::Ok { data, .. } => {
+                assert_eq!(data["protocolVersion"], "2025-06-18");
+                assert_eq!(data["requestMeta"]["trace"], "abc");
+                assert_eq!(
+                    data["clientCapabilities"]["elicitation"],
+                    serde_json::json!({})
+                );
+                assert_eq!(data["inputResponses"][0]["answer"], 7);
+                assert_eq!(
+                    data["requestState"],
+                    serde_json::json!({ "cursor": "state" }).to_string()
+                );
+                assert_eq!(data["peer"]["method"], "client/ping");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn reports_unknown_tools() {
         let outcome = Cli::create("demo")
             .tool_catalog()
@@ -926,6 +1078,7 @@ mod tests {
                         }),
                     )])),
                     globals: None,
+                    mcp: None,
                     request: Some(RequestContext {
                         path: "test-request".to_string(),
                         ..RequestContext::default()

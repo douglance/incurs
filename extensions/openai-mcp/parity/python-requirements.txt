@@ -1,0 +1,4 @@
+mcp-types==2.0.0
+pydantic==2.12.5
+email-validator==2.3.0
+rfc3986-validator==0.1.1

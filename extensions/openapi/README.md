@@ -1,4 +1,4 @@
-# incurs OpenAPI prototype
+# incurs-openapi
 
 This standalone Rust workspace proves a shared API contract compiler before any
 production importer, SDK, or transport is migrated. The Emscripten runtime proof
@@ -15,6 +15,20 @@ The compiler separates three responsibilities:
 Parameter locations, body presence, nullability, defaults, response statuses,
 media types, and response headers remain explicit. External reference documents
 are supplied by the caller; compilation does not fetch them implicitly.
+
+## Use the compiler
+
+Add `incurs-openapi = "0.1.0"` to your Cargo dependencies. Enable the `adapters`
+feature to compile API operations into incurs tools; `native-cli` also enables
+native HTTP support. Resolve the source document with `resolve_document`, compile
+with `compile_artifacts`, and install the generated files with `publish_artifacts`.
+
+Generated SDKs are standalone crates. Their manifests and lockfiles use registry
+versions of their schema-validation dependencies and contain no checkout paths.
+They require a caller-supplied transport; they do not depend on incurs. The
+compiler's optional incurs adapters also resolve registry dependencies when
+installed from crates.io. Local path dependencies apply only while developing
+this repository.
 
 ## Verify the module
 
@@ -712,7 +726,7 @@ those complete vendor SDKs were not regenerated for this numeric change.
 
 ## Scope
 
-This is an experimental module, not a published package. Existing incurs APIs and
+This is an experimental compiler package. Existing incurs APIs and
 the default Cloudflare target retain their current behavior. A passing local
 proof does not establish hosted production parity or authorize a target switch.
 
