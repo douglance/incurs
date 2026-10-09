@@ -59,6 +59,12 @@ enum Workspace {
     Root,
     /// `extensions/cloudflare`, which is its own workspace.
     Cloudflare,
+    /// The GPUI extension workspace.
+    Gpui,
+    /// The standalone OpenAPI package.
+    Openapi,
+    /// The OpenAI MCP extension workspace.
+    Openai,
 }
 
 /// Every crate this repository publishes, with the version it publishes at.
@@ -89,6 +95,11 @@ fn release_packages() -> Vec<(Workspace, String, String)> {
         (Workspace::Root, "incurs-app-ratatui", "0.6.0"),
         (Workspace::Cloudflare, "incurs-codemode-cloudflare", "0.9.0"),
         (Workspace::Cloudflare, "incurs-mcp-cloudflare", "0.7.0"),
+        (Workspace::Gpui, "incurs-app-gpui", "0.6.0"),
+        (Workspace::Openapi, "incurs-openapi", "0.1.0"),
+        (Workspace::Openai, "incurs-openai-mcp-protocol", "0.1.0"),
+        (Workspace::Openai, "incurs-openai-mcp-app", "0.1.0"),
+        (Workspace::Openai, "incurs-openai-mcp", "0.1.0"),
     ]
     .into_iter()
     .map(|(workspace, package, version)| (workspace, package.to_string(), version.to_string()))
@@ -98,6 +109,9 @@ fn release_packages() -> Vec<(Workspace, String, String)> {
 fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     let root = workspace_root();
     let cloudflare = root.join("extensions/cloudflare");
+    let gpui = root.join("extensions/gpui");
+    let openapi = root.join("extensions/openapi");
+    let openai = root.join("extensions/openai-mcp");
     let declared = release_packages();
     let packages: Vec<(&Path, &str, &str)> = declared
         .iter()
@@ -105,6 +119,9 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
             let package_root = match workspace {
                 Workspace::Root => root,
                 Workspace::Cloudflare => cloudflare.as_path(),
+                Workspace::Gpui => gpui.as_path(),
+                Workspace::Openapi => openapi.as_path(),
+                Workspace::Openai => openai.as_path(),
             };
             (package_root, package.as_str(), version.as_str())
         })
@@ -131,8 +148,7 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
         ]),
         "package release workspace",
     )?;
-    // The Cloudflare extension is its own workspace, so its members are packaged
-    // separately from the root `cargo package --workspace` above.
+    // Extension workspaces are packaged separately from the root workspace.
     //
     // A path dependency that crosses a workspace boundary is resolved from the
     // registry at packaging time, so these crates cannot be packaged until the
@@ -141,9 +157,9 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     // after. Report it plainly rather than failing the check for it; every
     // other packaging failure still fails.
     let mut deferred = Vec::new();
-    for package in ["incurs-codemode-cloudflare", "incurs-mcp-cloudflare"] {
+    for &(package_root, package, _) in packages.iter().filter(|entry| entry.0 != root) {
         let mut command = Command::new("cargo");
-        command.current_dir(&cloudflare);
+        command.current_dir(package_root);
         command.args([
             "package",
             "-p",
@@ -572,7 +588,11 @@ mod tests {
     fn members(root: &Path) -> Vec<PathBuf> {
         let text = fs::read_to_string(root.join("Cargo.toml")).expect("workspace manifest");
         let Some(start) = text.find("members = [") else {
-            return Vec::new();
+            return if text.contains("[package]") {
+                vec![root.to_path_buf()]
+            } else {
+                Vec::new()
+            };
         };
         let body = &text[start..];
         let end = body.find(']').expect("members list closes");
@@ -598,17 +618,24 @@ mod tests {
 
         let mut missing = Vec::new();
         let mut drifted = Vec::new();
-        for workspace in [root.to_path_buf(), cloudflare] {
+        for workspace in [
+            root.to_path_buf(),
+            cloudflare,
+            root.join("extensions/gpui"),
+            root.join("extensions/openapi"),
+            root.join("extensions/openai-mcp"),
+        ] {
             for member in members(&workspace) {
                 let manifest = member.join("Cargo.toml");
                 let text = fs::read_to_string(&manifest).expect("member manifest");
                 if text.contains("publish = false") {
                     continue;
                 }
-                let name = member
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .expect("member directory name")
+                let name = text
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix("name = \""))
+                    .and_then(|value| value.split('"').next())
+                    .expect("package name")
                     .to_string();
                 let version = manifest_version(&manifest).expect("a version");
                 match pinned.iter().find(|(_, package, _)| *package == name) {

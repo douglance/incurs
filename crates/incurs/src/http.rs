@@ -189,11 +189,24 @@ pub fn build_cli_router_with(
     })
 }
 
+/// Trusted session ownership for bidirectional MCP requests over HTTP.
+///
+/// Authentication middleware inserts this value into the request extensions after
+/// verifying the caller. Use the same session identifier for the initiating call
+/// and its peer responses. Never derive it from an unverified request header or
+/// share one identifier across unrelated callers.
+#[derive(Clone, Debug)]
+pub struct McpPeerSession(
+    /// Session identifier supplied by the authenticated host.
+    pub String,
+);
+
 /// Serves a runtime-free MCP server at `/mcp`.
 ///
 /// Converts each request into a [`crate::mcp::McpHttpRequest`] and streams
 /// event-stream responses as they are produced; dropping the response body
-/// cancels the tool call.
+/// cancels the tool call. Hosts enable server-initiated peer requests by inserting
+/// [`McpPeerSession`] into each authenticated request before dispatch.
 pub fn mcp_router(server: crate::mcp::McpHttpServer) -> Router {
     Router::new()
         .route("/mcp", axum::routing::any(handle_mcp))
@@ -236,14 +249,16 @@ async fn handle_mcp(
             )
         })
         .collect();
-    let response = server
-        .handle(crate::mcp::McpHttpRequest {
-            method: parts.method.to_string(),
-            path: parts.uri.path().to_string(),
-            headers,
-            body: body.to_vec(),
-        })
-        .await;
+    let request = crate::mcp::McpHttpRequest {
+        method: parts.method.to_string(),
+        path: parts.uri.path().to_string(),
+        headers,
+        body: body.to_vec(),
+    };
+    let response = match parts.extensions.get::<McpPeerSession>() {
+        Some(session) => server.handle_for_peer(request, &session.0).await,
+        None => server.handle(request).await,
+    };
     let mut builder = Response::builder().status(response.status);
     for (name, value) in &response.headers {
         builder = builder.header(name, value);
@@ -949,6 +964,121 @@ mod tests {
                 .unwrap_or_else(|error| panic!("invalid MCP JSON ({error}): {text:?}"))
         };
         (status, json)
+    }
+
+    struct HttpPeerHandler;
+
+    #[async_trait::async_trait]
+    impl CommandHandler for HttpPeerHandler {
+        async fn run(&self, ctx: CommandContext) -> CommandResult {
+            let data = ctx
+                .mcp
+                .unwrap()
+                .peer
+                .unwrap()
+                .request(crate::command::McpPeerRequest {
+                    method: "sampling/createMessage".to_string(),
+                    params: Some(serde_json::json!({"messages":[]})),
+                    meta: None,
+                })
+                .await
+                .expect("authenticated peer response");
+            CommandResult::Ok {
+                data,
+                cta: None,
+                exit_code: None,
+            }
+        }
+    }
+
+    fn peer_http_request(message: Value, session: Option<&str>) -> axum::http::Request<Body> {
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header(header::HOST, "localhost")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header("mcp-protocol-version", "2025-03-26")
+            .header("mcp-session-id", "owner")
+            .body(Body::from(serde_json::to_vec(&message).unwrap()))
+            .unwrap();
+        if let Some(session) = session {
+            request
+                .extensions_mut()
+                .insert(McpPeerSession(session.to_string()));
+        }
+        request
+    }
+
+    fn peer_http_event(bytes: &[u8]) -> Value {
+        let text = std::str::from_utf8(bytes).unwrap();
+        let payload = text
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap();
+        serde_json::from_str(payload).unwrap()
+    }
+
+    #[tokio::test]
+    async fn mcp_http_peer_response_requires_trusted_owning_session() {
+        use futures::FutureExt;
+        let cli = Cli::create("test")
+            .mcp(crate::mcp::McpServeOptions {
+                tools: crate::mcp::McpToolFilter {
+                    discovery: crate::mcp::McpDiscovery::Direct,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .command("peer", CommandDef::build("peer", HttpPeerHandler).done());
+        let server = crate::mcp::McpHttpServer::from_cli(&cli, Default::default()).unwrap();
+        let router = mcp_router(server);
+        let response = router
+            .clone()
+            .oneshot(peer_http_request(
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":"call", "method":"tools/call",
+                    "params":{"name":"peer", "arguments":{}}
+                }),
+                Some("owner"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut stream = response.into_body().into_data_stream();
+        let peer = peer_http_event(&stream.next().await.unwrap().unwrap());
+        assert_eq!(peer["method"], "sampling/createMessage");
+        for scope in [None, Some("other-caller")] {
+            let response = router
+                .clone()
+                .oneshot(peer_http_request(
+                    serde_json::json!({
+                        "jsonrpc":"2.0", "id":peer["id"], "result":{"accepted":false}
+                    }),
+                    scope,
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            assert!(
+                stream.next().now_or_never().is_none(),
+                "cross-session response completed the call"
+            );
+        }
+        let response = router
+            .oneshot(peer_http_request(
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":peer["id"], "result":{"accepted":true}
+                }),
+                Some("owner"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let result = peer_http_event(&stream.next().await.unwrap().unwrap());
+        let content: Value =
+            serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(content["accepted"], true);
     }
 
     struct EchoHandler;

@@ -4,17 +4,12 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from rust_oracle import cargo_example, exchange_jsonl
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[2]
 def exchange(argv, requests):
-    result = subprocess.run(argv, cwd=ROOT, input="".join(json.dumps(r) + "\n" for r in requests),
-        text=True, capture_output=True, check=False)
-    if result.returncode:
-        raise RuntimeError(json.dumps({"command": argv, "exit": result.returncode, "stderr": result.stderr[-8000:]}))
-    observations = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    if len(observations) != len(requests):
-        raise RuntimeError("Oracle response count mismatch")
-    return observations
+    return exchange_jsonl(argv, requests, ROOT)
+
 def main():
     fields = [
         {"type": "string"}, {"type": "string", "minLength": 2, "maxLength": 4},
@@ -53,9 +48,7 @@ def main():
             for operation in ["validate_file_selections", "validate_form_selections"]:
                 requests.append({"operation": operation, "form": form, "content": {"x": value}})
     expected = exchange(["uv", "run", "--no-project", "--with-requirements", "python-requirements.txt", "python", "python-oracle.py"], requests)
-    actual = exchange(["cargo", "run", "--quiet", "--locked", "--manifest-path",
-        str(REPO / "extensions/openai-mcp/Cargo.toml"), "-p", "incurs-openai-mcp-protocol",
-        "--example", "helper_oracle"], requests)
+    actual = exchange(cargo_example(REPO, "helper_oracle"), requests)
     failures = [{"index": index, "request": request, "expected": wanted, "actual": observed}
         for index, (request, wanted, observed) in enumerate(zip(requests, expected, actual)) if wanted != observed]
     print(json.dumps({"cases": len(requests), "failures": failures}))

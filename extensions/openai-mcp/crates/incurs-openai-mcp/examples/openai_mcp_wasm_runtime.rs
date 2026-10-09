@@ -9,7 +9,8 @@ use incurs::command::CommandContext;
 use incurs::mcp::{McpHttpBody, McpHttpConfig, McpHttpRequest, McpHttpServer};
 use incurs::tool::EnvironmentSource;
 use incurs_openai_mcp::{
-    IncursOpenAiServer, OpenAiSettings, OpenAiSettingsField, OpenAiSettingsRegistration,
+    IncursOpenAiServer, OpenAiElicitInput, OpenAiServer, OpenAiSettings, OpenAiSettingsField,
+    OpenAiSettingsRegistration, ToolCallResult, ToolRegistration,
 };
 use serde_json::{Value, json};
 
@@ -99,6 +100,7 @@ fn run_smoke() -> Result<(), u32> {
     )?;
     ensure(UPDATE_CALLS.load(Ordering::SeqCst) == 1, 52)?;
 
+    prove_modern_elicitation(&server)?;
     Ok(())
 }
 
@@ -107,12 +109,134 @@ fn build_server() -> Result<McpHttpServer, u32> {
     OpenAiSettings::<CommandContext>::default()
         .register(&mut openai, settings_registration())
         .map_err(|_| 60_u32)?;
+    register_elicitation_tool(&mut openai);
     let cli = openai.into_cli();
     let config = McpHttpConfig {
         environment: EnvironmentSource::Empty,
         ..Default::default()
     };
     McpHttpServer::from_cli(&cli, config).map_err(|_| 61_u32)
+}
+
+fn register_elicitation_tool(server: &mut IncursOpenAiServer) {
+    server
+        .register_tool(ToolRegistration {
+            name: "openai.elicit_units".to_string(),
+            description: "Elicit measurement units.".to_string(),
+            title: Some("Elicit units".to_string()),
+            icons: Vec::new(),
+            annotations: BTreeMap::new(),
+            meta: BTreeMap::new(),
+            result_meta: BTreeMap::new(),
+            direct: true,
+            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            output_schema: json!({"type":"object","properties":{"answer":{"type":"object"}},"required":["answer"],"additionalProperties":false}),
+            handler: Arc::new(|_, context| {
+                Box::pin(async move {
+                    let answer = OpenAiElicitInput
+                        .request_from_context(
+                            &context,
+                            json!({
+                                "mode":"form",
+                                "message":"Choose units",
+                                "requestedSchema":{
+                                    "type":"object",
+                                    "required":["units"],
+                                    "properties":{"units":{"type":"string","enum":["mm","in"]}},
+                                    "additionalProperties":false
+                                }
+                            }),
+                            Some(json!({"trace":"native"})),
+                        )
+                        .await?;
+                    Ok(ToolCallResult::structured(json!({"answer": answer})))
+                })
+            }),
+        })
+        .expect("elicitation registration succeeds");
+}
+
+fn prove_modern_elicitation(server: &McpHttpServer) -> Result<(), u32> {
+    let meta = json!({
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{"extensions":{"openai/elicitation":{"form":{}}}},
+        "io.modelcontextprotocol/clientInfo":{"name":"wasm-modern-host","version":"1"}
+    });
+    let discovered = portable_rpc_with_headers(
+        server,
+        10,
+        "server/discover",
+        Some(json!({"_meta":meta.clone()})),
+        modern_headers("server/discover", None),
+    )?;
+    ensure(
+        discovered["result"]["supportedVersions"]
+            .as_array()
+            .is_some_and(|versions| versions.iter().any(|v| v == "2026-07-28")),
+        110,
+    )?;
+    let first = portable_rpc_with_headers(
+        server,
+        11,
+        "tools/call",
+        Some(json!({"name":"openai.elicit_units","arguments":{},"_meta":meta.clone()})),
+        modern_headers("tools/call", Some("openai.elicit_units")),
+    )?;
+    ensure(first["result"]["resultType"] == "input_required", 111)?;
+    ensure(
+        first["result"]["inputRequests"]["openai_elicitation"]["method"]
+            == "openai/elicitation/create",
+        112,
+    )?;
+    ensure(
+        first["result"]["inputRequests"]["openai_elicitation"]["params"]["mode"] == "form",
+        113,
+    )?;
+    let state = first["result"]["requestState"].as_str().ok_or(114_u32)?;
+    let invalid = portable_rpc_with_headers(
+        server,
+        12,
+        "tools/call",
+        Some(json!({"name":"openai.elicit_units","arguments":{},
+            "inputResponses":{"openai_elicitation":{"action":"accept","content":{"units":"cm"}}},
+            "requestState":state,"_meta":meta.clone()})),
+        modern_headers("tools/call", Some("openai.elicit_units")),
+    )?;
+    ensure(
+        invalid.get("error").is_some()
+            || invalid["result"]["isError"] == true
+            || invalid["result"]["resultType"] == "error",
+        115,
+    )?;
+    let resumed = portable_rpc_with_headers(
+        server,
+        13,
+        "tools/call",
+        Some(json!({"name":"openai.elicit_units","arguments":{},
+            "inputResponses":{"openai_elicitation":{"action":"accept","content":{"units":"mm"}}},
+            "requestState":state,"_meta":meta})),
+        modern_headers("tools/call", Some("openai.elicit_units")),
+    )?;
+    ensure(resumed["result"]["resultType"] == "complete", 116)?;
+    ensure(resumed["result"]["content"] == json!([]), 117)?;
+    ensure(
+        resumed["result"]["structuredContent"]["answer"]["content"] == json!({"units":"mm"}),
+        118,
+    )
+}
+
+fn modern_headers(method: &str, name: Option<&str>) -> Vec<(String, String)> {
+    let mut headers = legacy_headers();
+    for (key, value) in &mut headers {
+        if key == "mcp-protocol-version" {
+            *value = "2026-07-28".into();
+        }
+    }
+    headers.push(("mcp-method".into(), method.into()));
+    if let Some(name) = name {
+        headers.push(("mcp-name".into(), name.into()));
+    }
+    headers
 }
 
 fn settings_registration() -> OpenAiSettingsRegistration<CommandContext> {
@@ -155,10 +279,20 @@ fn portable_rpc(
     method: &str,
     params: Option<Value>,
 ) -> Result<Value, u32> {
+    portable_rpc_with_headers(server, id, method, params, legacy_headers())
+}
+
+fn portable_rpc_with_headers(
+    server: &McpHttpServer,
+    id: u64,
+    method: &str,
+    params: Option<Value>,
+    headers: Vec<(String, String)>,
+) -> Result<Value, u32> {
     let response = poll_ready(server.handle(McpHttpRequest {
         method: "POST".to_string(),
         path: "/mcp".to_string(),
-        headers: legacy_headers(),
+        headers,
         body: rpc(id, method, params),
     }))?;
     ensure(response.status == 200, 70)?;

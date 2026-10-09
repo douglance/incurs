@@ -50,6 +50,15 @@
 
 ## Testing Conventions
 
+- **Portable peer responses require trusted session ownership** — the host supplies an authenticated client-session scope for the initiating call and peer responses. Request IDs and caller-supplied headers establish no authority. Pin anonymous and cross-session rejection plus owning-session completion through both the core server and Axum adapter.
+
+- **Browser JSON uses the JSON codec** — arbitrary-precision serde numbers expose an internal representation to general Serde serializers. Encode the frame with serde_json before converting it to a JavaScript object, and test outgoing nested numbers and metadata against an independent JavaScript host with arbitrary precision enabled.
+
+- **MRTR field presence stays explicit** — mutable JSON indexing can insert content: null into an intermediate result. Use non-inserting lookups and assert that InputRequired results omit content.
+
+- **Form numbers stay exact through typed boundaries** — preserve number tokens and typed minimum/maximum values rather than passing through f64. Keep Python helper integer-token and timestamp rules separate from general form validation, with independent positive and negative controls.
+
+
 - **Capture one formatter output at a time** — when migrating rustfmt output through griz, pass source on stdin with skip_children=true. Formatting a file path may print several child-module files with filename headers; never treat that concatenation as the replacement for one file. Verify the resulting diff before compilation.
 
 - **Schema oracles distinguish schemas from factories** — an exported name ending in Schema may be a function that builds a schema. Give every compared schema a positive control, and test form-content factories with a declared form and an independent answer corpus. Include nested array elements and Unicode scalar length controls; an object-only mutator misses invalid content blocks and UTF-16 length differences.
@@ -72,6 +81,12 @@
 
 - **Generated future lints stay at their boundary** - async_trait annotates generated futures with must_use. Scope the double_must_use compatibility allowance to the affected trait declarations and retain warnings-denied Clippy across the workspace.
 
+
+- **Browser proof uses an independent host** — send plain JSON-RPC objects across `postMessage`. A Rust-to-Rust fixture can accept shared serialization mistakes such as JavaScript Maps. Keep host method strings and notification envelopes independent of SDK constants, and confirm an implementation mutation makes the browser gate fail.
+
+- **App notification listeners receive params** — decode the transport's parameter value and reconstruct the public notification envelope at the helper boundary. Injecting a full envelope into an in-memory listener masked dropped resource notifications in the browser.
+
+- **Typed results preserve numeric schemas** — a JSON Schema number is independent of its domain label. JavaScript sends whole numbers as floating-point values; retain numeric result tokens instead of narrowing them to unsigned integers. Exercise integer, fractional, and negative host controls when the declared schema permits them.
 
 - **Response media checks stop at the response value** — skip binary-annotation discovery for JSON media before traversing schemas. A binary child property, array item, or unused definition does not make its container a binary response. Follow only value-level references and compositions with a visited set; profiling the full Stripe document exposed repeated traversal through unrelated JSON properties.
 

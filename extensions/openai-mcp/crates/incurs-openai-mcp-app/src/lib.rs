@@ -406,8 +406,11 @@ where
         self.app.transport().on(
             "notifications/resources/updated",
             std::rc::Rc::new(move |value| {
-                if let Ok(notification) = serde_json::from_value(value) {
-                    handler(notification);
+                if let Ok(params) = serde_json::from_value(value) {
+                    handler(ResourceUpdatedNotification {
+                        method: "notifications/resources/updated".to_string(),
+                        params,
+                    });
                 }
             }),
         )
@@ -693,9 +696,9 @@ pub enum OpenAiResourceWriteResult {
     },
     /// The host rejected the write because the content was too large.
     TooLarge {
-        /// Maximum accepted payload size in bytes.
+        /// Numeric maximum payload size reported by the host.
         #[serde(rename = "maxBytes")]
-        max_bytes: u64,
+        max_bytes: serde_json::Number,
     },
 }
 

@@ -289,12 +289,12 @@ async fn resources_merge_representation_parse_metadata_write_and_unsubscribe_han
     });
     transport.emit(
         "notifications/resources/updated",
-        json!({ "method": "notifications/resources/updated", "params": { "uri": "file://a" } }),
+        json!({ "uri": "file://a" }),
     );
     registration.dispose();
     transport.emit(
         "notifications/resources/updated",
-        json!({ "method": "notifications/resources/updated", "params": { "uri": "file://b" } }),
+        json!({ "uri": "file://b" }),
     );
     assert_eq!(&*seen.borrow(), &["file://a".to_string()]);
 }
@@ -393,4 +393,32 @@ async fn response_validation_rejects_invalid_openai_metadata_and_write_results()
             .to_string()
             .contains("OpenAIModelContextMetadataSchema")
     );
+}
+
+#[tokio::test]
+async fn resource_write_numeric_limits_retain_host_number_values() {
+    for max_bytes in [json!(1.0), json!(1.5), json!(-1.0)] {
+        let (app, transport) = app_with_caps(&["openai/resource"]);
+        let reported = max_bytes.clone();
+        transport.handle(
+            "openai/resources/write",
+            incurs_mcp_apps::value_handler(move |_| {
+                Ok(json!({"outcome":"too-large","maxBytes":reported.clone()}))
+            }),
+        );
+        let result = OpenAiAppExtensions::new(app)
+            .resources()
+            .unwrap()
+            .write(
+                "file://large",
+                OpenAiResourceWriteOptions {
+                    if_match: None,
+                    content: OpenAiResourceWriteContent::Text("payload".into()),
+                },
+                RequestOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(result).unwrap()["maxBytes"], max_bytes);
+    }
 }

@@ -189,6 +189,9 @@ jobs:
         if: matrix.wasm
         run: cargo check --manifest-path extensions/${{ matrix.workspace }}/Cargo.toml --workspace --target wasm32-unknown-unknown --locked
 
+      - name: OpenAI browser WASM clippy
+        if: matrix.workspace == 'openai-mcp'
+        run: cargo clippy -p incurs-mcp-apps --all-features --target wasm32-unknown-unknown --locked -- -D warnings
       - name: OpenAI documentation
         if: matrix.workspace == 'openai-mcp'
         env:

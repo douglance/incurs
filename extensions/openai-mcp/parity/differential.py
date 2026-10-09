@@ -5,18 +5,12 @@ import copy
 from pathlib import Path
 import subprocess
 import sys
+from rust_oracle import cargo_example, exchange_jsonl
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT.parents[2]
 
 def exchange(argv, requests):
-    text = "".join(json.dumps(request, ensure_ascii=False) + "\n" for request in requests)
-    result = subprocess.run(argv, input=text, text=True, capture_output=True, cwd=ROOT, check=False)
-    if result.returncode:
-        raise RuntimeError(json.dumps({"command": argv, "exit": result.returncode, "stderr": result.stderr[-12000:]}))
-    observations = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    if len(observations) != len(requests):
-        raise RuntimeError(json.dumps({"command": argv, "expected_responses": len(requests), "actual": len(observations)}))
-    return observations
+    return exchange_jsonl(argv, requests, ROOT)
 
 def variants(value):
     """Change supplied data without deriving expected answers from Rust."""
@@ -101,9 +95,7 @@ def main():
             if item["name"].endswith("Schema") and not item["name"].startswith("create"):
                 requests.extend({"module": module, "schema": item["name"], "value": value} for value in samples)
     expected = exchange(["node", "--import", "tsx", "oracle.mjs"], requests)
-    rust_command = ["cargo", "run", "--quiet", "--locked", "--manifest-path",
-                    str(REPO / "extensions/openai-mcp/Cargo.toml"), "-p",
-                    "incurs-openai-mcp-protocol", "--example", "schema_oracle"]
+    rust_command = cargo_example(REPO, "schema_oracle")
     actual = exchange(rust_command, requests)
     failures = []
     positive = {module + ':' + item['name']: 0 for module, items in inventory.items() for item in items if item['name'].endswith('Schema') and not item['name'].startswith('create')}

@@ -57,7 +57,7 @@ cargo check --manifest-path extensions/openai-mcp/Cargo.toml --workspace --targe
 
 The oracle checks the copied upstream source hashes and exported surface. The differential corpus compares independently computed upstream acceptance and normalized values against the Rust implementation, with a positive control for every schema. Server behavior controls exercise registration, strict settings updates, mentions replacement, and form elicitation.
 
-The browser harness exercises actual compiled WASM in Chromium. It is a local MCP host fixture; it does not certify availability in every ChatGPT or Codex host. Capabilities negotiated by the connected host determine which app helpers are available.
+The browser harness exercises actual compiled WASM in Chromium against an independent JavaScript parent-window host. The host checks literal method names and plain JSON-RPC objects, resource notification delivery, numeric write results, cancellation, timeouts, disposal, and source filtering. It is a local MCP host fixture; it does not certify availability in every ChatGPT or Codex host. Capabilities negotiated by the connected host determine which app helpers are available.
 
 The app browser check requires Node, the Rust wasm32 target, and wasm-bindgen CLI 0.2.126:
 

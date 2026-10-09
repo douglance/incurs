@@ -117,6 +117,21 @@ def main() -> int:
         assert read["result"]["content"] == [], read
         assert read["result"]["structuredContent"]["values"] == {"units": "mm"}, read
 
+        updated = request(proc, stdout, 8, "tools/call",
+            {"name": "settings.update", "arguments": {"set": {"units": "in"}}})
+        assert updated["result"]["content"] == [], updated
+        assert updated["result"]["structuredContent"]["values"] == {"units": "in"}, updated
+        persisted = request(proc, stdout, 9, "tools/call",
+            {"name": "settings.read", "arguments": {}})
+        assert persisted["result"]["structuredContent"]["values"] == {"units": "in"}, persisted
+
+        invalid = request(proc, stdout, 10, "tools/call",
+            {"name": "settings.update", "arguments": {"set": {"units": "cm"}}})
+        assert invalid["result"]["isError"] is True, invalid
+        unchanged = request(proc, stdout, 11, "tools/call",
+            {"name": "settings.read", "arguments": {}})
+        assert unchanged["result"]["structuredContent"]["values"] == {"units": "in"}, unchanged
+
         mentions = request(
             proc,
             stdout,
