@@ -1,0 +1,13 @@
+{
+  "name": "incurs-subscriptions-example",
+  "main": "src/worker.mjs",
+  "compatibility_date": "2026-06-11",
+  "durable_objects": {
+    "bindings": [
+      { "name": "SUBSCRIPTIONS", "class_name": "SubscriptionDelivery" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["SubscriptionDelivery"] }
+  ]
+}
