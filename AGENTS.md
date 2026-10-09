@@ -50,6 +50,10 @@
 
 ## Testing Conventions
 
+- **Subscription replay and live delivery form one boundary** - register and buffer live changes before replay, then reconcile the overlap by stable source identity. A deterministic append during replay must reach the subscriber exactly once.
+- **Subscriber limits bound pending data** - account for aggregate queued events and bytes, release the accounting when a reader consumes data, and clean up timers and listeners on overflow, cancellation, and error. Prove both a healthy reader beyond the event limit and a blocked reader that reaches the limit.
+- **Subscription proof uses actual resource data** - a successful subscribe response, a static HTML marker, or an event metadata display does not establish delivery. Read authoritative product state, change it through an independent writer, and verify the same rendered view updates.
+
 - **App resource wrappers retain MCP fields** — preserve request and result metadata, loose resource fields, and notification parameters across typed models. Validate the selected text or blob payload, and keep unparsed OpenAI decorations in raw metadata without blocking otherwise valid resource content. Keep independent literal controls for metadata overlays, optional decorations, and resource payload alternatives.
 
 - **Portable peer responses require trusted session ownership** — the host supplies an authenticated client-session scope for the initiating call and peer responses. Request IDs and caller-supplied headers establish no authority. Pin anonymous and cross-session rejection plus owning-session completion through both the core server and Axum adapter.

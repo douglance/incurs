@@ -1,5 +1,15 @@
 # incurs
 
+## 0.13.0
+
+Incurs subscriptions now have a durable release boundary for core delivery and Cloudflare delivery.
+
+- Core subscription delivery preserves changes committed while replay is running, deduplicates stable source IDs, and closes slow subscribers once queued delivery exceeds 256 events or 1 MiB.
+- The Cloudflare delivery adapter is exported as `@incurs/cloudflare/subscriptions-worker` for Workers that supply their own authorization and scope projection.
+- Cloudflare subscription delivery stores core change envelopes in SQLite, emits opaque `cf:{n}` cursors, rejects conflicting duplicate payloads, and keeps the example proof aligned with the reusable adapter.
+
+Every crate built on incurs moves with it: incurs-cli and incurs-extras 0.13.0; incurs-codemode, incurs-codemode-local, incurs-codemode-mcp and incurs-codemode-cloudflare 0.11.0; incurs-mcp-client, incurs-mcp-registry, incurs-remote and incurs-mcp-cloudflare 0.9.0; incurs-app-model, incurs-app-ratatui and incurs-app-gpui 0.8.0. incurs-openapi and incurs-openai-mcp move to 0.1.1 only to publish dependency constraints for incurs 0.13.0.
+
 ## 0.11.0
 
 Every incurs feature runs on Cloudflare Workers. 0.10 made MCP serving
