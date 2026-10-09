@@ -6,10 +6,11 @@
 //! converts its native request into an [`McpHttpRequest`], awaits
 //! [`McpHttpServer::handle`], and writes the returned [`McpHttpResponse`].
 //!
-//! Its observable behaviour matches the native stateless server that
-//! `incurs::http` mounts at `/mcp`; the parity test in this module's sibling
-//! `parity_tests` pins every difference, of which there is one: this server
-//! validates `Origin` (see [`McpHttpConfig::allowed_origins`]).
+//! The baseline request and tool wire behavior is compared with the native
+//! stateless server by the sibling `parity_tests` module. This server also
+//! validates `Origin` (see [`McpHttpConfig::allowed_origins`]). Bidirectional
+//! peer requests use [`McpHttpServer::handle_for_peer`] with a trusted session
+//! supplied by the host; anonymous requests cannot resolve peer responses.
 
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -192,15 +193,15 @@ impl McpHttpResponse {
 }
 
 type PendingPeerRequests =
-    Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, McpPeerError>>>>>;
+    Arc<Mutex<HashMap<(String, String), oneshot::Sender<Result<Value, McpPeerError>>>>>;
 
 struct PendingPeerRequestGuard {
     pending: PendingPeerRequests,
-    id: Option<String>,
+    id: Option<(String, String)>,
 }
 
 impl PendingPeerRequestGuard {
-    fn new(pending: PendingPeerRequests, id: String) -> Self {
+    fn new(pending: PendingPeerRequests, id: (String, String)) -> Self {
         Self {
             pending,
             id: Some(id),
@@ -266,7 +267,36 @@ impl McpHttpServer {
         self.config.max_request_body_bytes
     }
 
+    /// Answers a stateless request without a trusted peer session.
+    /// Server-initiated requests require [`Self::handle_for_peer`].
     pub async fn handle(&self, request: McpHttpRequest) -> McpHttpResponse {
+        self.handle_inner(request, None).await
+    }
+
+    /// Answers a request owned by a trusted authenticated client session.
+    ///
+    /// The host must derive `session_id` from verified authentication and session
+    /// ownership, never from an unverified HTTP header or JSON-RPC parameter.
+    /// Supply the same ID on the client's response POSTs. Different sessions
+    /// cannot resolve each other's requests, even when a response ID is known.
+    /// A local fixture may explicitly supply its isolated fixture session ID.
+    pub async fn handle_for_peer(
+        &self,
+        request: McpHttpRequest,
+        session_id: &str,
+    ) -> McpHttpResponse {
+        if session_id.is_empty() {
+            return McpHttpResponse::bad_request("Trusted peer session must not be empty");
+        }
+        self.handle_inner(request, Some(session_id.to_string()))
+            .await
+    }
+
+    async fn handle_inner(
+        &self,
+        request: McpHttpRequest,
+        peer_session: Option<String>,
+    ) -> McpHttpResponse {
         let headers = Headers(&request.headers);
         if let Err(response) = self.validate_host_and_origin(&headers) {
             return response;
@@ -278,7 +308,7 @@ impl McpHttpServer {
                 .push(("allow".to_string(), "POST".to_string()));
             return response;
         }
-        match self.handle_post(&request, &headers).await {
+        match self.handle_post(&request, &headers, peer_session).await {
             Ok(response) | Err(response) => response,
         }
     }
@@ -342,6 +372,7 @@ impl McpHttpServer {
         &self,
         request: &McpHttpRequest,
         headers: &Headers<'_>,
+        peer_session: Option<String>,
     ) -> Result<McpHttpResponse, McpHttpResponse> {
         let accepts = headers.text("accept").is_some_and(|accept| {
             accept.contains("application/json") && accept.contains("text/event-stream")
@@ -392,7 +423,7 @@ impl McpHttpServer {
 
         let Message::Request(client_request) = message else {
             if let Message::Response { id, outcome } = message {
-                self.complete_peer_response(id, outcome);
+                self.complete_peer_response(peer_session.as_deref(), id, outcome);
             }
             return Ok(McpHttpResponse::accepted());
         };
@@ -414,8 +445,13 @@ impl McpHttpServer {
             method: request.method.clone(),
             path: request.path.clone(),
         };
-        let mut stream =
-            MessageStream::spawn(self.clone(), *client_request, peer_version, Some(transport));
+        let mut stream = MessageStream::spawn(
+            self.clone(),
+            *client_request,
+            peer_version,
+            Some(transport),
+            peer_session,
+        );
         if !negotiates {
             return Ok(McpHttpResponse::event_stream(stream));
         }
@@ -436,20 +472,34 @@ impl McpHttpServer {
         ))
     }
 
-    fn connected_peer(&self, sender: mpsc::UnboundedSender<Value>) -> McpPeer {
+    fn connected_peer(
+        &self,
+        sender: mpsc::UnboundedSender<Value>,
+        peer_session: Option<String>,
+    ) -> McpPeer {
         let request_pending = Arc::clone(&self.pending_peer);
         let request_ids = Arc::clone(&self.peer_ids);
         let request_sender = sender.clone();
         let notify_sender = sender;
         McpPeer::with_notify(
             move |request: McpPeerRequest| {
+                let peer_session = peer_session.clone();
                 let pending = Arc::clone(&request_pending);
                 let sender = request_sender.clone();
                 let id = format!("incurs-peer-{}", request_ids.fetch_add(1, Ordering::SeqCst));
                 async move {
+                    let Some(session) = peer_session else {
+                        return Err(McpPeerError {
+                            code: "MCP_PEER_SESSION_REQUIRED".to_string(),
+                            message: "Server-initiated requests require a trusted peer session"
+                                .to_string(),
+                            data: None,
+                        });
+                    };
+                    let key = (session, id.clone());
                     let (tx, rx) = oneshot::channel();
                     if let Ok(mut pending) = pending.lock() {
-                        pending.insert(id.clone(), tx);
+                        pending.insert(key.clone(), tx);
                     } else {
                         return Err(McpPeerError {
                             code: "MCP_PEER_STATE_UNAVAILABLE".to_string(),
@@ -458,7 +508,7 @@ impl McpHttpServer {
                         });
                     }
                     let _pending_guard =
-                        PendingPeerRequestGuard::new(Arc::clone(&pending), id.clone());
+                        PendingPeerRequestGuard::new(Arc::clone(&pending), key.clone());
                     let message = json!({
                         "jsonrpc": "2.0",
                         "id": id,
@@ -467,7 +517,7 @@ impl McpHttpServer {
                     });
                     if sender.unbounded_send(message).is_err() {
                         if let Ok(mut pending) = pending.lock() {
-                            pending.remove(&id);
+                            pending.remove(&key);
                         }
                         return Err(McpPeerError {
                             code: "MCP_PEER_STREAM_CLOSED".to_string(),
@@ -504,9 +554,17 @@ impl McpHttpServer {
         )
     }
 
-    fn complete_peer_response(&self, id: String, outcome: Result<Value, McpPeerError>) {
+    fn complete_peer_response(
+        &self,
+        peer_session: Option<&str>,
+        id: String,
+        outcome: Result<Value, McpPeerError>,
+    ) {
+        let Some(session) = peer_session else {
+            return;
+        };
         if let Ok(mut pending) = self.pending_peer.lock()
-            && let Some(sender) = pending.remove(&id)
+            && let Some(sender) = pending.remove(&(session.to_string(), id))
         {
             let _ = sender.send(outcome);
         }
@@ -520,10 +578,18 @@ impl McpHttpServer {
         transport: Option<crate::command::RequestContext>,
         events: Arc<ProgressSink>,
         cancellation: CancellationToken,
+        peer_session: Option<String>,
     ) -> Value {
         let id = request.id.clone();
         match self
-            .dispatch_result(request, peer_version, transport, events, cancellation)
+            .dispatch_result(
+                request,
+                peer_version,
+                transport,
+                events,
+                cancellation,
+                peer_session,
+            )
             .await
         {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -570,11 +636,12 @@ impl McpHttpServer {
         transport: Option<crate::command::RequestContext>,
         events: Arc<ProgressSink>,
         cancellation: CancellationToken,
+        peer_session: Option<String>,
     ) -> Result<Value, Value> {
         let requested = request.meta_protocol_version();
         let protocol_version = requested.clone().unwrap_or(peer_version);
         let modern_result = protocol_version.as_str() >= MODERN;
-        let connected_peer = self.connected_peer(events.sender.clone());
+        let connected_peer = self.connected_peer(events.sender.clone(), peer_session);
         let inline = !matches!(request.kind, Kind::Initialize { .. });
         let supported = self.supported_versions();
         if inline
@@ -733,6 +800,12 @@ impl McpHttpServer {
             | Kind::Task
             | Kind::Custom => return Err(error(METHOD_NOT_FOUND, request.method)),
         };
+        if !modern_result && result.get("resultType") == Some(&json!("input_required")) {
+            return Err(error(
+                INVALID_REQUEST,
+                "InputRequiredResult requires negotiated protocol version 2026-07-28 or newer",
+            ));
+        }
         if !modern_result
             && let Some(object) = result.as_object_mut()
             && object.get("resultType") == Some(&json!("complete"))
@@ -749,7 +822,7 @@ fn error(code: i64, message: impl Into<String>) -> Value {
 }
 
 fn resource_error(resource_error: super::McpResourceError) -> Value {
-    let mut value = error(resource_error.code, resource_error.message);
+    let mut value = error(i64::from(resource_error.code), resource_error.message);
     if let Some(data) = resource_error.data {
         value["data"] = data;
     }
@@ -862,6 +935,7 @@ impl MessageStream {
         request: ClientRequest,
         peer_version: String,
         transport: Option<crate::command::RequestContext>,
+        peer_session: Option<String>,
     ) -> Self {
         let (sender, receiver) = mpsc::unbounded();
         let cancellation = CancellationToken::new();
@@ -873,7 +947,14 @@ impl MessageStream {
         let token = cancellation.clone();
         let driver = async move {
             let message = server
-                .dispatch(request, peer_version, transport, events, token)
+                .dispatch(
+                    request,
+                    peer_version,
+                    transport,
+                    events,
+                    token,
+                    peer_session,
+                )
                 .await;
             let _ = sender.unbounded_send(message);
             sender.close_channel();
@@ -1992,6 +2073,10 @@ mod tests {
                 .await;
             let messages = collect_event_stream(first).await;
             assert_eq!(messages[0]["result"]["resultType"], "input_required");
+            assert!(
+                messages[0]["result"].get("content").is_none(),
+                "intermediate MRTR results must not acquire a tool content field"
+            );
             assert_eq!(messages[0]["result"]["requestState"], "state-1");
             assert_eq!(
                 messages[0]["result"]["inputRequests"]["roots"]["method"],
@@ -2042,17 +2127,20 @@ mod tests {
                     .done(),
             );
             let response = server
-                .handle(post(
-                    json!({
-                        "jsonrpc": "2.0",
-                        "id": "call",
-                        "method": "tools/call",
-                        "params": { "name": "peer", "arguments": {} }
-                    }),
-                    "2025-03-26",
-                    "tools/call",
-                    "peer",
-                ))
+                .handle_for_peer(
+                    post(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "call",
+                            "method": "tools/call",
+                            "params": { "name": "peer", "arguments": {} }
+                        }),
+                        "2025-03-26",
+                        "tools/call",
+                        "peer",
+                    ),
+                    "local-peer-fixture",
+                )
                 .await;
             let McpHttpBody::EventStream(mut stream) = response.body else {
                 panic!("event stream response")
@@ -2065,16 +2153,19 @@ mod tests {
             let peer_request: Value = serde_json::from_str(payload).unwrap();
             assert_eq!(peer_request["method"], "sampling/createMessage");
             let response = server
-                .handle(post(
-                    json!({
-                        "jsonrpc": "2.0",
-                        "id": peer_request["id"].clone(),
-                        "result": { "accepted": true }
-                    }),
-                    "2025-03-26",
-                    "tools/call",
-                    "peer",
-                ))
+                .handle_for_peer(
+                    post(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": peer_request["id"].clone(),
+                            "result": { "accepted": true }
+                        }),
+                        "2025-03-26",
+                        "tools/call",
+                        "peer",
+                    ),
+                    "local-peer-fixture",
+                )
                 .await;
             assert_eq!(response.status, 202);
             let event = stream.next().await.expect("tool result event");
@@ -2096,17 +2187,20 @@ mod tests {
                     .done(),
             );
             let response = server
-                .handle(post(
-                    json!({
-                        "jsonrpc": "2.0",
-                        "id": "call",
-                        "method": "tools/call",
-                        "params": { "name": "peer", "arguments": {} }
-                    }),
-                    "2025-03-26",
-                    "tools/call",
-                    "peer",
-                ))
+                .handle_for_peer(
+                    post(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "call",
+                            "method": "tools/call",
+                            "params": { "name": "peer", "arguments": {} }
+                        }),
+                        "2025-03-26",
+                        "tools/call",
+                        "peer",
+                    ),
+                    "local-peer-fixture",
+                )
                 .await;
             let McpHttpBody::EventStream(mut stream) = response.body else {
                 panic!("event stream response")
@@ -2123,6 +2217,133 @@ mod tests {
             drop(stream);
 
             assert_eq!(server.pending_peer.lock().unwrap().len(), 0);
+        });
+    }
+    #[test]
+    fn release_progressive_direct_names_cannot_shadow_discovery() {
+        for name in [
+            "search_tools",
+            "get_tool_details",
+            "call_read_tool",
+            "call_write_tool",
+        ] {
+            let cli = Cli::create("collision").command(
+                "host",
+                CommandDef::build("host", EchoOptions)
+                    .mcp(McpCommandOptions {
+                        name: Some(name.to_string()),
+                        direct: true,
+                        ..Default::default()
+                    })
+                    .done(),
+            );
+            let error = match McpHttpServer::from_cli(&cli, McpHttpConfig::default()) {
+                Err(error) => error,
+                Ok(_) => panic!("reserved tool accepted: {name}"),
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains("reserved for progressive discovery"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_peer_responses_require_trusted_session_ownership() {
+        futures::executor::block_on(async {
+            let server = tool_server(CommandDef::build("peer", UsesPeer).done());
+            let response = server
+                .handle_for_peer(
+                    post(
+                        json!({
+                            "jsonrpc": "2.0", "id": "victim", "method": "tools/call",
+                            "params": { "name": "peer", "arguments": {} }
+                        }),
+                        "2025-03-26",
+                        "tools/call",
+                        "peer",
+                    ),
+                    "verified-victim-session",
+                )
+                .await;
+            let McpHttpBody::EventStream(mut stream) = response.body else {
+                panic!("peer stream");
+            };
+            let event = stream.next().await.unwrap();
+            let request: Value = serde_json::from_str(
+                event
+                    .strip_prefix("data: ")
+                    .unwrap()
+                    .strip_suffix("\n\n")
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(request["method"], "sampling/createMessage");
+            let fake_response = json!({ "jsonrpc": "2.0", "id": request["id"], "result": { "accepted": "attacker" } });
+            let _ = server
+                .handle_for_peer(
+                    post(fake_response.clone(), "2025-03-26", "tools/call", "peer"),
+                    "verified-attacker-session",
+                )
+                .await;
+            assert_eq!(
+                server.pending_peer.lock().unwrap().len(),
+                1,
+                "cross-session response consumed victim request"
+            );
+            let _ = server
+                .handle(post(fake_response, "2025-03-26", "tools/call", "peer"))
+                .await;
+            assert_eq!(
+                server.pending_peer.lock().unwrap().len(),
+                1,
+                "anonymous response consumed victim request"
+            );
+            let _ = server
+                .handle_for_peer(
+                    post(
+                        json!({
+                            "jsonrpc": "2.0", "id": request["id"], "result": { "accepted": "owner" }
+                        }),
+                        "2025-03-26",
+                        "tools/call",
+                        "peer",
+                    ),
+                    "verified-victim-session",
+                )
+                .await;
+            let event = stream.next().await.unwrap();
+            let result: Value = serde_json::from_str(
+                event
+                    .strip_prefix("data: ")
+                    .unwrap()
+                    .strip_suffix("\n\n")
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(result["result"]["structuredContent"]["accepted"], "owner");
+            assert!(server.pending_peer.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn release_anonymous_peer_requests_require_explicit_host_scope() {
+        futures::executor::block_on(async {
+            let server = tool_server(CommandDef::build("peer", UsesPeer).done());
+            let (sender, _receiver) = mpsc::unbounded();
+            let error = server
+                .connected_peer(sender, None)
+                .request(McpPeerRequest {
+                    method: "sampling/createMessage".to_string(),
+                    params: Some(json!({})),
+                    meta: None,
+                })
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "MCP_PEER_SESSION_REQUIRED");
+            assert!(server.pending_peer.lock().unwrap().is_empty());
         });
     }
 }

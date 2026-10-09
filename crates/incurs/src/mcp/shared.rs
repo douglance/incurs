@@ -736,6 +736,22 @@ impl ToolServer {
             .map(shared_tool)
             .collect::<Result<Vec<_>, _>>()?;
         let mut names = HashSet::new();
+        if options.tools.discovery == McpDiscovery::Progressive {
+            for tool in resolved.iter().filter(|tool| tool.direct) {
+                if matches!(
+                    tool.name.as_str(),
+                    "search_tools" | "get_tool_details" | "call_read_tool" | "call_write_tool"
+                ) {
+                    return Err(crate::errors::Error::Other(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "MCP tool name is reserved for progressive discovery: {}",
+                            tool.name
+                        ),
+                    ))));
+                }
+            }
+        }
         for tool in &resolved {
             if !names.insert(tool.name.clone()) {
                 return Err(crate::errors::Error::Other(Box::new(std::io::Error::new(
@@ -996,7 +1012,7 @@ impl ToolServer {
         if let Some(is_error) = mapping.is_error {
             result["isError"] = json!(is_error);
         }
-        if let Some(content) = result["content"].as_array_mut() {
+        if let Some(content) = result.get_mut("content").and_then(Value::as_array_mut) {
             content.retain(|block| match block["type"].as_str() {
                 Some("audio") => context.protocol_version.as_str() >= "2025-03-26",
                 Some("resource_link") => context.protocol_version.as_str() >= "2025-06-18",

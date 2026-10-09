@@ -1730,3 +1730,105 @@ async fn mcp_output_boundary_rejects_unsupported_wrapping_dialects() {
         assert_eq!(called["isError"], false);
     }
 }
+
+struct ReleaseNeedsInput;
+#[async_trait::async_trait]
+impl CommandHandler for ReleaseNeedsInput {
+    async fn run(&self, _ctx: CommandContext) -> CommandResult {
+        CommandResult::InputRequired {
+            input_requests: std::collections::BTreeMap::from([(
+                "roots".to_string(),
+                json!({ "method": "roots/list", "params": {} }),
+            )]),
+            request_state: Some("literal-state".to_string()),
+            meta: Default::default(),
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn release_legacy_mrtr_is_rejected_on_both_transports() {
+    let cli = Cli::create("release-mrtr")
+        .mcp(McpServeOptions {
+            tools: McpToolFilter {
+                discovery: McpDiscovery::Direct,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .command(
+            "input",
+            CommandDef::build("input", ReleaseNeedsInput).done(),
+        );
+    let portable = McpHttpServer::from_cli(&cli, portable_config()).unwrap();
+    for version in ["2025-03-26", "2025-06-18", "2025-11-25"] {
+        let request = case(
+            "legacy-mrtr",
+            with(base_headers(), &[("mcp-protocol-version", version)]),
+            rpc(
+                json!(901),
+                "tools/call",
+                Some(json!({ "name": "input", "arguments": {} })),
+            ),
+        );
+        for observation in [
+            observe_native(&cli, &request).await,
+            observe_portable(&portable, &request).await,
+        ] {
+            assert_eq!(
+                observation.messages[0]["error"]["code"], -32600,
+                "{observation:#?}"
+            );
+            assert_eq!(
+                observation.messages[0]["error"]["message"],
+                "InputRequiredResult requires negotiated protocol version 2026-07-28 or newer"
+            );
+            assert!(observation.messages[0].get("result").is_none());
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn release_resource_errors_preserve_literal_code_on_both_transports() {
+    let resources = super::McpResourceRegistry {
+        read: Some(super::McpResourceReader::new(|_| async {
+            Err(super::McpResourceError {
+                code: -32001,
+                message: "literal resource denied".to_string(),
+                data: Some(json!({ "reason": "literal-control" })),
+            })
+        })),
+        ..Default::default()
+    };
+    let cli = Cli::create("release-resource").mcp(McpServeOptions {
+        resources,
+        ..Default::default()
+    });
+    let portable = McpHttpServer::from_cli(&cli, portable_config()).unwrap();
+    let request = case(
+        "resource-error",
+        base_headers(),
+        rpc(
+            json!(902),
+            "resources/read",
+            Some(json!({ "uri": "memory://denied" })),
+        ),
+    );
+    for observation in [
+        observe_native(&cli, &request).await,
+        observe_portable(&portable, &request).await,
+    ] {
+        assert_eq!(
+            observation.messages[0]["error"]["code"], -32001,
+            "{observation:#?}"
+        );
+        assert_eq!(
+            observation.messages[0]["error"]["message"],
+            "literal resource denied"
+        );
+        assert_eq!(
+            observation.messages[0]["error"]["data"]["reason"],
+            "literal-control"
+        );
+    }
+}

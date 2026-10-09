@@ -291,8 +291,8 @@ pub struct McpResourceSubscriptionRequest {
 /// Failure returned by an MCP resource handler.
 #[derive(Debug, Clone)]
 pub struct McpResourceError {
-    /// JSON-RPC error code.
-    pub code: i64,
+    /// JSON-RPC error code, shared with the native transport's signed 32-bit code.
+    pub code: i32,
     /// Human-readable error message.
     pub message: String,
     /// Optional structured error data.
@@ -1583,7 +1583,24 @@ mod server {
     }
 
     fn resource_error(error: super::McpResourceError) -> McpError {
-        McpError::invalid_params(error.message, error.data)
+        McpError::new(
+            rmcp::model::ErrorCode(error.code),
+            error.message,
+            error.data,
+        )
+    }
+
+    async fn resource_call<T>(
+        future: impl std::future::Future<Output = Result<T, super::McpResourceError>>,
+        cancellation: tokio_util::sync::CancellationToken,
+    ) -> Result<T, McpError> {
+        tokio::select! {
+            biased;
+            _ = cancellation.cancelled() => Err(McpError::new(
+                rmcp::model::ErrorCode(-32800), "Resource request cancelled", None,
+            )),
+            result = future => result.map_err(resource_error),
+        }
     }
 
     /// Converts a shared `CallToolResult` wire value into the `rmcp` model.
@@ -1834,6 +1851,7 @@ mod server {
         ) -> impl std::future::Future<Output = Result<ReadResourceResponse, McpError>> + Send + '_
         {
             let tools = self.tools.clone();
+            let cancellation = context.ct.clone();
             let protocol_version = context_protocol_version(&context);
             let request_meta = context_meta_value(&context).or_else(|| {
                 request
@@ -1858,10 +1876,8 @@ mod server {
                     request.request_state.clone(),
                     Some(peer),
                 );
-                let value = tools
-                    .read_resource(request.uri, ctx)
-                    .await
-                    .map_err(resource_error)?;
+                let value =
+                    resource_call(tools.read_resource(request.uri, ctx), cancellation).await?;
                 let result: ReadResourceResult = serde_json::from_value(value)
                     .map_err(|error| McpError::internal_error(error.to_string(), None))?;
                 Ok(ReadResourceResponse::from(result))
@@ -1875,13 +1891,14 @@ mod server {
             context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
             let tools = self.tools.clone();
+            let cancellation = context.ct.clone();
             let protocol_version = context
                 .protocol_version()
                 .map(|version| version.as_str().to_string());
             let peer = native_peer(context.peer.clone());
             async move {
-                tools
-                    .set_resource_subscription(
+                resource_call(
+                    tools.set_resource_subscription(
                         request.uri,
                         true,
                         ResourceContext {
@@ -1889,9 +1906,10 @@ mod server {
                             peer: Some(peer),
                             ..ResourceContext::default()
                         },
-                    )
-                    .await
-                    .map_err(resource_error)?;
+                    ),
+                    cancellation,
+                )
+                .await?;
                 Ok(())
             }
         }
@@ -1903,13 +1921,14 @@ mod server {
             context: RequestContext<RoleServer>,
         ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
             let tools = self.tools.clone();
+            let cancellation = context.ct.clone();
             let protocol_version = context
                 .protocol_version()
                 .map(|version| version.as_str().to_string());
             let peer = native_peer(context.peer.clone());
             async move {
-                tools
-                    .set_resource_subscription(
+                resource_call(
+                    tools.set_resource_subscription(
                         request.uri,
                         false,
                         ResourceContext {
@@ -1917,9 +1936,10 @@ mod server {
                             peer: Some(peer),
                             ..ResourceContext::default()
                         },
-                    )
-                    .await
-                    .map_err(resource_error)?;
+                    ),
+                    cancellation,
+                )
+                .await?;
                 Ok(())
             }
         }
@@ -2617,19 +2637,38 @@ mod tests {
             icons: Vec::new(),
             meta: BTreeMap::from([("example/resource".to_string(), serde_json::json!(true))]),
         });
-        resources.read = Some(McpResourceReader::new(|request| async move {
-            Ok(McpResourceReadResult {
-                contents: vec![McpResourceContents::Text {
-                    uri: request.uri,
-                    mime_type: Some("text/plain".to_string()),
-                    text: "native".to_string(),
-                    meta: BTreeMap::from([(
-                        "example/content".to_string(),
-                        serde_json::json!(true),
-                    )]),
-                }],
-                meta: BTreeMap::from([("example/read".to_string(), serde_json::json!(true))]),
-            })
+        struct ResourceDrop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for ResourceDrop {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let resource_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let resource_dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = resource_started.clone();
+        let dropped = resource_dropped.clone();
+        resources.read = Some(McpResourceReader::new(move |request| {
+            let started = started.clone();
+            let dropped = dropped.clone();
+            async move {
+                if request.uri == "memory://pending" {
+                    let _guard = ResourceDrop(dropped);
+                    started.store(true, std::sync::atomic::Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                }
+                Ok(McpResourceReadResult {
+                    contents: vec![McpResourceContents::Text {
+                        uri: request.uri,
+                        mime_type: Some("text/plain".to_string()),
+                        text: "native".to_string(),
+                        meta: BTreeMap::from([(
+                            "example/content".to_string(),
+                            serde_json::json!(true),
+                        )]),
+                    }],
+                    meta: BTreeMap::from([("example/read".to_string(), serde_json::json!(true))]),
+                })
+            }
         }));
         let cli = crate::cli::Cli::create("native-duplex")
             .mcp(McpServeOptions {
@@ -2721,6 +2760,36 @@ mod tests {
             "server"
         );
         assert_eq!(result["_meta"]["example/result"], true);
+
+        let pending_request = client
+            .send_cancellable_request(
+                rmcp::model::ClientRequest::ReadResourceRequest(
+                    rmcp::model::ReadResourceRequest::new(ReadResourceRequestParams::new(
+                        "memory://pending",
+                    )),
+                ),
+                rmcp::service::PeerRequestOptions::no_options(),
+            )
+            .await
+            .expect("pending read is sent");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !resource_started.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("resource callback started");
+        pending_request
+            .cancel(Some("literal cancellation control".to_string()))
+            .await
+            .expect("cancel notification sent");
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !resource_dropped.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled resource callback is dropped");
 
         drop(client);
         server_task.abort();
