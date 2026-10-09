@@ -31,6 +31,6 @@ tokio = { version = "1", default-features = false, features = ["rt", "sync", "ti
 tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]
-incurs-mcp-client = { path = ".", version = "0.8.0", features = ["testing"] }
+incurs-mcp-client = { path = ".", features = ["testing"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util"] }
 tokio-util = { version = "0.7" }

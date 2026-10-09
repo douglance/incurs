@@ -1,4 +1,4 @@
-error[E0271]: expected `{async block@$DIR/tests/ui/typed_output_mismatch.rs:11:75: 11:85}` to be a future that resolves to `TypedResult<Expected>`, but it resolves to `TypedResult<String>`
+error[E0271]: expected `{async block@typed_output_mismatch.rs:11:75}` to be a future that resolves to `TypedResult<Expected>`, but it resolves to `TypedResult<String>`
   --> tests/ui/typed_output_mismatch.rs:11:58
    |
 11 |     let _ = CommandDef::typed::<(), (), (), Expected, _, _>("bad", |_ctx| async move {

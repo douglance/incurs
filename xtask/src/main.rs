@@ -93,7 +93,11 @@ fn release_packages() -> Vec<(Workspace, String, String)> {
         (Workspace::Root, "incurs-remote", "0.8.0"),
         (Workspace::Root, "incurs-app-model", "0.7.0"),
         (Workspace::Root, "incurs-app-ratatui", "0.7.0"),
-        (Workspace::Cloudflare, "incurs-codemode-cloudflare", "0.10.0"),
+        (
+            Workspace::Cloudflare,
+            "incurs-codemode-cloudflare",
+            "0.10.0",
+        ),
         (Workspace::Cloudflare, "incurs-mcp-cloudflare", "0.8.0"),
         (Workspace::Gpui, "incurs-app-gpui", "0.7.0"),
         (Workspace::Openapi, "incurs-openapi", "0.1.0"),
@@ -104,6 +108,16 @@ fn release_packages() -> Vec<(Workspace, String, String)> {
     .into_iter()
     .map(|(workspace, package, version)| (workspace, package.to_string(), version.to_string()))
     .collect()
+}
+
+/// Recognizes missing registry dependencies declared in this release.
+fn missing_release_dependency(stderr: &str, declared: &[(Workspace, String, String)]) -> bool {
+    stderr.contains("location searched: crates.io index")
+        && declared.iter().any(|(_, package, _)| {
+            stderr.contains(&format!(
+                "failed to select a version for the requirement `{package} = "
+            )) || stderr.contains(&format!("no matching package named `{package}` found"))
+        })
 }
 
 fn release_check() -> Result<(), Box<dyn std::error::Error>> {
@@ -173,7 +187,7 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
             continue;
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("failed to select a version for the requirement `incurs") {
+        if missing_release_dependency(&stderr, &declared) {
             deferred.push(package);
             continue;
         }
@@ -186,7 +200,7 @@ fn release_check() -> Result<(), Box<dyn std::error::Error>> {
     }
     if !deferred.is_empty() {
         eprintln!(
-            "deferred until incurs is published: {}",
+            "deferred until release dependencies are published: {}",
             deferred.join(", ")
         );
     }
@@ -657,5 +671,34 @@ mod tests {
             drifted.is_empty(),
             "the release list disagrees with the manifests: {drifted:?}"
         );
+    }
+
+    #[test]
+    fn missing_release_dependencies_are_distinct_from_other_package_errors() {
+        let declared = vec![
+            (
+                super::Workspace::Root,
+                "incurs".to_owned(),
+                "0.12.0".to_owned(),
+            ),
+            (
+                super::Workspace::Root,
+                "incurs-mcp-apps".to_owned(),
+                "0.1.0".to_owned(),
+            ),
+        ];
+        for diagnostic in [
+            "failed to select a version for the requirement `incurs = \"^0.12.0\"`\nlocation searched: crates.io index",
+            "no matching package named `incurs-mcp-apps` found\nlocation searched: crates.io index",
+        ] {
+            assert!(super::missing_release_dependency(diagnostic, &declared));
+        }
+        for diagnostic in [
+            "no matching package named `serde` found\nlocation searched: crates.io index",
+            "no matching package named `incurs-unknown` found\nlocation searched: crates.io index",
+            "no matching package named `incurs-mcp-apps` found\nlocation searched: /missing/local/path",
+        ] {
+            assert!(!super::missing_release_dependency(diagnostic, &declared));
+        }
     }
 }

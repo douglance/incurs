@@ -157,5 +157,10 @@
 
 ## Git Conventions
 
+- **Self test dependencies stay local** — when a crate enables its own testing feature through a dev-dependency with `path = "."`, omit the version. Cargo otherwise resolves the unpublished self-version from the registry during packaging. Keep versions on ordinary dependencies.
+
+- **Archive deferral is limited to release dependencies** — before publication, the release checker recognizes missing registry dependencies listed in its release catalog, including newly introduced package names. External dependency errors and missing local paths remain failures. After publishing the dependencies, rerun archive verification and require no deferred packages.
+
+
 - **Conventional commits** — use `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:` prefixes. Scope is optional (e.g. `feat(parser): add array coercion`).
 - **Release archives are fresh, locked, and version-aligned** — bump publishable package manifests, their internal dependency requirements, lockfiles, and `xtask release-check` together. The release checker must remove each expected archive before packaging and package with `--locked` so stale archives cannot satisfy verification and release checks cannot rewrite tracked lockfiles.
