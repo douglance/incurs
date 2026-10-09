@@ -204,7 +204,17 @@ where
 
 /// Empty JSON-RPC result.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub struct EmptyResult {}
+#[serde(deny_unknown_fields)]
+pub struct EmptyResult {
+    /// MCP result metadata returned by the host.
+    #[serde(
+        rename = "_meta",
+        default,
+        deserialize_with = "deserialize_result_metadata",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub meta: Option<Map<String, Value>>,
+}
 
 /// Message helpers for one OpenAI MCP App instance.
 #[derive(Clone)]
@@ -438,6 +448,8 @@ where
         let result: OpenAiRawResourceReadResult =
             decode_validated(incurs_mcp_apps::RESOURCE_READ_METHOD, result)?;
         Ok(OpenAiResourceReadResult {
+            meta: result.meta,
+            other: result.other,
             contents: result
                 .contents
                 .into_iter()
@@ -511,6 +523,9 @@ pub struct OpenAiResourceReadMetadata {
         skip_serializing_if = "Option::is_none"
     )]
     pub openai_resource: Option<OpenAiResourceReadPreference>,
+    /// Other MCP metadata keys retained during representation overrides.
+    #[serde(default, flatten)]
+    pub other: Map<String, Value>,
 }
 
 /// OpenAI resource read preference.
@@ -566,28 +581,59 @@ pub struct OpenAiResourceContent {
     /// Parsed OpenAI metadata.
     #[serde(skip)]
     pub openai_metadata: Option<OpenAiResourceMetadata>,
+    /// Additional resource content fields supplied by the host.
+    #[serde(default, flatten)]
+    pub other: Map<String, Value>,
 }
 
 impl TryFrom<OpenAiRawResourceContent> for OpenAiResourceContent {
     type Error = AppError;
 
-    fn try_from(content: OpenAiRawResourceContent) -> AppResult<Self> {
-        if let Some(meta) = &content.meta {
-            validate_openai_schema("OpenAIResourceContentMetadataSchema", meta.clone())?;
+    fn try_from(mut content: OpenAiRawResourceContent) -> AppResult<Self> {
+        let text = content
+            .other
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let blob = content
+            .other
+            .get("blob")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if text.is_some() {
+            content.other.remove("text");
         }
-        let openai_metadata = content
-            .meta
+        if blob.is_some() {
+            content.other.remove("blob");
+        }
+        if text.is_none() && blob.is_none() {
+            return Err(AppError::validation(
+                "contents",
+                "resource content requires text or blob",
+            ));
+        }
+        if text.is_none() && blob.as_ref().is_some_and(|blob| !valid_resource_blob(blob)) {
+            return Err(AppError::validation(
+                "blob",
+                "resource blob must be valid base64",
+            ));
+        }
+        let meta = content.meta.map(Value::Object);
+        let openai_metadata = meta
             .as_ref()
-            .and_then(|meta| meta.get(OPENAI_RESOURCE_METADATA_KEY))
-            .cloned()
+            .and_then(|value| {
+                validate_openai_schema("OpenAIResourceContentMetadataSchema", value.clone()).ok()
+            })
+            .and_then(|value| value.get(OPENAI_RESOURCE_METADATA_KEY).cloned())
             .and_then(|value| serde_json::from_value(value).ok());
         Ok(Self {
             uri: content.uri,
             mime_type: content.mime_type,
-            text: content.text,
-            blob: content.blob,
-            meta: content.meta,
+            text,
+            blob,
+            meta,
             openai_metadata,
+            other: content.other,
         })
     }
 }
@@ -597,12 +643,31 @@ impl TryFrom<OpenAiRawResourceContent> for OpenAiResourceContent {
 pub struct OpenAiResourceReadResult {
     /// Returned resource contents.
     pub contents: Vec<OpenAiResourceContent>,
+    /// MCP result metadata returned by the host.
+    #[serde(
+        rename = "_meta",
+        default,
+        deserialize_with = "deserialize_result_metadata",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub meta: Option<Map<String, Value>>,
+    /// Additional MCP resource read result fields.
+    #[serde(default, flatten)]
+    pub other: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenAiRawResourceReadResult {
     contents: Vec<OpenAiRawResourceContent>,
+    #[serde(
+        rename = "_meta",
+        default,
+        deserialize_with = "deserialize_result_metadata"
+    )]
+    meta: Option<Map<String, Value>>,
+    #[serde(default, flatten)]
+    other: Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -611,12 +676,38 @@ struct OpenAiRawResourceContent {
     uri: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mime_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    blob: Option<String>,
     #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
-    meta: Option<Value>,
+    #[serde(deserialize_with = "deserialize_result_metadata")]
+    meta: Option<Map<String, Value>>,
+    #[serde(default, flatten)]
+    other: Map<String, Value>,
+}
+
+fn deserialize_result_metadata<'de, D>(
+    deserializer: D,
+) -> Result<Option<Map<String, Value>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Map::<String, Value>::deserialize(deserializer).map(Some)
+}
+
+fn valid_resource_blob(blob: &str) -> bool {
+    let mut bytes = blob
+        .bytes()
+        .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0c))
+        .collect::<Vec<_>>();
+    if bytes.len() % 4 == 0 {
+        for _ in 0..2 {
+            if bytes.last() == Some(&b'=') {
+                bytes.pop();
+            }
+        }
+    }
+    bytes.len() % 4 != 1
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/'))
 }
 
 /// Options for writing resource content.
@@ -716,6 +807,17 @@ pub struct ResourceUpdatedNotification {
 pub struct ResourceUpdatedParams {
     /// Updated resource URI.
     pub uri: String,
+    /// MCP metadata delivered with the notification.
+    #[serde(
+        rename = "_meta",
+        default,
+        deserialize_with = "deserialize_result_metadata",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub meta: Option<Map<String, Value>>,
+    /// Additional notification parameters.
+    #[serde(default, flatten)]
+    pub other: Map<String, Value>,
 }
 
 fn validate_openai_schema(schema: &'static str, value: Value) -> AppResult<Value> {

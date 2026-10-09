@@ -142,7 +142,7 @@ async fn file_and_message_helpers_preserve_openai_wire_methods_and_defaults() {
     let openai = OpenAiAppExtensions::new(app);
 
     let opened: EmptyResult = openai.files().unwrap().open("/tmp/a.txt").await.unwrap();
-    assert_eq!(opened, EmptyResult {});
+    assert_eq!(opened, EmptyResult::default());
     let sent = openai
         .message()
         .unwrap()
@@ -324,7 +324,7 @@ async fn resource_write_validation_rejects_invalid_blob_before_transport() {
 }
 
 #[tokio::test]
-async fn response_validation_rejects_invalid_openai_metadata_and_write_results() {
+async fn response_validation_keeps_raw_metadata_and_rejects_invalid_write_results() {
     let (app, transport) = app_with_caps(&[OPENAI_RESOURCE_METADATA_KEY, OPENAI_MODEL_CONTEXT_KEY]);
     transport.handle(
         incurs_mcp_apps::RESOURCE_READ_METHOD,
@@ -344,7 +344,7 @@ async fn response_validation_rejects_invalid_openai_metadata_and_write_results()
     );
     let openai = OpenAiAppExtensions::new(app);
 
-    let read_error = openai
+    let read = openai
         .resources()
         .unwrap()
         .read(
@@ -356,11 +356,11 @@ async fn response_validation_rejects_invalid_openai_metadata_and_write_results()
             RequestOptions::default(),
         )
         .await
-        .unwrap_err();
-    assert!(
-        read_error
-            .to_string()
-            .contains("OpenAIResourceContentMetadataSchema")
+        .unwrap();
+    assert!(read.contents[0].openai_metadata.is_none());
+    assert_eq!(
+        read.contents[0].meta.as_ref().unwrap()["openai/resource"]["etag"],
+        Value::Null
     );
 
     let write_error = openai
@@ -420,5 +420,102 @@ async fn resource_write_numeric_limits_retain_host_number_values() {
             .await
             .unwrap();
         assert_eq!(serde_json::to_value(result).unwrap()["maxBytes"], max_bytes);
+    }
+}
+
+#[tokio::test]
+async fn app_helpers_preserve_mcp_result_and_request_metadata() {
+    let (app, transport) = app_with_caps(&["openai/files", "openai/resource"]);
+    transport.handle(
+        "openai/files/open",
+        incurs_mcp_apps::value_handler(|_| Ok(json!({"_meta":{"trace":"file-open"}}))),
+    );
+    transport.handle(
+        "resources/read",
+        incurs_mcp_apps::value_handler(|params| {
+            assert_eq!(params["_meta"]["trace"], "outbound");
+            assert_eq!(params["_meta"]["openai/resource"]["representation"], "text");
+            Ok(json!({
+                "contents":[{"uri":"file://a","text":"hello","_meta":{"openai/resource":{"etag":"e1"}}}],
+                "_meta":{"trace":"resource-read"}
+            }))
+        }),
+    );
+    let openai = OpenAiAppExtensions::new(app);
+    let opened = openai.files().unwrap().open("/file").await.unwrap();
+    assert_eq!(
+        serde_json::to_value(opened).unwrap()["_meta"]["trace"],
+        "file-open"
+    );
+    let params: OpenAiResourceReadParams = serde_json::from_value(json!({
+        "uri":"file://a","_meta":{"trace":"outbound","openai/resource":{"representation":"blob"}}
+    }))
+    .unwrap();
+    let read = openai
+        .resources()
+        .unwrap()
+        .read(
+            OpenAiResourceReadParams {
+                representation: Some(OpenAiResourceRepresentation::Text),
+                ..params
+            },
+            RequestOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(read).unwrap()["_meta"]["trace"],
+        "resource-read"
+    );
+}
+
+#[tokio::test]
+async fn app_resource_read_rejects_contents_without_text_or_blob() {
+    let (app, transport) = app_with_caps(&["openai/resource"]);
+    transport.handle(
+        "resources/read",
+        incurs_mcp_apps::value_handler(|_| Ok(json!({"contents":[{"uri":"file://a"}]}))),
+    );
+    let error = OpenAiAppExtensions::new(app)
+        .resources()
+        .unwrap()
+        .read(
+            OpenAiResourceReadParams {
+                uri: "file://a".into(),
+                meta: None,
+                representation: None,
+            },
+            RequestOptions::default(),
+        )
+        .await;
+    assert!(error.is_err(), "resource contents require text or blob");
+}
+
+#[tokio::test]
+async fn resource_payload_selection_retains_loose_alternative_fields() {
+    for content in [
+        json!({"uri":"file://a","text":"hello","blob":true}),
+        json!({"uri":"file://a","blob":"AA","text":42}),
+    ] {
+        let (app, transport) = app_with_caps(&["openai/resource"]);
+        let supplied = content.clone();
+        transport.handle(
+            "resources/read",
+            incurs_mcp_apps::value_handler(move |_| Ok(json!({"contents":[supplied.clone()]}))),
+        );
+        let result = OpenAiAppExtensions::new(app)
+            .resources()
+            .unwrap()
+            .read(
+                OpenAiResourceReadParams {
+                    uri: "file://a".into(),
+                    meta: None,
+                    representation: None,
+                },
+                RequestOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(serde_json::to_value(&result.contents[0]).unwrap(), content);
     }
 }

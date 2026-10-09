@@ -248,6 +248,7 @@ addEventListener('message', async event => {
         break;
       case 'openai/files/open':
         requireHost(params.path === '/projects/part.step', 'file path wire mismatch');
+        result = {_meta:{trace:'file-open'}};
         break;
       case 'ui/message':
         requireHost(params.role === 'user', 'wrong role');
@@ -270,11 +271,11 @@ addEventListener('message', async event => {
         requireHost(params._meta['openai/resource'].representation === 'text', 'representation override lost');
         requireHost(params.representation === undefined, 'convenience representation leaked');
         result = {contents:[{uri:'file://a', text:'hello', mimeType:'text/plain',
-          _meta:{'openai/resource':{etag:'e1',writable:true}}}]};
+          _meta:{'openai/resource':{etag:'e1',writable:true}}}],_meta:{trace:'resource-read'},hostField:'retained'};
         break;
       case 'resources/subscribe':
         requireHost(params.uri === 'file://watched', 'subscribe URI mismatch');
-        notify('notifications/resources/updated', {uri:'file://watched'});
+        notify('notifications/resources/updated', {uri:'file://watched',_meta:{trace:'resource-update'}});
         break;
       case 'resources/unsubscribe':
         requireHost(params.uri === 'file://watched', 'unsubscribe URI mismatch');
@@ -447,7 +448,8 @@ async fn run_smoke_inner() -> AppResult<Value> {
     require(openai.deep_link().current().is_some_and(|link| link.url == "/updated"), "deep link update missing")?;
 
     let files = openai.files().unwrap();
-    files.open("/projects/part.step").await?;
+    let opened = files.open("/projects/part.step").await?;
+    require(serde_json::to_value(opened).unwrap()["_meta"]["trace"] == "file-open", "file metadata lost")?;
     require(files.open("").await.is_err(), "empty file path reached transport")?;
     prove_message_defaults_send_false_and_cancel(&transport, &openai).await?;
     prove_model_context(&openai).await?;
@@ -484,7 +486,7 @@ async fn run_smoke_inner() -> AppResult<Value> {
         "deepLinkUpdates": true, "messageDefaults": true, "sendFalseRejectedBeforePost": true,
         "requestCancellation": true, "requestTimeout": true, "disposePending": true,
         "modelContext": true, "resources": true, "resourceNotifications": true,
-        "emptyBlob": true, "cursorStyle": true
+        "emptyBlob": true, "cursorStyle": true, "metadataPreservation": true
     }))
 }
 
@@ -594,15 +596,17 @@ async fn prove_resources(
         uri: "file://a".into(),
         meta: Some(OpenAiResourceReadMetadata { openai_resource: Some(OpenAiResourceReadPreference {
             representation: Some(OpenAiResourceRepresentation::Blob),
-        }) }),
+        }), ..OpenAiResourceReadMetadata::default() }),
         representation: Some(OpenAiResourceRepresentation::Text),
     }, short_options()).await?;
     require(read.contents[0].text.as_deref() == Some("hello"), "resource text mismatch")?;
+    let value = serde_json::to_value(&read).unwrap();
+    require(value["_meta"]["trace"] == "resource-read" && value["hostField"] == "retained", "read result fields lost")?;
     require(read.contents[0].openai_metadata.as_ref().is_some_and(|meta| meta.etag.as_deref() == Some("e1") && meta.writable == Some(true)), "resource metadata mismatch")?;
     let seen = Rc::new(Cell::new(0));
     let seen_handler = seen.clone();
     let registration = resources.add_update_handler(move |notification| {
-        if notification.method == "notifications/resources/updated" && notification.params.uri == "file://watched" {
+        if notification.method == "notifications/resources/updated" && notification.params.uri == "file://watched" && notification.params.meta.as_ref().is_some_and(|meta| meta.get("trace") == Some(&json!("resource-update"))) {
             seen_handler.set(seen_handler.get() + 1);
         } else {
             seen_handler.set(100);

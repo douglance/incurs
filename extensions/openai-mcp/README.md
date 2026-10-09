@@ -49,7 +49,7 @@ python3 extensions/openai-mcp/parity/check.py
 python3 extensions/openai-mcp/parity/differential.py
 python3 extensions/openai-mcp/parity/form-differential.py
 python3 extensions/openai-mcp/parity/helper-differential.py
-(cd extensions/openai-mcp/parity && node --import tsx server-oracle.mjs)
+(cd extensions/openai-mcp/parity && node --import tsx server-oracle.mjs && node --import tsx app-oracle.mjs)
 python3 extensions/openai-mcp/crates/incurs-openai-mcp/tests/native_stdio_probe.py
 cargo test --manifest-path extensions/openai-mcp/Cargo.toml --workspace --locked
 cargo check --manifest-path extensions/openai-mcp/Cargo.toml --workspace --target wasm32-unknown-unknown --locked

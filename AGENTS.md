@@ -50,6 +50,8 @@
 
 ## Testing Conventions
 
+- **App resource wrappers retain MCP fields** — preserve request and result metadata, loose resource fields, and notification parameters across typed models. Validate the selected text or blob payload, and keep unparsed OpenAI decorations in raw metadata without blocking otherwise valid resource content. Keep independent literal controls for metadata overlays, optional decorations, and resource payload alternatives.
+
 - **Portable peer responses require trusted session ownership** — the host supplies an authenticated client-session scope for the initiating call and peer responses. Request IDs and caller-supplied headers establish no authority. Pin anonymous and cross-session rejection plus owning-session completion through both the core server and Axum adapter.
 
 - **Browser JSON uses the JSON codec** — arbitrary-precision serde numbers expose an internal representation to general Serde serializers. Encode the frame with serde_json before converting it to a JavaScript object, and test outgoing nested numbers and metadata against an independent JavaScript host with arbitrary precision enabled.

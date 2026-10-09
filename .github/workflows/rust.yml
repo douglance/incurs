@@ -209,7 +209,9 @@ jobs:
       - name: OpenAI server reference controls
         if: matrix.workspace == 'openai-mcp'
         working-directory: extensions/openai-mcp/parity
-        run: node --import tsx server-oracle.mjs
+        run: |
+          node --import tsx server-oracle.mjs
+          node --import tsx app-oracle.mjs
 
       - name: OpenAI browser tooling
         if: matrix.workspace == 'openai-mcp'
