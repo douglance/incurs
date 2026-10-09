@@ -4,10 +4,10 @@
   "compatibility_date": "2026-06-11",
   "durable_objects": {
     "bindings": [
-      { "name": "SUBSCRIPTIONS", "class_name": "SubscriptionDelivery" }
+      { "name": "SUBSCRIPTIONS", "class_name": "ProofSubscriptionDelivery" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["SubscriptionDelivery"] }
+    { "tag": "v1", "new_sqlite_classes": ["ProofSubscriptionDelivery"] }
   ]
 }
