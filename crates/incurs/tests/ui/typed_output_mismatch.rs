@@ -8,7 +8,7 @@ struct Expected {
 }
 
 fn main() {
-    let _ = CommandDef::typed::<(), (), (), Expected, _, _>("bad", |_ctx| async move {
-        TypedResult::ok("wrong output".to_string())
+    let _ = CommandDef::typed::<(), (), (), Expected, _, _>("bad", |_ctx| {
+        std::future::ready(TypedResult::ok("wrong output".to_string()))
     });
 }

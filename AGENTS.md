@@ -147,6 +147,8 @@
 - **Packaged consumer proof uses the archive** — point the consumer at the package extraction directory, not the original generated source. Locate the toolchain through Rustup so the same gate runs in CI; a developer-specific executable path is not portable evidence.
 
 - **SDK proof starts from OpenAPI** — build, package, and invoke a generated consumer from a real source fixture. Hand-built contracts did not expose inline request-body generation failures.
+- **Parallel verification preserves other owners' edits** - never restore files outside the assigned slice to make a tree look clean. Unexpected changes may be deliberate work by another actor; inspect the journal and coordinate with the owner. Verify the actual source fingerprint after a mutation and before its gate.
+
 - **Mutation probes change implementation** — keep test expectations unchanged, verify the source edit, and coordinate the mutation window with other verification work. Restore the implementation before reporting the final gate.
 
 - **Bounded logs are excerpts** — read a file separately or inspect its final lines before concluding content was removed. A combined source-and-manifest log cutoff once made intact Cargo dependencies look missing.
