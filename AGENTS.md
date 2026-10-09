@@ -50,6 +50,10 @@
 
 ## Testing Conventions
 
+- **Subscription replay and live delivery form one boundary** - register and buffer live changes before replay, then reconcile the overlap by stable source identity. A deterministic append during replay must reach the subscriber exactly once.
+- **Subscriber limits bound pending data** - account for aggregate queued events and bytes, release the accounting when a reader consumes data, and clean up timers and listeners on overflow, cancellation, and error. Prove both a healthy reader beyond the event limit and a blocked reader that reaches the limit.
+- **Subscription proof uses actual resource data** - a successful subscribe response, a static HTML marker, or an event metadata display does not establish delivery. Read authoritative product state, change it through an independent writer, and verify the same rendered view updates.
+
 - **App resource wrappers retain MCP fields** — preserve request and result metadata, loose resource fields, and notification parameters across typed models. Validate the selected text or blob payload, and keep unparsed OpenAI decorations in raw metadata without blocking otherwise valid resource content. Keep independent literal controls for metadata overlays, optional decorations, and resource payload alternatives.
 
 - **Portable peer responses require trusted session ownership** — the host supplies an authenticated client-session scope for the initiating call and peer responses. Request IDs and caller-supplied headers establish no authority. Pin anonymous and cross-session rejection plus owning-session completion through both the core server and Axum adapter.
@@ -143,6 +147,8 @@
 - **Packaged consumer proof uses the archive** — point the consumer at the package extraction directory, not the original generated source. Locate the toolchain through Rustup so the same gate runs in CI; a developer-specific executable path is not portable evidence.
 
 - **SDK proof starts from OpenAPI** — build, package, and invoke a generated consumer from a real source fixture. Hand-built contracts did not expose inline request-body generation failures.
+- **Parallel verification preserves other owners' edits** - never restore files outside the assigned slice to make a tree look clean. Unexpected changes may be deliberate work by another actor; inspect the journal and coordinate with the owner. Verify the actual source fingerprint after a mutation and before its gate.
+
 - **Mutation probes change implementation** — keep test expectations unchanged, verify the source edit, and coordinate the mutation window with other verification work. Restore the implementation before reporting the final gate.
 
 - **Bounded logs are excerpts** — read a file separately or inspect its final lines before concluding content was removed. A combined source-and-manifest log cutoff once made intact Cargo dependencies look missing.

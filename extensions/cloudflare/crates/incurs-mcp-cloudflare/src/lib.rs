@@ -8,6 +8,7 @@ use incurs_mcp_protocol::{McpLifecycleFamily, McpVersion, known_standard, known_
 use serde_json::{Map, Value, json};
 
 mod buffered_body;
+pub mod subscriptions;
 #[cfg(target_arch = "wasm32")]
 mod workers_http;
 #[cfg(target_arch = "wasm32")]

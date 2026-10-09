@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     McpDiscovery, McpResourceReadRequest, McpResourceRegistry, McpResourceRequest,
-    McpResourceSubscriptionRequest, McpServeOptions, McpToolFilter,
+    McpResourceSubscriptionRequest, McpServeOptions, McpSubscriptionListenRequest, McpToolFilter,
 };
 use crate::cli::ConfigOptions;
 use crate::command::{McpPeer, McpResultContent};
@@ -802,6 +802,11 @@ impl ToolServer {
         Value::Object(capabilities)
     }
 
+    /// Returns whether the portable server can serve modern subscription streams.
+    pub(crate) fn subscription_listen_supported(&self) -> bool {
+        self.resources.listen.is_some()
+    }
+
     /// Returns the resource entries advertised by this server.
     pub(crate) fn list_resources(&self) -> Value {
         let resources = self
@@ -876,6 +881,31 @@ impl ToolServer {
             })
             .await?;
         Ok(json!({ "resultType": "complete" }))
+    }
+
+    /// Opens one modern `subscriptions/listen` stream.
+    pub(crate) async fn listen_subscriptions(
+        &self,
+        notifications: Value,
+        resource_uris: Vec<String>,
+        cursor: Option<String>,
+        context: ResourceContext,
+    ) -> Result<futures::stream::BoxStream<'static, Value>, super::McpResourceError> {
+        let Some(handler) = &self.resources.listen else {
+            return Err(super::McpResourceError {
+                code: -32601,
+                message: "Subscriptions listen is not supported".to_string(),
+                data: None,
+            });
+        };
+        handler
+            .listen(McpSubscriptionListenRequest {
+                notifications,
+                resource_uris,
+                cursor,
+                context: context.into_request(),
+            })
+            .await
     }
 
     /// Handles one `tools/call` request.
@@ -1026,6 +1056,10 @@ impl ToolServer {
 /// Per-call metadata for an MCP resource request.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ResourceContext {
+    /// JSON-RPC request id, when the transport exposes one.
+    pub(crate) request_id: Option<Value>,
+    /// Trusted transport request metadata.
+    pub(crate) request: Option<crate::command::RequestContext>,
     /// Selected protocol version.
     pub(crate) protocol_version: Option<String>,
     /// Complete request `_meta` object.
@@ -1043,6 +1077,8 @@ pub(crate) struct ResourceContext {
 impl ResourceContext {
     fn into_request(self) -> McpResourceRequest {
         McpResourceRequest {
+            request_id: self.request_id,
+            request: self.request,
             protocol_version: self.protocol_version,
             request_meta: self.request_meta,
             client_capabilities: self.client_capabilities,

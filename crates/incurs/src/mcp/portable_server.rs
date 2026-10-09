@@ -44,6 +44,7 @@ const KNOWN_VERSIONS: [&str; 5] = [
 ];
 const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
 const META_CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+const META_SUBSCRIPTION_ID: &str = "io.modelcontextprotocol/subscriptionId";
 
 const INVALID_REQUEST: i64 = -32600;
 const METHOD_NOT_FOUND: i64 = -32601;
@@ -445,6 +446,16 @@ impl McpHttpServer {
             method: request.method.clone(),
             path: request.path.clone(),
         };
+        if matches!(client_request.kind, Kind::SubscriptionsListen { .. }) {
+            let protocol_version = client_request
+                .meta_protocol_version()
+                .unwrap_or_else(|| peer_version.clone());
+            if protocol_version.as_str() >= MODERN {
+                return Ok(self
+                    .subscription_response(*client_request, peer_version, Some(transport))
+                    .await);
+            }
+        }
         let mut stream = MessageStream::spawn(
             self.clone(),
             *client_request,
@@ -617,16 +628,126 @@ impl McpHttpServer {
         json!({ "name": self.tools.server_name, "version": self.tools.server_version })
     }
 
+    fn capabilities(&self) -> Value {
+        let mut capabilities = self.tools.capabilities();
+        if self.tools.subscription_listen_supported()
+            && let Some(object) = capabilities.as_object_mut()
+        {
+            object.insert("subscriptions".to_string(), json!({ "listen": true }));
+        }
+        capabilities
+    }
+
     fn initialize_result(&self, protocol_version: &str) -> Value {
         let mut result = json!({
             "protocolVersion": protocol_version,
-            "capabilities": self.tools.capabilities(),
+            "capabilities": self.capabilities(),
             "serverInfo": self.server_info(),
         });
         if let Some(instructions) = &self.tools.instructions {
             result["instructions"] = json!(instructions);
         }
         result
+    }
+
+    async fn subscription_response(
+        &self,
+        request: ClientRequest,
+        peer_version: String,
+        transport: Option<crate::command::RequestContext>,
+    ) -> McpHttpResponse {
+        let id = request.id.clone();
+        let requested = request.meta_protocol_version();
+        let protocol_version = requested.clone().unwrap_or(peer_version);
+        let supported = self.supported_versions();
+        if let Some(requested) = &requested
+            && !supported.contains(requested)
+        {
+            let message = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": unsupported_protocol_version(requested, &supported),
+            });
+            return McpHttpResponse::json(http_status(&message), &message);
+        }
+        if protocol_version.as_str() < MODERN {
+            let message = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": error(METHOD_NOT_FOUND, "subscriptions/listen requires protocol version 2026-07-28 or newer"),
+            });
+            return McpHttpResponse::json(http_status(&message), &message);
+        }
+        let mut missing = Vec::new();
+        if requested.is_none() {
+            missing.push(META_PROTOCOL_VERSION);
+        }
+        if !request
+            .meta
+            .get(META_CLIENT_CAPABILITIES)
+            .is_some_and(Value::is_object)
+        {
+            missing.push(META_CLIENT_CAPABILITIES);
+        }
+        if !missing.is_empty() {
+            let message = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": error(
+                    INVALID_PARAMS,
+                    format!(
+                        "request _meta is missing or has malformed required fields: {}",
+                        missing.join(", ")
+                    ),
+                ),
+            });
+            return McpHttpResponse::json(http_status(&message), &message);
+        }
+        let context = resource_context(&request, &protocol_version, transport.clone(), None);
+        let Kind::SubscriptionsListen {
+            notifications,
+            resource_uris,
+            cursor,
+        } = request.kind
+        else {
+            return McpHttpResponse::json(
+                500,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": error(INVALID_REQUEST, "request was not subscriptions/listen"),
+                }),
+            );
+        };
+        let honored = honored_subscription_filter(&notifications);
+        match self
+            .tools
+            .listen_subscriptions(notifications, resource_uris, cursor, context)
+            .await
+        {
+            Ok(stream) => {
+                let ack = subscription_acknowledged(&id, &honored);
+                let final_message = subscription_listen_result(&id);
+                let notification_id = id.clone();
+                let notification_filter = honored.clone();
+                let stream = futures::stream::once(async move { ack })
+                    .chain(stream.filter_map(move |message| {
+                        let id = notification_id.clone();
+                        let honored = notification_filter.clone();
+                        async move { subscription_notification(message, &id, &honored) }
+                    }))
+                    .chain(futures::stream::once(async move { final_message }));
+                McpHttpResponse::event_stream(stream)
+            }
+            Err(subscription_error) => {
+                let message = json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": resource_error(subscription_error),
+                });
+                McpHttpResponse::json(http_status(&message), &message)
+            }
+        }
     }
 
     async fn dispatch_result(
@@ -714,7 +835,7 @@ impl McpHttpServer {
                 let mut result = json!({
                     "resultType": "complete",
                     "supportedVersions": supported,
-                    "capabilities": self.tools.capabilities(),
+                    "capabilities": self.capabilities(),
                     "ttlMs": 0,
                     "cacheScope": "private",
                     "_meta": { "io.modelcontextprotocol/serverInfo": self.server_info() },
@@ -737,7 +858,12 @@ impl McpHttpServer {
                 self.tools
                     .read_resource(
                         uri.clone(),
-                        resource_context(&request, &protocol_version, Some(connected_peer.clone())),
+                        resource_context(
+                            &request,
+                            &protocol_version,
+                            transport.clone(),
+                            Some(connected_peer.clone()),
+                        ),
                     )
                     .await
                     .map_err(resource_error)?,
@@ -747,7 +873,12 @@ impl McpHttpServer {
                     .set_resource_subscription(
                         uri.clone(),
                         true,
-                        resource_context(&request, &protocol_version, Some(connected_peer.clone())),
+                        resource_context(
+                            &request,
+                            &protocol_version,
+                            transport.clone(),
+                            Some(connected_peer.clone()),
+                        ),
                     )
                     .await
                     .map_err(resource_error)?,
@@ -757,7 +888,12 @@ impl McpHttpServer {
                     .set_resource_subscription(
                         uri.clone(),
                         false,
-                        resource_context(&request, &protocol_version, Some(connected_peer.clone())),
+                        resource_context(
+                            &request,
+                            &protocol_version,
+                            transport.clone(),
+                            Some(connected_peer.clone()),
+                        ),
                     )
                     .await
                     .map_err(resource_error)?,
@@ -796,9 +932,11 @@ impl McpHttpServer {
             Kind::Ping
             | Kind::SetLevel
             | Kind::GetPrompt
-            | Kind::SubscriptionsListen
+            | Kind::SubscriptionsListen { .. }
             | Kind::Task
-            | Kind::Custom => return Err(error(METHOD_NOT_FOUND, request.method)),
+            | Kind::Custom => {
+                return Err(error(METHOD_NOT_FOUND, request.method));
+            }
         };
         if !modern_result && result.get("resultType") == Some(&json!("input_required")) {
             return Err(error(
@@ -832,9 +970,12 @@ fn resource_error(resource_error: super::McpResourceError) -> Value {
 fn resource_context(
     request: &ClientRequest,
     protocol_version: &str,
+    transport: Option<crate::command::RequestContext>,
     peer: Option<McpPeer>,
 ) -> ResourceContext {
     ResourceContext {
+        request_id: Some(request.id.clone()),
+        request: transport,
         protocol_version: Some(protocol_version.to_string()),
         request_meta: Some(Value::Object(request.meta.clone())),
         client_capabilities: request.meta.get(META_CLIENT_CAPABILITIES).cloned(),
@@ -842,6 +983,117 @@ fn resource_context(
         request_state: request.request_state.clone(),
         peer,
     }
+}
+
+fn subscription_resource_uris(notifications: &Value) -> Vec<String> {
+    notifications
+        .get("resourceSubscriptions")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn honored_subscription_filter(requested: &Value) -> Value {
+    let mut honored = Map::new();
+    for key in [
+        "toolsListChanged",
+        "promptsListChanged",
+        "resourcesListChanged",
+    ] {
+        if requested.get(key).and_then(Value::as_bool) == Some(true) {
+            honored.insert(key.to_string(), Value::Bool(true));
+        }
+    }
+    let resource_uris = subscription_resource_uris(requested);
+    if !resource_uris.is_empty() {
+        honored.insert("resourceSubscriptions".to_string(), json!(resource_uris));
+    }
+    Value::Object(honored)
+}
+
+fn subscription_acknowledged(subscription_id: &Value, honored: &Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/subscriptions/acknowledged",
+        "params": {
+            "_meta": { META_SUBSCRIPTION_ID: subscription_id },
+            "notifications": honored,
+        },
+    })
+}
+
+fn subscription_listen_result(subscription_id: &Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": subscription_id,
+        "result": {
+            "_meta": { META_SUBSCRIPTION_ID: subscription_id },
+            "resultType": "complete",
+        },
+    })
+}
+
+fn subscription_filter_allows(method: &str, params: Option<&Value>, honored: &Value) -> bool {
+    match method {
+        "notifications/tools/list_changed" => {
+            honored.get("toolsListChanged").and_then(Value::as_bool) == Some(true)
+        }
+        "notifications/prompts/list_changed" => {
+            honored.get("promptsListChanged").and_then(Value::as_bool) == Some(true)
+        }
+        "notifications/resources/list_changed" => {
+            honored.get("resourcesListChanged").and_then(Value::as_bool) == Some(true)
+        }
+        "notifications/resources/updated" => {
+            let Some(uri) = params
+                .and_then(|params| params.get("uri"))
+                .and_then(Value::as_str)
+            else {
+                return false;
+            };
+            honored
+                .get("resourceSubscriptions")
+                .and_then(Value::as_array)
+                .is_some_and(|uris| uris.iter().any(|item| item.as_str() == Some(uri)))
+        }
+        _ => false,
+    }
+}
+
+fn subscription_notification(
+    mut message: Value,
+    subscription_id: &Value,
+    honored: &Value,
+) -> Option<Value> {
+    let object = message.as_object_mut()?;
+    let method = object.get("method")?.as_str()?.to_string();
+    if method == "notifications/subscriptions/acknowledged" {
+        return None;
+    }
+    if !subscription_filter_allows(&method, object.get("params"), honored) {
+        return None;
+    }
+    object.insert("jsonrpc".to_string(), json!("2.0"));
+    let params = object
+        .entry("params".to_string())
+        .or_insert_with(|| json!({}));
+    let Value::Object(params) = params else {
+        return None;
+    };
+    let meta = params
+        .entry("_meta".to_string())
+        .or_insert_with(|| json!({}));
+    let Value::Object(meta) = meta else {
+        return None;
+    };
+    meta.insert(META_SUBSCRIPTION_ID.to_string(), subscription_id.clone());
+    Some(message)
 }
 
 fn params_with_meta(params: Option<Value>, meta: Option<Value>) -> Option<Value> {
@@ -1425,7 +1677,11 @@ enum Kind {
     ReadResource {
         uri: String,
     },
-    SubscriptionsListen,
+    SubscriptionsListen {
+        notifications: Value,
+        resource_uris: Vec<String>,
+        cursor: Option<String>,
+    },
     Subscribe {
         uri: String,
     },
@@ -1609,6 +1865,12 @@ fn is_optional(params: &Value, key: &str, check: fn(&Value) -> bool) -> bool {
         .is_none_or(|value| value.is_null() || check(value))
 }
 
+fn string_array(value: &Value) -> bool {
+    value
+        .as_array()
+        .is_some_and(|items| items.iter().all(Value::is_string))
+}
+
 fn is_implementation(value: &Value) -> bool {
     is_str(value, "name")
         && is_str(value, "version")
@@ -1702,10 +1964,38 @@ fn classify(method: &str, params: Option<&Value>) -> Kind {
             },
             _ => Kind::Custom,
         },
-        "subscriptions/listen" => with(
-            &|params| params.get("notifications").is_some_and(Value::is_object),
-            Kind::SubscriptionsListen,
-        ),
+        "subscriptions/listen" => match object {
+            Some(params)
+                if params.get("notifications").is_some_and(Value::is_object)
+                    && is_optional(params, "resourceUris", string_array)
+                    && is_optional(params, "cursor", Value::is_string) =>
+            {
+                let notifications = params["notifications"].clone();
+                let mut resource_uris = subscription_resource_uris(&notifications);
+                if resource_uris.is_empty() {
+                    resource_uris = params
+                        .get("resourceUris")
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(ToString::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                }
+                Kind::SubscriptionsListen {
+                    notifications,
+                    resource_uris,
+                    cursor: params
+                        .get("cursor")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string),
+                }
+            }
+            _ => Kind::Custom,
+        },
         "resources/subscribe" => match object {
             Some(params) if is_str(params, "uri") => Kind::Subscribe {
                 uri: params["uri"].as_str().unwrap_or_default().to_string(),
@@ -1748,10 +2038,12 @@ mod tests {
     use super::*;
     use crate::cli::Cli;
     use crate::command::{
-        CommandContext, CommandDef, CommandHandler, McpCommandOptions, McpPeerRequest,
+        CommandContext, CommandDef, CommandHandler, McpCommandOptions, McpPeerNotification,
+        McpPeerRequest,
     };
     use crate::mcp::{
-        McpDiscovery, McpResultMapper, McpResultMapping, McpServeOptions, McpToolFilter,
+        McpDiscovery, McpResourceRegistry, McpResourceSubscriptionHandler, McpResultMapper,
+        McpResultMapping, McpServeOptions, McpSubscriptionListenHandler, McpToolFilter,
     };
     use crate::output::CommandResult;
     use serde_json::json;
@@ -1954,6 +2246,13 @@ mod tests {
             messages.push(serde_json::from_str(payload).unwrap());
         }
         messages
+    }
+
+    fn full_json(response: McpHttpResponse) -> Value {
+        let McpHttpBody::Full(body) = response.body else {
+            panic!("full JSON response")
+        };
+        serde_json::from_slice(&body).unwrap()
     }
 
     #[test]
@@ -2325,6 +2624,255 @@ mod tests {
             .unwrap();
             assert_eq!(result["result"]["structuredContent"]["accepted"], "owner");
             assert!(server.pending_peer.lock().unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn modern_subscription_listener_advertises_and_streams_events() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("echo", EchoOptions).done(),
+                McpServeOptions {
+                    resources: McpResourceRegistry {
+                        listen: Some(McpSubscriptionListenHandler::new(|request| async move {
+                            assert_eq!(request.context.request_id, Some(json!("listen")));
+                            assert_eq!(
+                                request
+                                    .context
+                                    .request
+                                    .as_ref()
+                                    .map(|request| request.path.as_str()),
+                                Some("/mcp")
+                            );
+                            assert_eq!(request.resource_uris, vec!["memory://one".to_string()]);
+                            assert!(request.cursor.is_none());
+                            assert_eq!(
+                                request.notifications["resourceSubscriptions"],
+                                json!(["memory://one"])
+                            );
+                            assert_eq!(
+                                request
+                                    .context
+                                    .request_meta
+                                    .as_ref()
+                                    .and_then(|meta| meta.get(META_PROTOCOL_VERSION)),
+                                Some(&json!(MODERN))
+                            );
+                            Ok(futures::stream::iter([
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "notifications/resources/updated",
+                                    "params": { "uri": "memory://one" }
+                                }),
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "notifications/resources/updated",
+                                    "params": { "uri": "memory://two" }
+                                }),
+                                json!({
+                                    "jsonrpc": "2.0",
+                                    "method": "notifications/subscriptions/acknowledged",
+                                    "params": { "notifications": { "resourcesListChanged": true } }
+                                }),
+                            ])
+                            .boxed())
+                        })),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let discover = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "discover",
+                        "method": "server/discover",
+                        "params": {
+                            "_meta": {
+                                META_PROTOCOL_VERSION: MODERN,
+                                META_CLIENT_CAPABILITIES: {}
+                            }
+                        }
+                    }),
+                    MODERN,
+                    "server/discover",
+                    "",
+                ))
+                .await;
+            let messages = collect_event_stream(discover).await;
+            assert_eq!(
+                messages[0]["result"]["capabilities"]["subscriptions"]["listen"],
+                true
+            );
+
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "listen",
+                        "method": "subscriptions/listen",
+                        "params": {
+                            "notifications": { "resourceSubscriptions": ["memory://one"] },
+                            "_meta": {
+                                META_PROTOCOL_VERSION: MODERN,
+                                META_CLIENT_CAPABILITIES: {}
+                            }
+                        }
+                    }),
+                    MODERN,
+                    "subscriptions/listen",
+                    "",
+                ))
+                .await;
+            let messages = collect_event_stream(response).await;
+            assert_eq!(messages.len(), 3, "{messages:#?}");
+            assert_eq!(
+                messages[0]["method"],
+                "notifications/subscriptions/acknowledged"
+            );
+            assert_eq!(
+                messages[0]["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+                json!("listen")
+            );
+            assert_eq!(
+                messages[0]["params"]["notifications"],
+                json!({ "resourceSubscriptions": ["memory://one"] })
+            );
+            assert_eq!(messages[1]["method"], "notifications/resources/updated");
+            assert_eq!(messages[1]["params"]["uri"], "memory://one");
+            assert_eq!(
+                messages[1]["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+                json!("listen")
+            );
+            assert_eq!(messages[2]["id"], "listen");
+            assert_eq!(messages[2]["result"]["resultType"], "complete");
+            assert_eq!(
+                messages[2]["result"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
+                json!("listen")
+            );
+        });
+    }
+
+    #[test]
+    fn modern_subscription_listen_rejects_missing_request_meta() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("echo", EchoOptions).done(),
+                McpServeOptions {
+                    resources: McpResourceRegistry {
+                        listen: Some(McpSubscriptionListenHandler::new(|_| async move {
+                            Ok(futures::stream::empty().boxed())
+                        })),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "missing-meta",
+                        "method": "subscriptions/listen",
+                        "params": { "notifications": { "resourceSubscriptions": ["memory://one"] } }
+                    }),
+                    MODERN,
+                    "subscriptions/listen",
+                    "",
+                ))
+                .await;
+            assert_eq!(response.status, 400);
+            let body = full_json(response);
+            assert_eq!(body["id"], "missing-meta");
+            assert_eq!(body["error"]["code"], INVALID_PARAMS);
+        });
+    }
+
+    #[test]
+    fn legacy_protocol_routes_subscription_listen_through_ordinary_dispatch() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("echo", EchoOptions).done(),
+                McpServeOptions {
+                    resources: McpResourceRegistry {
+                        listen: Some(McpSubscriptionListenHandler::new(|_| async move {
+                            Ok(futures::stream::empty().boxed())
+                        })),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let response = server
+                .handle(post(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": "legacy-listen",
+                        "method": "subscriptions/listen",
+                        "params": { "notifications": { "resourceSubscriptions": ["memory://one"] } }
+                    }),
+                    "2025-11-25",
+                    "subscriptions/listen",
+                    "",
+                ))
+                .await;
+            assert_eq!(response.status, 200);
+            let messages = collect_event_stream(response).await;
+            assert_eq!(messages.len(), 1, "{messages:#?}");
+            assert_eq!(messages[0]["id"], "legacy-listen");
+            assert_eq!(messages[0]["error"]["code"], METHOD_NOT_FOUND);
+            assert_eq!(messages[0]["error"]["message"], "subscriptions/listen");
+        });
+    }
+
+    #[test]
+    fn legacy_resources_subscribe_can_emit_real_peer_updates() {
+        futures::executor::block_on(async {
+            let server = tool_server_with_options(
+                CommandDef::build("echo", EchoOptions).done(),
+                McpServeOptions {
+                    resources: McpResourceRegistry {
+                        subscribe: Some(McpResourceSubscriptionHandler::new(
+                            |request| async move {
+                                let peer = request.context.peer.expect("connected peer");
+                                peer.notify(McpPeerNotification {
+                                    method: "notifications/resources/updated".to_string(),
+                                    params: Some(json!({ "uri": request.uri })),
+                                    meta: None,
+                                })
+                                .await
+                                .expect("peer notification delivered");
+                                Ok(())
+                            },
+                        )),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let response = server
+                .handle_for_peer(
+                    post(
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": "subscribe",
+                            "method": "resources/subscribe",
+                            "params": { "uri": "memory://one" }
+                        }),
+                        "2025-11-25",
+                        "resources/subscribe",
+                        "memory://one",
+                    ),
+                    "legacy-resource-session",
+                )
+                .await;
+            let messages = collect_event_stream(response).await;
+            assert_eq!(messages.len(), 2, "{messages:#?}");
+            assert_eq!(messages[0]["method"], "notifications/resources/updated");
+            assert_eq!(messages[0]["params"]["uri"], "memory://one");
+            assert_eq!(messages[1]["id"], "subscribe");
+            assert_eq!(messages[1]["result"], json!({}));
         });
     }
 

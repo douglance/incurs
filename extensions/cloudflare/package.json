@@ -1,0 +1,18 @@
+{
+  "name": "@incurs/cloudflare",
+  "version": "0.9.0",
+  "description": "Cloudflare Workers adapters for Incurs subscriptions and MCP delivery",
+  "type": "module",
+  "license": "MIT",
+  "repository": "github:douglance/incurs",
+  "files": [
+    "subscriptions/worker.mjs",
+    "subscriptions/worker.d.ts"
+  ],
+  "exports": {
+    "./subscriptions-worker": {
+      "types": "./subscriptions/worker.d.ts",
+      "default": "./subscriptions/worker.mjs"
+    }
+  }
+}

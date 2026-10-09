@@ -28,6 +28,7 @@ pub mod parser;
 pub mod schema;
 pub mod skill;
 pub mod streaming;
+pub mod subscriptions;
 pub mod sync_mcp;
 pub mod sync_skills;
 pub mod tool;
