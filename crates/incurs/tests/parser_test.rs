@@ -1001,3 +1001,93 @@ fn double_dash_does_not_consume_options_that_precede_it() {
     assert_eq!(result.options["image"], json!("local"));
     assert_eq!(result.args["argv"], json!(["--image", "other"]));
 }
+
+#[test]
+fn no_prefix_literal_boolean_is_not_negation() {
+    let opts = ParseOptions {
+        options_fields: vec![make_field(
+            "no_enter",
+            FieldType::Boolean,
+            false,
+            None,
+            None,
+        )],
+        ..empty_opts()
+    };
+    for (tokens, expected) in [
+        (vec!["--no-enter"], true),
+        (vec!["--no-enter", "true"], true),
+        (vec!["--no-enter", "false"], false),
+        (vec!["--no-enter=false"], false),
+        (vec!["--no-no-enter"], false),
+    ] {
+        let result = parse(&argv(&tokens), &opts).unwrap();
+        assert_eq!(result.options["no_enter"], json!(expected));
+    }
+}
+
+#[test]
+fn no_prefix_literal_option_wins_when_positive_name_also_exists() {
+    let opts = ParseOptions {
+        options_fields: vec![
+            make_field("enter", FieldType::Boolean, false, Some(json!(true)), None),
+            make_field(
+                "no_enter",
+                FieldType::Boolean,
+                false,
+                Some(json!(false)),
+                None,
+            ),
+        ],
+        ..empty_opts()
+    };
+    let result = parse(&argv(&["--no-enter"]), &opts).unwrap();
+    assert_eq!(result.options["no_enter"], json!(true));
+    assert_eq!(result.options["enter"], json!(true));
+}
+
+#[test]
+fn no_prefix_literal_string_consumes_its_value() {
+    let opts = ParseOptions {
+        options_fields: vec![make_field("no_config", FieldType::String, true, None, None)],
+        ..empty_opts()
+    };
+    let result = parse(&argv(&["--no-config", "local.json"]), &opts).unwrap();
+    assert_eq!(result.options["no_config"], json!("local.json"));
+}
+
+#[test]
+fn no_prefix_globals_respect_declared_names() {
+    let fields = vec![
+        make_field("no_config", FieldType::String, true, None, None),
+        make_field("no_enter", FieldType::Boolean, false, None, None),
+    ];
+    let result = incurs::parser::parse_globals(
+        &argv(&["run", "--no-config", "local.json", "--no-enter"]),
+        &fields,
+        &HashMap::new(),
+    )
+    .unwrap();
+    assert_eq!(result.parsed["no_config"], json!("local.json"));
+    assert_eq!(result.parsed["no_enter"], json!(true));
+    assert_eq!(result.rest, argv(&["run"]));
+}
+
+#[test]
+fn no_prefix_globals_literal_wins_over_negation() {
+    let fields = vec![
+        make_field(
+            "recursive",
+            FieldType::Boolean,
+            false,
+            Some(json!(true)),
+            None,
+        ),
+        make_field("no_recursive", FieldType::Boolean, false, None, None),
+    ];
+    let result =
+        incurs::parser::parse_globals(&argv(&["--no-recursive"]), &fields, &HashMap::new())
+            .unwrap();
+    assert_eq!(result.parsed["no_recursive"], json!(true));
+    assert_eq!(result.parsed["recursive"], json!(true));
+}

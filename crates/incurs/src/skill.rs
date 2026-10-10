@@ -267,7 +267,7 @@ fn render_group(
         desc_parts.push(child_descs.join(", "));
     }
 
-    let description = if desc_parts.is_empty() {
+    let mut description = if desc_parts.is_empty() {
         format!("Run `{} --help` for usage details.", title)
     } else {
         format!(
@@ -276,12 +276,26 @@ fn render_group(
             title
         )
     };
+    if description.chars().count() > 1024 {
+        let suffix = "... See command details below.";
+        let mut summary: String = description
+            .chars()
+            .take(1024 - suffix.chars().count())
+            .collect();
+        if let Some(boundary) = summary.rfind(char::is_whitespace) {
+            summary.truncate(boundary);
+        }
+        description = format!("{}{suffix}", summary.trim_end());
+    }
 
     let slug = slugify(title);
     let fm = [
         "---".to_string(),
         format!("name: {}", slug),
-        format!("description: {}", description),
+        format!(
+            "description: {}",
+            serde_json::to_string(&description).expect("string serialization is infallible")
+        ),
         format!("requires_bin: {}", cli),
         format!("command: {}", title),
         "---".to_string(),
@@ -745,6 +759,90 @@ mod tests {
         assert_eq!(slugify("mycli deploy"), "mycli-deploy");
         assert_eq!(slugify("My CLI / Deploy"), "my-cli-deploy");
         assert_eq!(slugify("--edge--case--"), "edge-case");
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn generated_frontmatter_preserves_description_as_one_yaml_string() {
+        for description in [
+            "Operations newest first: every apply and undo",
+            "Read #literal without treating it as a comment",
+            "First line\nSecond line: \"quoted\"",
+            "[not, a, YAML, sequence]",
+        ] {
+            let mut cmd = make_cmd("log");
+            cmd.description = Some(description.to_string());
+            let rendered = render_group("griz", "griz log", &[cmd], &BTreeMap::new(), None);
+            let frontmatter = rendered.split("---").nth(1).unwrap();
+            let parsed: serde_yaml_ng::Value = serde_yaml_ng::from_str(frontmatter).unwrap();
+            assert_eq!(
+                parsed["description"].as_str(),
+                Some(format!("{description}. Run `griz log --help` for usage details.").as_str())
+            );
+        }
+    }
+
+    fn frontmatter_description(rendered: &str) -> String {
+        let value = rendered
+            .lines()
+            .find_map(|line| line.strip_prefix("description: "))
+            .unwrap();
+        serde_json::from_str(value).unwrap()
+    }
+
+    #[test]
+    fn generated_description_is_bounded_for_large_groups_without_losing_command_bodies() {
+        let commands: Vec<_> = (0..80)
+            .map(|i| {
+                let mut cmd = make_cmd(&format!("inspect command{i}"));
+                cmd.description = Some(format!(
+                    "Inspect command{i} with complete diagnostic details."
+                ));
+                cmd
+            })
+            .collect();
+        let files = split("audit", &commands, 1, &BTreeMap::new());
+        assert_eq!(files.len(), 1);
+        let rendered = &files[0].content;
+        assert!(frontmatter_description(rendered).chars().count() <= 1024);
+        let body = rendered.splitn(3, "---").nth(2).unwrap();
+        for command in &commands {
+            assert!(body.contains(&format!("# audit {}", command.name)));
+            assert!(body.contains(command.description.as_ref().unwrap()));
+        }
+    }
+
+    #[test]
+    fn generated_description_bounds_unicode_without_cutting_utf8() {
+        let mut cmd = make_cmd("inspect");
+        let original = "你好🦀".repeat(500);
+        cmd.description = Some(original.clone());
+        let rendered = render_group("audit", "audit inspect", &[cmd], &BTreeMap::new(), None);
+        let description = frontmatter_description(&rendered);
+        assert!(description.chars().count() <= 1024);
+        assert!(!description.contains('�'));
+        assert!(
+            rendered
+                .splitn(3, "---")
+                .nth(2)
+                .unwrap()
+                .contains(&original)
+        );
+    }
+
+    #[test]
+    fn generated_description_preserves_exact_limit_and_short_descriptions() {
+        let suffix = ". Run `audit inspect --help` for usage details.";
+        for length in [1, 1024 - suffix.chars().count()] {
+            let original = "é".repeat(length);
+            let mut cmd = make_cmd("inspect");
+            cmd.description = Some(original.clone());
+            let rendered = render_group("audit", "audit inspect", &[cmd], &BTreeMap::new(), None);
+            assert_eq!(
+                frontmatter_description(&rendered),
+                format!("{original}{suffix}")
+            );
+        }
     }
 
     #[test]

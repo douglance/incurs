@@ -486,8 +486,13 @@ fn portable_skill_file(
     let description = frontmatter
         .iter()
         .find_map(|line| line.strip_prefix("description: "))
-        .unwrap_or("Run this plugin workflow.");
-    validate_skill_description(&name, description)?;
+        .unwrap_or("\"Run this plugin workflow.\"");
+    let description: String =
+        serde_json::from_str(description).map_err(|source| AgentPluginPublisherError::Json {
+            artifact: "generated skill description",
+            source,
+        })?;
+    validate_skill_description(&name, &description)?;
     let command = frontmatter
         .iter()
         .find_map(|line| line.strip_prefix("command: "))
@@ -499,7 +504,7 @@ fn portable_skill_file(
     let content = [
         "---".to_string(),
         format!("name: {name}"),
-        format!("description: {}", yaml_string(description)?),
+        format!("description: {}", yaml_string(&description)?),
         "metadata:".to_string(),
         format!("  incurs.command: {}", yaml_string(command)?),
         format!("  incurs.requires_bin: {}", yaml_string(requires)?),
