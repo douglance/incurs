@@ -227,7 +227,12 @@ pub fn parse(argv: &[String], options: &ParseOptions) -> Result<ParseResult, Par
             break;
         }
 
-        if token.starts_with("--no-") && token.len() > 5 {
+        if token.starts_with("--no-")
+            && token.len() > 5
+            && names
+                .normalize(token[2..].split('=').next().unwrap_or_default())
+                .is_none()
+        {
             // --no-flag negation
             let raw_name = &token[5..];
             let name = names.normalize(raw_name).ok_or_else(|| ParseError {
@@ -539,7 +544,12 @@ pub fn parse_globals(
             break;
         }
 
-        if token.starts_with("--no-") && token.len() > 5 {
+        if token.starts_with("--no-")
+            && token.len() > 5
+            && names
+                .normalize(token[2..].split('=').next().unwrap_or_default())
+                .is_none()
+        {
             if let Some(name) = names.normalize(&token[5..]) {
                 parsed.insert(name, Value::Bool(false));
             } else {
