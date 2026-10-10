@@ -358,11 +358,11 @@ impl CodeExecutor for LocalExecutor {
                     .map_err(js_error)?;
                 let promise = context
                     .eval::<Promise<'_>, _>(source)
-                    .map_err(|error| js_execution_error(error, &timed_out))?;
+                    .map_err(|error| js_execution_error(&context, error, &timed_out))?;
                 let output = promise
                     .into_future::<String>()
                     .await
-                    .map_err(|error| js_execution_error(error, &timed_out))?;
+                    .map_err(|error| js_execution_error(&context, error, &timed_out))?;
                 serde_json::from_str(&output).map_err(|error| error.to_string())
             })
             .await
@@ -429,11 +429,30 @@ fn js_error(error: rquickjs::Error) -> String {
     error.to_string()
 }
 
-fn js_execution_error(error: rquickjs::Error, timed_out: &AtomicBool) -> String {
+fn js_execution_error(
+    context: &rquickjs::Ctx<'_>,
+    error: rquickjs::Error,
+    timed_out: &AtomicBool,
+) -> String {
     if timed_out.load(Ordering::SeqCst) {
         CODE_EXECUTION_TIMEOUT.to_string()
     } else {
-        error.to_string()
+        match rquickjs::CaughtError::from_error(context, error) {
+            rquickjs::CaughtError::Exception(exception) => {
+                let name = exception
+                    .as_object()
+                    .get::<_, String>("name")
+                    .unwrap_or_else(|_| "Error".to_string());
+                let message = exception.message().unwrap_or_default();
+                let mut diagnostic = format!("{name}: {message}");
+                if let Some(stack) = exception.stack() {
+                    diagnostic.push('\n');
+                    diagnostic.push_str(&stack);
+                }
+                diagnostic
+            }
+            error => error.to_string(),
+        }
     }
 }
 
@@ -863,6 +882,58 @@ mod tests {
         let rolled_back = codemode.rollback(&paused.id).await.unwrap();
         assert_eq!(rolled_back.status, ExecutionStatus::RolledBack);
         assert_eq!(connector.reverts.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn javascript_errors_preserve_exception_details() {
+        let codemode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            LocalExecutor::default(),
+            Vec::new(),
+        );
+        for (code, expected) in [
+            (
+                "const value = \"first\nsecond\"; return value;",
+                "SyntaxError",
+            ),
+            (
+                "throw new TypeError('diagnostic-sentinel');",
+                "diagnostic-sentinel",
+            ),
+            (
+                "await Promise.reject(new Error('rejection-sentinel'));",
+                "rejection-sentinel",
+            ),
+        ] {
+            let execution = codemode.execute(code).await.unwrap();
+            assert_eq!(execution.status, ExecutionStatus::Error);
+            let error = execution.error.as_deref().expect("recorded exception");
+            assert!(error.contains(expected), "{expected}: {error}");
+            if expected == "SyntaxError" {
+                assert!(
+                    error.contains("eval_script"),
+                    "missing source location: {error}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn javascript_primitive_exceptions_preserve_the_thrown_value() {
+        let codemode = CodeMode::new(
+            Arc::new(MemoryStore::default()),
+            LocalExecutor::default(),
+            Vec::new(),
+        );
+        let execution = codemode.execute("throw 42;").await.unwrap();
+        assert_eq!(execution.status, ExecutionStatus::Error);
+        assert!(
+            execution
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("42")),
+            "{execution:?}"
+        );
     }
 
     #[tokio::test]

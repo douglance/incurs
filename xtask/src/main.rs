@@ -83,7 +83,7 @@ fn release_packages() -> Vec<(Workspace, String, String)> {
         (Workspace::Root, "incurs-cli", "0.13.0"),
         (Workspace::Root, "incurs-extras", "0.13.0"),
         (Workspace::Root, "incurs-codemode", "0.11.0"),
-        (Workspace::Root, "incurs-codemode-local", "0.11.0"),
+        (Workspace::Root, "incurs-codemode-local", "0.11.1"),
         (Workspace::Root, "incurs-codemode-mcp", "0.11.0"),
         (Workspace::Root, "incurs-mcp-protocol", "0.2.1"),
         (Workspace::Root, "incurs-mcp-apps", "0.1.0"),
